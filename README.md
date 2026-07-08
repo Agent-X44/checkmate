@@ -1,17 +1,34 @@
-# checkmate
+![Alt Text](assets/checkmate.png)
+# CheckMate 
+## I. What is it?
+Checkmate is a mobile application that uses Optical Mark Recognition (OMR) and smartphone 
+computer vision to grade standardized bubble-type exam sheets, backed by an AI component 
+that generates detailed performance reports. But it goes beyond just scanning —the app works 
+more like Google Classroom, letting students enroll in specific courses through a clean, 
+familiar interface. Professors get a dedicated setup page where they can choose their 
+preferred bubble sheet format and upload exam questions ahead of time, giving the system the 
+context it needs to grade accurately and produce meaningful feedback.
 
-A new Flutter project.
+## II. Inspiration / Objectives
 
-## Getting Started
+Inspired by the need to support educators, seeing teachers spend their evenings 
+manually checking hundreds of bubble-type test papers instead of resting or preparing engaging 
+lessons. While tools like ZipGrade provide raw scores, teachers are left blind to class-wide
+learning gaps. The primary objective is to automate the OMR grading process while
+simultaneously generating instant academic insights, showing teachers exactly which topics
+need to be retaught. Operational goals include streamlining administrative tasks by exporting
+printable bubble answer sheets pre-filled with enrolled students' names and exporting
+spreadsheet copies of final results for efficient record-keeping.
 
-This project is a starting point for a Flutter application.
+## III. Target Users (Respondent)
 
-A few resources to get you started if this is your first Flutter project:
+- **Teachers / University Professors:** Utilize the application to upload questions, 
+select bubble sheet formats, scan physical exams using OMR, manage the course dashboard, 
+export spreadsheet results, and communicate performance insights.
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+- **Students:** Enroll in courses via the interface, view their performance analysis 
+on a read-only dashboard, and utilize the messaging feature to communicate with 
+professors regarding their results.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+- **School Administrators and Independent Testing Centers:** Oversee macro-level 
+performance and class-wide academic metrics through exported data.
