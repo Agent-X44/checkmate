@@ -22,13 +22,13 @@ spreadsheet copies of final results for efficient record-keeping.
 
 ## III. Target Users (Respondent)
 
-● **Teachers / University Professors:** Utilize the application to upload questions, 
+- **Teachers / University Professors:** Utilize the application to upload questions, 
 select bubble sheet formats, scan physical exams using OMR, manage the course dashboard, 
 export spreadsheet results, and communicate performance insights.
 
-● **Students:** Enroll in courses via the interface, view their performance analysis 
+- **Students:** Enroll in courses via the interface, view their performance analysis 
 on a read-only dashboard, and utilize the messaging feature to communicate with 
 professors regarding their results.
 
-● **School Administrators and Independent Testing Centers:** Oversee macro-level 
+- **School Administrators and Independent Testing Centers:** Oversee macro-level 
 performance and class-wide academic metrics through exported data.
