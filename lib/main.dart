@@ -277,7 +277,7 @@ class _MainNavigationState extends State<MainNavigation> with SingleTickerProvid
   Widget build(BuildContext context) {
     final List<Widget> screens = [
       const DashboardScreen(),
-      ScannerScreen(cameras: globalCameras),
+      ScannerScreen(cameras: globalCameras, isActive: _selectedIndex == 1),
       SettingsScreen(
         themeMode: widget.themeMode,
         onThemeChanged: widget.onThemeChanged,

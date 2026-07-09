@@ -6,7 +6,8 @@ import 'ai_analysis_screen.dart';
 
 class ScannerScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
-  const ScannerScreen({super.key, required this.cameras});
+  final bool isActive;
+  const ScannerScreen({super.key, required this.cameras, required this.isActive});
 
   @override
   State<ScannerScreen> createState() => _ScannerScreenState();
@@ -26,8 +27,33 @@ class _ScannerScreenState extends State<ScannerScreen> {
   @override
   void initState() {
     super.initState();
-    _startIsolate();
-    _initializeCamera();
+    if (widget.isActive) {
+      _startIsolate();
+      _initializeCamera();
+    }
+  }
+
+  @override
+  void didUpdateWidget(ScannerScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive != oldWidget.isActive) {
+      if (widget.isActive) {
+        _startIsolate();
+        _initializeCamera();
+      } else {
+        _disposeCamera();
+      }
+    }
+  }
+
+  void _disposeCamera() {
+    _controller?.stopImageStream();
+    _controller?.dispose();
+    _controller = null;
+    _isolate?.kill();
+    _isolate = null;
+    _isInitialized = false;
+    _paperDetected = false;
   }
 
   Future<void> _startIsolate() async {
@@ -84,9 +110,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
   @override
   void dispose() {
-    _controller?.stopImageStream();
-    _controller?.dispose();
-    _isolate?.kill();
+    _disposeCamera();
     _mainReceivePort.close();
     super.dispose();
   }
