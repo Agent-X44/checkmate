@@ -204,20 +204,22 @@ class _ScannerScreenState extends State<ScannerScreen> {
             ),
           ),
           
-          // Guide frame - subtle blue when searching, yellow when detected
-          if (!_paperDetected)
-            Center(
+          // Guide frame - Shifted slightly UP to avoid capture button overlap
+          Positioned(
+            top: MediaQuery.of(context).size.height * 0.12,
+            left: 0, right: 0,
+            child: Center(
               child: Container(
                 width: MediaQuery.of(context).size.width * 0.8,
-                height: MediaQuery.of(context).size.height * 0.5,
+                height: MediaQuery.of(context).size.height * 0.55,
                 decoration: BoxDecoration(
                   border: Border.all(
-                    color: Colors.blueAccent.withAlpha(100), 
+                    color: _paperDetected ? Colors.yellowAccent : Colors.blueAccent.withAlpha(100), 
                     width: 1
                   ),
                   borderRadius: BorderRadius.circular(20),
                 ),
-                child: const Center(
+                child: _paperDetected ? null : const Center(
                   child: Text(
                     'Align Answer Sheet',
                     style: TextStyle(color: Colors.blueAccent, fontSize: 16),
@@ -225,70 +227,57 @@ class _ScannerScreenState extends State<ScannerScreen> {
                 ),
               ),
             ),
+          ),
           
-          if (_paperDetected)
-            const Positioned(
-              top: 100,
-              left: 0, right: 0,
-              child: Center(
-                child: Chip(
-                  backgroundColor: Colors.yellowAccent,
-                  label: Text('READY TO SCAN', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
-                ),
-              ),
-            ),
-
+          // Header UI (Flash Button + Vertically Centered Prompt)
           Positioned(
             top: 40,
             left: 20,
             right: 20,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                IconButton(
-                  icon: Icon(_isFlashOn ? Icons.flash_on : Icons.flash_off, color: Colors.white),
-                  onPressed: _toggleFlash,
-                ),
-                const Text(
-                  'AI Scanner',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
+            child: SizedBox(
+              height: 48,
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: Icon(_isFlashOn ? Icons.flash_on : Icons.flash_off, color: Colors.white, size: 28),
+                    onPressed: _toggleFlash,
                   ),
-                ),
-                const SizedBox(width: 48), // Keep title centered
-              ],
+                  Expanded(
+                    child: Center(
+                      child: _paperDetected 
+                        ? const Chip(
+                            backgroundColor: Colors.yellowAccent,
+                            label: Text('READY TO SCAN', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                          )
+                        : const Text(
+                            'Detecting edges...',
+                            style: TextStyle(color: Colors.blueAccent, fontSize: 14, fontWeight: FontWeight.w500),
+                          ),
+                    ),
+                  ),
+                  const SizedBox(width: 48), // Balancing spacer for horizontal center
+                ],
+              ),
             ),
           ),
           
+          // Capture Button - Positioned low for thumb access
           Positioned(
-            bottom: 50,
+            bottom: 30,
             left: 0,
             right: 0,
-            child: Column(
-              children: [
-                Text(
-                  _paperDetected ? 'Ready to Scan' : 'Detecting edges...',
-                  style: TextStyle(
-                    color: _paperDetected ? Colors.yellowAccent : Colors.blueAccent, 
-                    fontSize: 14, 
-                    fontWeight: FontWeight.w500
-                  ),
-                ),
-                const SizedBox(height: 10),
-                FloatingActionButton.large(
-                  heroTag: null,
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(builder: (context) => const AIAnalysisScreen()),
-                    );
-                  },
-                  backgroundColor: _paperDetected ? Colors.yellowAccent : Colors.blueAccent,
-                  child: const Icon(Icons.camera_alt, color: Colors.black),
-                ),
-              ],
+            child: Center(
+              child: FloatingActionButton.large(
+                heroTag: null,
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const AIAnalysisScreen()),
+                  );
+                },
+                backgroundColor: _paperDetected ? Colors.yellowAccent : Colors.blueAccent,
+                child: const Icon(Icons.camera_alt, color: Colors.black),
+              ),
             ),
           ),
         ],
