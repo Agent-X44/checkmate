@@ -12,15 +12,13 @@ import 'models/course.dart';
 List<CameraDescription> globalCameras = [];
 
 void main() async {
-  // 1. MUST BE SYNCHRONOUS to avoid black screen hang on some emulators
   WidgetsFlutterBinding.ensureInitialized();
   
   try {
     globalCameras = await availableCameras();
-    // Smoke test for OpenCV
-    debugPrint("OpenCV Version: ${ImageProcessor.getOpenCVVersion()}");
+    debugPrint("OpenCV Status: ${ImageProcessor.getOpenCVVersion()}");
   } catch (e) {
-    debugPrint("Camera initialization error: $e");
+    debugPrint("App initialization error: $e");
   }
 
   runApp(const CheckmateApp());
@@ -42,7 +40,6 @@ class _CheckmateAppState extends State<CheckmateApp> {
     _loadTheme();
   }
 
-  // Load theme in background without blocking the initial build
   Future<void> _loadTheme() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -104,20 +101,37 @@ class _CheckmateAppState extends State<CheckmateApp> {
           foregroundColor: Colors.white,
         ),
       ),
-      // Use Builder to provide correct context for Navigator
-      home: Builder(
-        builder: (context) => LoginScreen(onLogin: () {
-          Navigator.of(context).pushReplacement(
-            MaterialPageRoute(
-              builder: (context) => MainNavigation(
-                themeMode: _themeMode,
-                onThemeChanged: _toggleTheme,
-              ),
-            ),
-          );
-        }),
+      home: RootAuthWrapper(
+        themeMode: _themeMode,
+        onThemeChanged: _toggleTheme,
       ),
     );
+  }
+}
+
+/// Helper class to handle navigation context correctly
+class RootAuthWrapper extends StatelessWidget {
+  final ThemeMode themeMode;
+  final Function(bool) onThemeChanged;
+
+  const RootAuthWrapper({
+    super.key, 
+    required this.themeMode, 
+    required this.onThemeChanged
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return LoginScreen(onLogin: () {
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (context) => MainNavigation(
+            themeMode: themeMode,
+            onThemeChanged: onThemeChanged,
+          ),
+        ),
+      );
+    });
   }
 }
 
@@ -201,7 +215,7 @@ class _MainNavigationState extends State<MainNavigation> with SingleTickerProvid
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(controller: codeCtrl, decoration: const InputDecoration(labelText: 'Course Code (e.g. CS101)')),
+            TextField(controller: codeCtrl, decoration: const InputDecoration(labelText: 'Course Code')),
             TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Course Name')),
           ],
         ),
@@ -224,7 +238,6 @@ class _MainNavigationState extends State<MainNavigation> with SingleTickerProvid
               });
               Navigator.pop(context);
               _toggleFab();
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Course Created Successfully!')));
             },
             child: const Text('CREATE'),
           ),
@@ -241,10 +254,7 @@ class _MainNavigationState extends State<MainNavigation> with SingleTickerProvid
         title: const Text('Join a Course'),
         content: TextField(
           controller: joinCtrl,
-          decoration: const InputDecoration(
-            labelText: 'Course Code',
-            hintText: 'Enter the 6-character code',
-          ),
+          decoration: const InputDecoration(labelText: 'Course Code'),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCEL')),
@@ -254,7 +264,7 @@ class _MainNavigationState extends State<MainNavigation> with SingleTickerProvid
                 globalDummyCourses.add(Course(
                   id: DateTime.now().toString(),
                   code: 'JOINED',
-                  name: 'Course from Code: ${joinCtrl.text}',
+                  name: 'Course Code: ${joinCtrl.text}',
                   instructor: 'External Instructor',
                   averageGrade: 'N/A',
                   isOwner: false,
@@ -264,7 +274,6 @@ class _MainNavigationState extends State<MainNavigation> with SingleTickerProvid
               });
               Navigator.pop(context);
               _toggleFab();
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Joined Course!')));
             },
             child: const Text('JOIN'),
           ),
@@ -283,9 +292,7 @@ class _MainNavigationState extends State<MainNavigation> with SingleTickerProvid
         onThemeChanged: widget.onThemeChanged,
         onLogout: () {
           Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(
-              builder: (context) => const CheckmateApp(),
-            ),
+            MaterialPageRoute(builder: (context) => const CheckmateApp()),
             (route) => false,
           );
         },
@@ -308,9 +315,7 @@ class _MainNavigationState extends State<MainNavigation> with SingleTickerProvid
           Padding(
             padding: const EdgeInsets.only(right: 12.0),
             child: GestureDetector(
-              onTap: () {
-                setState(() => _selectedIndex = 2);
-              },
+              onTap: () => setState(() => _selectedIndex = 2),
               child: const CircleAvatar(
                 radius: 16,
                 backgroundColor: Colors.white24,
@@ -332,13 +337,6 @@ class _MainNavigationState extends State<MainNavigation> with SingleTickerProvid
               accountName: const Text('Hannah Grace Narte'),
               accountEmail: const Text('Academic Profile'),
             ),
-            const Padding(
-              padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-              child: Text(
-                'All Courses',
-                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey),
-              ),
-            ),
             Expanded(
               child: ListView.builder(
                 padding: EdgeInsets.zero,
@@ -346,12 +344,9 @@ class _MainNavigationState extends State<MainNavigation> with SingleTickerProvid
                 itemBuilder: (context, index) {
                   final course = globalDummyCourses[index];
                   return ListTile(
-                    leading: CircleAvatar(
-                      backgroundColor: course.gradient[0],
-                      radius: 12,
-                    ),
+                    leading: CircleAvatar(backgroundColor: course.gradient[0], radius: 12),
                     title: Text(course.code),
-                    subtitle: Text(course.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    subtitle: Text(course.name, maxLines: 1),
                     onTap: () {
                       Navigator.pop(context);
                       Navigator.push(
@@ -359,11 +354,7 @@ class _MainNavigationState extends State<MainNavigation> with SingleTickerProvid
                         MaterialPageRoute(
                           builder: (context) => CourseDashboardScreen(
                             course: course,
-                            onCourseDeleted: () {
-                              setState(() {
-                                globalDummyCourses.removeWhere((c) => c.id == course.id);
-                              });
-                            },
+                            onCourseDeleted: () => setState(() => globalDummyCourses.removeWhere((c) => c.id == course.id)),
                           ),
                         ),
                       );
@@ -378,9 +369,7 @@ class _MainNavigationState extends State<MainNavigation> with SingleTickerProvid
               title: const Text('Logout', style: TextStyle(color: Colors.red)),
               onTap: () {
                 Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(
-                    builder: (context) => const CheckmateApp(),
-                  ),
+                  MaterialPageRoute(builder: (context) => const CheckmateApp()),
                   (route) => false,
                 );
               },
@@ -408,18 +397,9 @@ class _MainNavigationState extends State<MainNavigation> with SingleTickerProvid
         selectedItemColor: Theme.of(context).colorScheme.primary,
         unselectedItemColor: Colors.grey,
         items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.dashboard),
-            label: 'Dashboard',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.qr_code_scanner),
-            label: 'Scanner',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.settings),
-            label: 'Settings',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.dashboard), label: 'Dashboard'),
+          BottomNavigationBarItem(icon: Icon(Icons.qr_code_scanner), label: 'Scanner'),
+          BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Settings'),
         ],
       ),
       floatingActionButton: Visibility(
@@ -444,26 +424,13 @@ class _MainNavigationState extends State<MainNavigation> with SingleTickerProvid
                         decoration: BoxDecoration(
                           color: Theme.of(context).colorScheme.secondary,
                           borderRadius: BorderRadius.circular(16),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withAlpha(51),
-                              blurRadius: 8,
-                              offset: const Offset(0, 4),
-                            ),
-                          ],
                         ),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: const [
                             Icon(Icons.group_add, color: Colors.black),
                             SizedBox(width: 8),
-                            Text(
-                              'Join Course',
-                              style: TextStyle(
-                                color: Colors.black,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
+                            Text('Join Course', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
                           ],
                         ),
                       ),
@@ -482,35 +449,16 @@ class _MainNavigationState extends State<MainNavigation> with SingleTickerProvid
                 decoration: BoxDecoration(
                   color: Theme.of(context).colorScheme.secondary,
                   borderRadius: BorderRadius.circular(_isFabExpanded ? 16 : 28),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withAlpha(51),
-                      blurRadius: 8,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
                 ),
                 child: InkWell(
                   onTap: _isFabExpanded ? _showCreateDialog : _toggleFab,
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(
-                        _isFabExpanded ? Icons.add_box : Icons.add,
-                        color: Colors.black,
-                      ),
+                      Icon(_isFabExpanded ? Icons.add_box : Icons.add, color: Colors.black),
                       if (_isFabExpanded) ...[
                         const SizedBox(width: 8),
-                        const Flexible(
-                          child: Text(
-                            'Create Course',
-                            style: TextStyle(
-                              color: Colors.black,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
+                        const Text('Create Course', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
                       ],
                     ],
                   ),
