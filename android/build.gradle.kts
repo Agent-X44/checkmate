@@ -24,7 +24,7 @@ subprojects {
 subprojects {
     plugins.withType<com.android.build.gradle.api.AndroidBasePlugin> {
         extensions.configure<com.android.build.gradle.BaseExtension> {
-            compileSdkVersion(34)
+            compileSdkVersion(36)
         }
     }
 }
