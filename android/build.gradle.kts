@@ -26,6 +26,8 @@ subprojects {
         extensions.configure<com.android.build.gradle.BaseExtension> {
             compileSdkVersion(36)
         }
+        // Fix for CameraX CallbackToFutureAdapter error
+        project.dependencies.add("implementation", "androidx.concurrent:concurrent-futures:1.2.0")
     }
 }
 

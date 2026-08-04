@@ -44,3 +44,7 @@ kotlin {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    implementation("androidx.concurrent:concurrent-futures:1.2.0")
+}

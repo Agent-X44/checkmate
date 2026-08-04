@@ -14,10 +14,18 @@ class BubbleSheetTemplate {
   
   /// The normalized region (0.0 to 1.0) where answers are located.
   final Rect answerRegion;
+
+  /// The normalized region (0.0 to 1.0) where the QR code is located.
+  final Rect? qrRegion;
   
   final int totalQuestions;
   final int choicesPerQuestion;
-  final int columns; 
+  final int columns;
+  
+  /// Visual configuration for the sheet generator.
+  final bool showColumnOutlines;
+  final double columnSpacing;
+  final double innerPadding;
   
   /// Width of the final warped paper image for processing.
   final int targetWidth;
@@ -26,9 +34,13 @@ class BubbleSheetTemplate {
     required this.name,
     this.paperAspectRatio = 0.707,
     required this.answerRegion,
+    this.qrRegion,
     required this.totalQuestions,
     required this.choicesPerQuestion,
     this.columns = 1,
+    this.showColumnOutlines = true,
+    this.columnSpacing = 0.05,
+    this.innerPadding = 0.02,
     this.targetWidth = 1500,
   });
 

@@ -4,6 +4,13 @@ class BubbleResult {
   final String? answer;
   final double confidence;
   BubbleResult({this.answer, required this.confidence});
+
+  Map<String, dynamic> toMap() {
+    return {
+      'answer': answer,
+      'confidence': confidence,
+    };
+  }
 }
 
 class BubbleDetectionService {

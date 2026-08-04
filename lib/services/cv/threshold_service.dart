@@ -3,7 +3,7 @@ import 'package:opencv_dart/opencv_dart.dart' as cv;
 class ThresholdService {
   /// Converts to binary using Otsu's thresholding.
   /// Reverted from Adaptive because Otsu was producing cleaner strips for this paper type.
-  static cv.Mat applyAdaptiveThreshold(cv.Mat src, {double sigma = 0.2}) {
+  static cv.Mat applyOtsuThreshold(cv.Mat src, {double sigma = 0.2}) {
     // 1. Grayscale
     cv.Mat gray = src.channels == 3 ? cv.cvtColor(src, cv.COLOR_BGR2GRAY) : src.clone();
 

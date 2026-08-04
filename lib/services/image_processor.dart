@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 import '../models/omr/bubble_sheet_template.dart';
 import '../models/omr/processed_sheet.dart';
+import '../models/omr/qr_data.dart';
 import '../models/omr/templates/py_image_search_5.dart';
 import 'cv/perspective_service.dart';
 import 'cv/threshold_service.dart';
@@ -190,15 +191,24 @@ class ImageProcessor {
       closed.dispose();
       dilated.dispose();
       kernel.dispose();
-    } catch (e) {
-      message.replyPort.send(false);
+    } catch (e, stack) {
+      debugPrint("LIVE SCAN ISOLATE ERROR: $e\n$stack");
+      message.replyPort.send(ScanResponse(foundPaper: false));
     }
   }
 
   static void _handleOmrProcess(OmrRequest message) {
+    cv.Mat? mat;
+    cv.VecPoint? corners;
+    cv.Mat? warped;
+    cv.Mat? thresholded;
+    cv.Mat? answerArea;
+    cv.Mat? answerAreaBinary;
+    cv.QRCodeDetector? qrDetector;
+
     try {
       // 1. Load high-res image
-      final mat = cv.imdecode(message.bytes, cv.IMREAD_COLOR);
+      mat = cv.imdecode(message.bytes, cv.IMREAD_COLOR);
       if (mat.isEmpty) {
         message.replyPort.send(null);
         return;
@@ -208,7 +218,7 @@ class ImageProcessor {
       final int matW = mat.width;
       final int matH = mat.height;
       
-      final corners = cv.VecPoint.fromList(
+      corners = cv.VecPoint.fromList(
         List.generate(message.corners.length ~/ 2, (i) {
           return cv.Point(
             (message.corners[i * 2] * matW).toInt(),
@@ -218,7 +228,7 @@ class ImageProcessor {
       );
 
       // 3. Perspective Correction
-      final warped = PerspectiveService.warpPaper(
+      warped = PerspectiveService.warpPaper(
         mat, 
         corners, 
         message.template.paperAspectRatio, 
@@ -226,18 +236,42 @@ class ImageProcessor {
       );
       
       if (warped.isEmpty) {
-        mat.dispose();
-        corners.dispose();
         message.replyPort.send(null);
         return;
       }
 
-      // 4. Adaptive Thresholding (Lighting Compensation happens inside)
-      final thresholded = ThresholdService.applyAdaptiveThreshold(warped);
+      // 4. QR Code Recognition (New)
+      QrData? qrData;
+      try {
+        qrDetector = cv.QRCodeDetector.empty();
+        
+        cv.Mat qrInput = warped;
+        if (message.template.qrRegion != null) {
+          final qrRect = message.template.qrRegion!;
+          final int x = (qrRect.left * warped.width).toInt();
+          final int y = (qrRect.top * warped.height).toInt();
+          final int w = (qrRect.width * warped.width).toInt();
+          final int h = (qrRect.height * warped.height).toInt();
+          qrInput = warped.region(cv.Rect(x, y, w, h));
+        }
+
+        final (qrText, _, _) = qrDetector!.detectAndDecode(qrInput);
+        if (qrText.isNotEmpty) {
+          qrData = QrData.fromRaw(qrText);
+          debugPrint("QR DETECTED: $qrText");
+        }
+        
+        if (qrInput != warped) qrInput.dispose();
+      } catch (e) {
+        debugPrint("QR DETECTION ERROR: $e");
+      }
+
+      // 5. Adaptive Thresholding
+      thresholded = ThresholdService.applyOtsuThreshold(warped);
 
       // 5. Answer Region Extraction
-      final answerArea = TemplateService.extractAnswerRegion(warped, message.template);
-      final answerAreaBinary = TemplateService.extractAnswerRegion(thresholded, message.template);
+      answerArea = TemplateService.extractAnswerRegion(warped, message.template);
+      answerAreaBinary = TemplateService.extractAnswerRegion(thresholded, message.template);
       
       // Final Precision Grid Calibration (PyImageSearch)
       double gridStart = 0.15; // Global Default
@@ -284,18 +318,20 @@ class ImageProcessor {
         answerRegion: answerAreaBytes,
         questionImages: questionImages,
         results: results,
+        qrData: qrData,
       ));
-
-      // Cleanup
-      mat.dispose();
-      corners.dispose();
-      warped.dispose();
-      thresholded.dispose();
-      answerArea.dispose();
-      answerAreaBinary.dispose();
-    } catch (e) {
-      debugPrint("OMR PROCESSOR ERROR: $e");
+    } catch (e, stack) {
+      debugPrint("OMR PROCESSOR ERROR: $e\n$stack");
       message.replyPort.send(null);
+    } finally {
+      // Robust Resource Cleanup
+      mat?.dispose();
+      corners?.dispose();
+      warped?.dispose();
+      thresholded?.dispose();
+      answerArea?.dispose();
+      answerAreaBinary?.dispose();
+      qrDetector?.dispose();
     }
   }
 }

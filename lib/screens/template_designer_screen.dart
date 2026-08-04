@@ -19,8 +19,12 @@ class TemplateDesignerScreen extends StatefulWidget {
 
 class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
   late List<BubblePoint> _bubbles;
+  Rect? _qrRect; // Normalized QR region
+  bool _isQrMode = false;
   double _globalRadius = 15.0; 
   int? _draggingIndex;
+  bool _isDraggingQr = false;
+  int? _qrResizeHandle; // 0: TL, 1: TR, 2: BL, 3: BR
   final int _choicesCount = 5;
 
   @override
@@ -33,6 +37,17 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
   }
 
   void _addBubble(Offset localPosition, Size areaSize) {
+    if (_isQrMode) {
+      setState(() {
+        _qrRect = Rect.fromLTWH(
+          localPosition.dx / areaSize.width,
+          localPosition.dy / areaSize.height,
+          0.1,
+          0.1,
+        );
+      });
+      return;
+    }
     setState(() {
       _bubbles.add(BubblePoint(
         normalizedPosition: Offset(
@@ -47,6 +62,39 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
   void _handlePanStart(DragStartDetails details, Size areaSize) {
     final box = context.findRenderObject() as RenderBox;
     final localPosition = box.globalToLocal(details.globalPosition);
+
+    // Check QR handles first if in QR mode
+    if (_isQrMode && _qrRect != null) {
+      final rect = Rect.fromLTRB(
+        _qrRect!.left * areaSize.width,
+        _qrRect!.top * areaSize.height,
+        _qrRect!.right * areaSize.width,
+        _qrRect!.bottom * areaSize.height,
+      );
+
+      final handles = [
+        rect.topLeft,
+        rect.topRight,
+        rect.bottomLeft,
+        rect.bottomRight,
+      ];
+
+      for (int i = 0; i < handles.length; i++) {
+        if ((handles[i] - localPosition).distance < 20) {
+          setState(() {
+            _qrResizeHandle = i;
+          });
+          return;
+        }
+      }
+
+      if (rect.contains(localPosition)) {
+        setState(() {
+          _isDraggingQr = true;
+        });
+        return;
+      }
+    }
 
     for (int i = 0; i < _bubbles.length; i++) {
       final pos = Offset(
@@ -63,6 +111,32 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
   }
 
   void _handlePanUpdate(DragUpdateDetails details, Size areaSize) {
+    if (_qrResizeHandle != null && _qrRect != null) {
+      setState(() {
+        double l = _qrRect!.left, t = _qrRect!.top, r = _qrRect!.right, b = _qrRect!.bottom;
+        final dx = details.delta.dx / areaSize.width;
+        final dy = details.delta.dy / areaSize.height;
+
+        if (_qrResizeHandle == 0) { l += dx; t += dy; }
+        else if (_qrResizeHandle == 1) { r += dx; t += dy; }
+        else if (_qrResizeHandle == 2) { l += dx; b += dy; }
+        else if (_qrResizeHandle == 3) { r += dx; b += dy; }
+
+        _qrRect = Rect.fromLTRB(l.clamp(0, r - 0.01), t.clamp(0, b - 0.01), r.clamp(l + 0.01, 1), b.clamp(t + 0.01, 1));
+      });
+      return;
+    }
+
+    if (_isDraggingQr && _qrRect != null) {
+      setState(() {
+        _qrRect = _qrRect!.shift(Offset(
+          details.delta.dx / areaSize.width,
+          details.delta.dy / areaSize.height,
+        ));
+      });
+      return;
+    }
+
     if (_draggingIndex != null) {
       setState(() {
         final currentPos = Offset(
@@ -83,6 +157,8 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
   void _handlePanEnd(DragEndDetails details) {
     setState(() {
       _draggingIndex = null;
+      _isDraggingQr = false;
+      _qrResizeHandle = null;
     });
   }
 
@@ -157,12 +233,41 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
                         ),
                       );
                     }),
+                    if (_qrRect != null)
+                      Positioned(
+                        left: _qrRect!.left * size.width,
+                        top: _qrRect!.top * size.height,
+                        child: IgnorePointer(
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              Container(
+                                width: _qrRect!.width * size.width,
+                                height: _qrRect!.height * size.height,
+                                decoration: BoxDecoration(
+                                  border: Border.all(color: Colors.blueAccent, width: 3),
+                                  color: Colors.blueAccent.withValues(alpha: 0.2),
+                                ),
+                                child: const Center(
+                                  child: Icon(Icons.qr_code, color: Colors.white, size: 30),
+                                ),
+                              ),
+                              if (_isQrMode) ...[
+                                _qrHandle(0, 0),
+                                _qrHandle(_qrRect!.width * size.width, 0),
+                                _qrHandle(0, _qrRect!.height * size.height),
+                                _qrHandle(_qrRect!.width * size.width, _qrRect!.height * size.height),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
                   ],
                 );
               },
             ),
           ),
-          _buildSizeControl(),
+          _buildControls(),
         ],
       ),
       bottomNavigationBar: BottomAppBar(
@@ -190,33 +295,93 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
     );
   }
 
-  Widget _buildSizeControl() {
+  Widget _qrHandle(double left, double top) {
+    return Positioned(
+      left: left - 8,
+      top: top - 8,
+      child: Container(
+        width: 16,
+        height: 16,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildControls() {
     return Container(
       color: Colors.grey.shade900,
       padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.radio_button_checked, color: Colors.white, size: 20),
-          const SizedBox(width: 12),
-          const Text("Bubble Size:", style: TextStyle(color: Colors.white, fontSize: 12)),
-          Expanded(
-            child: Slider(
-              value: _globalRadius,
-              min: 5,
-              max: 40,
-              onChanged: (v) {
-                setState(() {
-                  _globalRadius = v;
-                  // Apply to all existing bubbles for convenience
-                  for (int i = 0; i < _bubbles.length; i++) {
-                    _bubbles[i] = _bubbles[i].copyWith(radius: v);
-                  }
-                });
-              },
-            ),
+          Row(
+            children: [
+              _modeButton(Icons.radio_button_checked, "Bubbles", !_isQrMode),
+              const SizedBox(width: 10),
+              _modeButton(Icons.qr_code, "QR Code", _isQrMode),
+            ],
           ),
-          Text(_globalRadius.toStringAsFixed(0), style: const TextStyle(color: Colors.white, fontSize: 10)),
+          const Divider(color: Colors.grey, height: 16),
+          if (!_isQrMode) 
+            Row(
+              children: [
+                const Icon(Icons.radio_button_checked, color: Colors.white, size: 20),
+                const SizedBox(width: 12),
+                const Text("Bubble Size:", style: TextStyle(color: Colors.white, fontSize: 12)),
+                Expanded(
+                  child: Slider(
+                    value: _globalRadius,
+                    min: 5,
+                    max: 40,
+                    onChanged: (v) {
+                      setState(() {
+                        _globalRadius = v;
+                        for (int i = 0; i < _bubbles.length; i++) {
+                          _bubbles[i] = _bubbles[i].copyWith(radius: v);
+                        }
+                      });
+                    },
+                  ),
+                ),
+                Text(_globalRadius.toStringAsFixed(0), style: const TextStyle(color: Colors.white, fontSize: 10)),
+              ],
+            )
+          else
+            const Padding(
+              padding: EdgeInsets.all(8.0),
+              child: Text(
+                "Tap to place QR box, drag to move, corners to resize",
+                style: TextStyle(color: Colors.blueAccent, fontSize: 11),
+              ),
+            ),
         ],
+      ),
+    );
+  }
+
+  Widget _modeButton(IconData icon, String label, bool isActive) {
+    return Expanded(
+      child: InkWell(
+        onTap: () => setState(() => _isQrMode = label == "QR Code"),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          decoration: BoxDecoration(
+            color: isActive ? Colors.blueAccent : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: isActive ? Colors.blueAccent : Colors.grey),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, color: isActive ? Colors.white : Colors.grey, size: 18),
+              const SizedBox(width: 8),
+              Text(label, style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontWeight: FontWeight.bold)),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -237,6 +402,14 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
     final double r = (maxX + 0.02).clamp(0.0, 1.0);
     final double b = (maxY + 0.02).clamp(0.0, 1.0);
 
+    final String qrCode = _qrRect == null ? "" : """
+      qrRegion: Rect.fromLTRB(
+        ${_qrRect!.left.toStringAsFixed(3)}, 
+        ${_qrRect!.top.toStringAsFixed(3)}, 
+        ${_qrRect!.right.toStringAsFixed(3)}, 
+        ${_qrRect!.bottom.toStringAsFixed(3)}
+      ),""";
+
     final String code = """
   /// Copy this into lib/models/omr/templates/your_template.dart
   factory BubbleSheetTemplate.customExam() {
@@ -248,7 +421,7 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
         ${t.toStringAsFixed(3)}, 
         ${r.toStringAsFixed(3)}, 
         ${b.toStringAsFixed(3)}
-      ),
+      ),$qrCode
       totalQuestions: 5, 
       choicesPerQuestion: $_choicesCount,
     );

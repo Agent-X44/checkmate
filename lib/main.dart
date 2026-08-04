@@ -86,6 +86,7 @@ class _CheckmateAppState extends State<CheckmateApp> {
         appBarTheme: const AppBarTheme(
           backgroundColor: primaryBlue,
           foregroundColor: Colors.white,
+          elevation: 0,
         ),
       ),
       darkTheme: ThemeData(
@@ -99,6 +100,7 @@ class _CheckmateAppState extends State<CheckmateApp> {
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFF121212),
           foregroundColor: Colors.white,
+          elevation: 0,
         ),
       ),
       home: RootAuthWrapper(
@@ -428,9 +430,9 @@ class _MainNavigationState extends State<MainNavigation> with SingleTickerProvid
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: const [
-                            Icon(Icons.group_add, color: Colors.black),
-                            SizedBox(width: 8),
-                            Text('Join Course', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                            const Icon(Icons.group_add, color: Colors.black),
+                            const SizedBox(width: 8),
+                            const Text('Join Course', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
                           ],
                         ),
                       ),

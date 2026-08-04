@@ -28,7 +28,7 @@ class _AIAnalysisScreenState extends State<AIAnalysisScreen> {
 
   List<Offset>? _customBubbles;
 
-  late ProcessedSheet _currentSheet;
+  ProcessedSheet? _currentSheet;
 
   @override
   void initState() {
@@ -52,7 +52,7 @@ class _AIAnalysisScreenState extends State<AIAnalysisScreen> {
       final warpedMat = cv.imdecode(widget.processedSheet!.warpedImage, cv.IMREAD_COLOR);
       if (warpedMat.isEmpty) return;
 
-      final thresholded = ThresholdService.applyAdaptiveThreshold(warpedMat);
+      final thresholded = ThresholdService.applyOtsuThreshold(warpedMat);
       
       final template = PyImageSearch5Template();
       final answerAreaBinary = TemplateService.extractAnswerRegion(
@@ -93,6 +93,7 @@ class _AIAnalysisScreenState extends State<AIAnalysisScreen> {
           answerRegion: widget.processedSheet!.answerRegion,
           questionImages: newQuestionImages,
           results: newResults,
+          qrData: widget.processedSheet!.qrData, // Preserve QR data
         );
       });
 
@@ -225,12 +226,16 @@ class _AIAnalysisScreenState extends State<AIAnalysisScreen> {
 
   Widget _buildResultsUI() {
     final sheet = _currentSheet;
+    if (sheet == null) {
+      return const Center(child: Text('No evaluation data available.'));
+    }
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (sheet.qrData != null) _buildStudentInfoCard(sheet.qrData!),
           _buildWarpedPreview(sheet),
           const SizedBox(height: 24),
           const Text(
@@ -253,6 +258,55 @@ class _AIAnalysisScreenState extends State<AIAnalysisScreen> {
               child: const Text('FINISH SESSION'),
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildStudentInfoCard(dynamic qrData) {
+    return Card(
+      elevation: 4,
+      margin: const EdgeInsets.only(bottom: 20),
+      color: Colors.blueAccent.withValues(alpha: 0.1),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(15),
+        side: const BorderSide(color: Colors.blueAccent, width: 1),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.person, color: Colors.blueAccent),
+                const SizedBox(width: 10),
+                Text(
+                  qrData.studentName,
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+            const Divider(height: 20),
+            _infoRow(Icons.assignment, "Exam:", qrData.examTitle),
+            _infoRow(Icons.code, "Code:", qrData.examCode),
+            _infoRow(Icons.school, "Course:", qrData.course),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _infoRow(IconData icon, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2.0),
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: Colors.grey),
+          const SizedBox(width: 8),
+          Text(label, style: const TextStyle(color: Colors.grey, fontSize: 13)),
+          const SizedBox(width: 8),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13)),
         ],
       ),
     );

@@ -104,14 +104,14 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const CircularProgressIndicator(),
-          const SizedBox(height: 24),
-          const Text(
+        children: const [
+          CircularProgressIndicator(),
+          SizedBox(height: 24),
+          Text(
             'AI is analyzing your content...',
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
-          const Text('Mapping data for future OMR analysis'),
+          Text('Mapping data for future OMR analysis'),
         ],
       ),
     );

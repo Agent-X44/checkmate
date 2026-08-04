@@ -76,7 +76,7 @@ class TemplateService {
     final List<cv.Mat> rowMats = [];
 
     // and add a vertical offset to ensure bubbles are centered in the strip.
-    final int startX = 0;
+    const int startX = 0;
     final int rowW = answerArea.width; 
 
     if (peakIndices.length >= template.totalQuestions) {
