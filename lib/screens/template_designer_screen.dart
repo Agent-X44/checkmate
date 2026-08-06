@@ -4,12 +4,20 @@ import 'package:flutter/material.dart';
 class TemplateDesignerScreen extends StatefulWidget {
   final Uint8List imageBytes;
   final List<Offset>? initialBubbles;
-  final Function(List<Offset>) onApply;
+  final List<Rect>? initialAnswerRegions;
+  final Rect? initialQrRegion;
+  final Rect? initialSetRegion;
+  final List<Offset>? initialSetBubbles;
+  final Function(List<Offset> bubbles, List<Rect> answerBoxes, Rect? qrRect, Rect? setRect, List<Offset> setBubbles) onApply;
 
   const TemplateDesignerScreen({
     super.key, 
     required this.imageBytes, 
     this.initialBubbles,
+    this.initialAnswerRegions,
+    this.initialQrRegion,
+    this.initialSetRegion,
+    this.initialSetBubbles,
     required this.onApply,
   });
 
@@ -19,313 +27,210 @@ class TemplateDesignerScreen extends StatefulWidget {
 
 class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
   late List<BubblePoint> _bubbles;
-  Rect? _qrRect; // Normalized QR region
-  bool _isQrMode = false;
-  double _globalRadius = 15.0; 
+  late List<BubblePoint> _setBubbles;
+  late List<Rect> _answerBoxes;
+  Rect? _qrRect;
+  Rect? _setRect;
+  int _designerMode = 0; // 0: Answer Bubbles, 1: QR Code, 2: Answer Box, 3: Set Detection
+  double _globalRadius = 12.0;
+  
   int? _draggingIndex;
-  bool _isDraggingQr = false;
-  int? _qrResizeHandle; // 0: TL, 1: TR, 2: BL, 3: BR
-  final int _choicesCount = 5;
+  int? _activeBoxIndex; // For answer boxes, QR (-1), or Set (-2)
+  int? _resizeHandle; 
 
   @override
   void initState() {
     super.initState();
-    _bubbles = widget.initialBubbles?.map((p) => BubblePoint(
-      normalizedPosition: p, 
-      radius: _globalRadius,
-    )).toList() ?? [];
+    _bubbles = widget.initialBubbles?.map((p) => BubblePoint(normalizedPosition: p, radius: _globalRadius)).toList() ?? [];
+    _setBubbles = widget.initialSetBubbles?.map((p) => BubblePoint(normalizedPosition: p, radius: _globalRadius)).toList() ?? [];
+    _answerBoxes = List.from(widget.initialAnswerRegions ?? [
+      const Rect.fromLTRB(0.04, 0.38, 0.48, 0.91),
+      const Rect.fromLTRB(0.52, 0.38, 0.96, 0.91),
+    ]);
+    _qrRect = widget.initialQrRegion ?? const Rect.fromLTRB(0.68, 0.1, 0.94, 0.22);
+    _setRect = widget.initialSetRegion ?? const Rect.fromLTRB(0.2, 0.15, 0.4, 0.25);
   }
 
-  void _addBubble(Offset localPosition, Size areaSize) {
-    if (_isQrMode) {
-      setState(() {
-        _qrRect = Rect.fromLTWH(
-          localPosition.dx / areaSize.width,
-          localPosition.dy / areaSize.height,
-          0.1,
-          0.1,
-        );
-      });
-      return;
+  void _onTapDown(TapDownDetails details, Size size) {
+    final pos = details.localPosition;
+    final normalizedPos = Offset(pos.dx / size.width, pos.dy / size.height);
+
+    if (_designerMode == 0) { // Answer Bubbles
+      if (!_isNearBubble(_bubbles, pos, size)) {
+        setState(() => _bubbles.add(BubblePoint(normalizedPosition: normalizedPos, radius: _globalRadius)));
+      }
+    } else if (_designerMode == 3) { // Set Bubbles
+      if (!_isNearBubble(_setBubbles, pos, size)) {
+        setState(() => _setBubbles.add(BubblePoint(normalizedPosition: normalizedPos, radius: _globalRadius)));
+      }
     }
-    setState(() {
-      _bubbles.add(BubblePoint(
-        normalizedPosition: Offset(
-          localPosition.dx / areaSize.width,
-          localPosition.dy / areaSize.height,
-        ),
-        radius: _globalRadius,
-      ));
-    });
   }
 
-  void _handlePanStart(DragStartDetails details, Size areaSize) {
-    final box = context.findRenderObject() as RenderBox;
-    final localPosition = box.globalToLocal(details.globalPosition);
+  bool _isNearBubble(List<BubblePoint> list, Offset pos, Size size) {
+    for (var b in list) {
+      final bPos = Offset(b.normalizedPosition.dx * size.width, b.normalizedPosition.dy * size.height);
+      if ((bPos - pos).distance < 25) return true;
+    }
+    return false;
+  }
 
-    // Check QR handles first if in QR mode
-    if (_isQrMode && _qrRect != null) {
-      final rect = Rect.fromLTRB(
-        _qrRect!.left * areaSize.width,
-        _qrRect!.top * areaSize.height,
-        _qrRect!.right * areaSize.width,
-        _qrRect!.bottom * areaSize.height,
-      );
-
-      final handles = [
-        rect.topLeft,
-        rect.topRight,
-        rect.bottomLeft,
-        rect.bottomRight,
-      ];
-
-      for (int i = 0; i < handles.length; i++) {
-        if ((handles[i] - localPosition).distance < 20) {
-          setState(() {
-            _qrResizeHandle = i;
-          });
-          return;
+  void _handlePanStart(DragStartDetails details, Size size) {
+    final pos = details.localPosition;
+    
+    if (_designerMode == 2) {
+      for (int i = 0; i < _answerBoxes.length; i++) {
+        final r = _toPx(_answerBoxes[i], size);
+        final h = _getHandle(r, pos);
+        if (h != null) {
+          setState(() { _activeBoxIndex = i; _resizeHandle = h; }); return; 
+        }
+        if (r.contains(pos)) {
+          setState(() { _activeBoxIndex = i; _resizeHandle = 4; }); return; 
         }
       }
-
-      if (rect.contains(localPosition)) {
-        setState(() {
-          _isDraggingQr = true;
-        });
-        return;
+    } else if (_designerMode == 1 && _qrRect != null) {
+      final r = _toPx(_qrRect!, size);
+      final h = _getHandle(r, pos);
+      if (h != null) { setState(() { _activeBoxIndex = -1; _resizeHandle = h; }); return; }
+      if (r.contains(pos)) { setState(() { _activeBoxIndex = -1; _resizeHandle = 4; }); return; }
+    } else if (_designerMode == 3) {
+      // Check Set Box handles first
+      if (_setRect != null) {
+        final r = _toPx(_setRect!, size);
+        final h = _getHandle(r, pos);
+        if (h != null) { setState(() { _activeBoxIndex = -2; _resizeHandle = h; }); return; }
+        if (r.contains(pos)) { setState(() { _activeBoxIndex = -2; _resizeHandle = 4; }); return; }
       }
-    }
-
-    for (int i = 0; i < _bubbles.length; i++) {
-      final pos = Offset(
-        _bubbles[i].normalizedPosition.dx * areaSize.width,
-        _bubbles[i].normalizedPosition.dy * areaSize.height,
-      );
-      if ((pos - localPosition).distance < _bubbles[i].radius * 2) {
-        setState(() {
-          _draggingIndex = i;
-        });
-        break;
+      // Check Set Bubbles
+      for (int i = 0; i < _setBubbles.length; i++) {
+        final bPos = Offset(_setBubbles[i].normalizedPosition.dx * size.width, _setBubbles[i].normalizedPosition.dy * size.height);
+        if ((bPos - pos).distance < 25) { setState(() => _draggingIndex = i); return; }
+      }
+    } else if (_designerMode == 0) {
+      for (int i = 0; i < _bubbles.length; i++) {
+        final bPos = Offset(_bubbles[i].normalizedPosition.dx * size.width, _bubbles[i].normalizedPosition.dy * size.height);
+        if ((bPos - pos).distance < 20) { setState(() => _draggingIndex = i); return; }
       }
     }
   }
 
-  void _handlePanUpdate(DragUpdateDetails details, Size areaSize) {
-    if (_qrResizeHandle != null && _qrRect != null) {
-      setState(() {
-        double l = _qrRect!.left, t = _qrRect!.top, r = _qrRect!.right, b = _qrRect!.bottom;
-        final dx = details.delta.dx / areaSize.width;
-        final dy = details.delta.dy / areaSize.height;
-
-        if (_qrResizeHandle == 0) { l += dx; t += dy; }
-        else if (_qrResizeHandle == 1) { r += dx; t += dy; }
-        else if (_qrResizeHandle == 2) { l += dx; b += dy; }
-        else if (_qrResizeHandle == 3) { r += dx; b += dy; }
-
-        _qrRect = Rect.fromLTRB(l.clamp(0, r - 0.01), t.clamp(0, b - 0.01), r.clamp(l + 0.01, 1), b.clamp(t + 0.01, 1));
-      });
-      return;
-    }
-
-    if (_isDraggingQr && _qrRect != null) {
-      setState(() {
-        _qrRect = _qrRect!.shift(Offset(
-          details.delta.dx / areaSize.width,
-          details.delta.dy / areaSize.height,
-        ));
-      });
-      return;
-    }
-
-    if (_draggingIndex != null) {
-      setState(() {
-        final currentPos = Offset(
-          _bubbles[_draggingIndex!].normalizedPosition.dx * areaSize.width,
-          _bubbles[_draggingIndex!].normalizedPosition.dy * areaSize.height,
-        );
-        final newPos = currentPos + details.delta;
-        _bubbles[_draggingIndex!] = _bubbles[_draggingIndex!].copyWith(
-          normalizedPosition: Offset(
-            newPos.dx / areaSize.width,
-            newPos.dy / areaSize.height,
-          ),
-        );
-      });
+  void _handlePanUpdate(DragUpdateDetails details, Size size) {
+    final delta = Offset(details.delta.dx / size.width, details.delta.dy / size.height);
+    if (_designerMode == 2 && _activeBoxIndex != null && _activeBoxIndex! >= 0) {
+      setState(() { _answerBoxes[_activeBoxIndex!] = _updateRect(_answerBoxes[_activeBoxIndex!], delta); });
+    } else if (_designerMode == 1 && _activeBoxIndex == -1 && _qrRect != null) {
+      setState(() { _qrRect = _updateRect(_qrRect!, delta); });
+    } else if (_designerMode == 3) {
+      if (_activeBoxIndex == -2 && _setRect != null) {
+        setState(() { _setRect = _updateRect(_setRect!, delta); });
+      } else if (_draggingIndex != null) {
+        setState(() { _setBubbles[_draggingIndex!] = _setBubbles[_draggingIndex!].copyWith(normalizedPosition: _setBubbles[_draggingIndex!].normalizedPosition + delta); });
+      }
+    } else if (_designerMode == 0 && _draggingIndex != null) {
+      setState(() { _bubbles[_draggingIndex!] = _bubbles[_draggingIndex!].copyWith(normalizedPosition: _bubbles[_draggingIndex!].normalizedPosition + delta); });
     }
   }
 
-  void _handlePanEnd(DragEndDetails details) {
-    setState(() {
-      _draggingIndex = null;
-      _isDraggingQr = false;
-      _qrResizeHandle = null;
-    });
+  Rect _toPx(Rect r, Size s) => Rect.fromLTRB(r.left * s.width, r.top * s.height, r.right * s.width, r.bottom * s.height);
+  int? _getHandle(Rect r, Offset p) {
+    final handles = [r.topLeft, r.topRight, r.bottomLeft, r.bottomRight];
+    for (int i = 0; i < 4; i++) { if ((handles[i] - p).distance < 25) return i; }
+    return null;
+  }
+
+  Rect _updateRect(Rect r, Offset delta) {
+    if (_resizeHandle == 4) return r.shift(delta);
+    double l = r.left, t = r.top, ri = r.right, b = r.bottom;
+    if (_resizeHandle == 0) { l += delta.dx; t += delta.dy; }
+    else if (_resizeHandle == 1) { ri += delta.dx; t += delta.dy; }
+    else if (_resizeHandle == 2) { l += delta.dx; b += delta.dy; }
+    else if (_resizeHandle == 3) { ri += delta.dx; b += delta.dy; }
+    return Rect.fromLTRB(l.clamp(0, ri - 0.02), t.clamp(0, b - 0.02), ri.clamp(l + 0.02, 1), b.clamp(t + 0.02, 1));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      appBar: AppBar(
-        title: const Text('Template Designer'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.code),
-            onPressed: _exportTemplate,
-            tooltip: "Export Template",
+      appBar: AppBar(title: const Text('Template Designer'), actions: [
+        IconButton(icon: const Icon(Icons.code), onPressed: _exportTemplate),
+        IconButton(icon: const Icon(Icons.delete), onPressed: () => setState(() { 
+          if (_designerMode == 0) {
+            _bubbles.clear();
+          } else if (_designerMode == 3) _setBubbles.clear();
+        })),
+      ]),
+      body: Column(children: [
+        Container(width: double.infinity, padding: const EdgeInsets.all(8), color: Colors.blueAccent.withValues(alpha: 0.1), child: const Text("TAP TO ADD • DRAG TO MOVE", textAlign: TextAlign.center, style: TextStyle(color: Colors.blueAccent, fontSize: 10, fontWeight: FontWeight.bold))),
+        Expanded(child: Center(
+          child: AspectRatio(
+            aspectRatio: 0.707, 
+            child: LayoutBuilder(builder: (context, constraints) {
+              final size = constraints.biggest;
+              return GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: (d) => _onTapDown(d, size),
+                onPanStart: (d) => _handlePanStart(d, size),
+                onPanUpdate: (d) => _handlePanUpdate(d, size),
+                onPanEnd: (_) => setState(() { _draggingIndex = null; _activeBoxIndex = null; _resizeHandle = null; }),
+                child: Stack(children: [
+                  Positioned.fill(child: Image.memory(widget.imageBytes, fit: BoxFit.fill)),
+                  Positioned.fill(child: CustomPaint(painter: DesignerPainter(
+                    bubbles: _bubbles, 
+                    setBubbles: _setBubbles,
+                    answerBoxes: _answerBoxes, 
+                    qrRect: _qrRect, 
+                    setRect: _setRect, 
+                    mode: _designerMode
+                  ))),
+                ]),
+              );
+            }),
           ),
-          IconButton(
-            icon: const Icon(Icons.delete),
-            onPressed: () => setState(() => _bubbles.clear()),
-            tooltip: "Clear",
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final size = constraints.biggest;
-                return Stack(
-                  children: [
-                    Center(
-                      child: Image.memory(
-                        widget.imageBytes,
-                        fit: BoxFit.contain,
-                      ),
-                    ),
-                    GestureDetector(
-                      onTapDown: (details) => _addBubble(details.localPosition, size),
-                      onPanStart: (details) => _handlePanStart(details, size),
-                      onPanUpdate: (details) => _handlePanUpdate(details, size),
-                      onPanEnd: _handlePanEnd,
-                      child: Container(
-                        color: Colors.transparent,
-                        width: size.width,
-                        height: size.height,
-                      ),
-                    ),
-                    ..._bubbles.asMap().entries.map((entry) {
-                      final pos = Offset(
-                        entry.value.normalizedPosition.dx * size.width,
-                        entry.value.normalizedPosition.dy * size.height,
-                      );
-                      return Positioned(
-                        left: pos.dx - entry.value.radius,
-                        top: pos.dy - entry.value.radius,
-                        child: IgnorePointer(
-                          child: Container(
-                            width: entry.value.radius * 2,
-                            height: entry.value.radius * 2,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.yellowAccent, width: 2),
-                              color: Colors.yellowAccent.withValues(alpha: 0.3),
-                            ),
-                            child: Center(
-                              child: Text(
-                                (entry.key + 1).toString(),
-                                style: const TextStyle(color: Colors.white, fontSize: 8),
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    }),
-                    if (_qrRect != null)
-                      Positioned(
-                        left: _qrRect!.left * size.width,
-                        top: _qrRect!.top * size.height,
-                        child: IgnorePointer(
-                          child: Stack(
-                            clipBehavior: Clip.none,
-                            children: [
-                              Container(
-                                width: _qrRect!.width * size.width,
-                                height: _qrRect!.height * size.height,
-                                decoration: BoxDecoration(
-                                  border: Border.all(color: Colors.blueAccent, width: 3),
-                                  color: Colors.blueAccent.withValues(alpha: 0.2),
-                                ),
-                                child: const Center(
-                                  child: Icon(Icons.qr_code, color: Colors.white, size: 30),
-                                ),
-                              ),
-                              if (_isQrMode) ...[
-                                _qrHandle(0, 0),
-                                _qrHandle(_qrRect!.width * size.width, 0),
-                                _qrHandle(0, _qrRect!.height * size.height),
-                                _qrHandle(_qrRect!.width * size.width, _qrRect!.height * size.height),
-                              ],
-                            ],
-                          ),
-                        ),
-                      ),
-                  ],
-                );
-              },
-            ),
-          ),
-          _buildControls(),
-        ],
-      ),
-      bottomNavigationBar: BottomAppBar(
-        color: Colors.grey.shade900,
-        height: 70,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
-            children: [
-              Text("Bubbles: ${_bubbles.length}", style: const TextStyle(color: Colors.yellowAccent)),
-              const Spacer(),
-              ElevatedButton.icon(
-                onPressed: () {
-                  widget.onApply(_bubbles.map((b) => b.normalizedPosition).toList());
-                  Navigator.pop(context);
-                },
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
-                icon: const Icon(Icons.check_circle),
-                label: const Text("USE TEMPLATE"),
-              ),
-            ],
-          ),
+        )),
+        _buildControls(),
+      ]),
+      bottomNavigationBar: BottomAppBar(color: Colors.grey.shade900, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 16), child: Row(children: [
+        Text("ITEMS: ${_bubbles.length + _setBubbles.length}", style: const TextStyle(color: Colors.yellowAccent)),
+        const Spacer(),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+          onPressed: () { 
+            widget.onApply(
+              _bubbles.map((b)=>b.normalizedPosition).toList(), 
+              _answerBoxes, 
+              _qrRect, 
+              _setRect,
+              _setBubbles.map((b)=>b.normalizedPosition).toList()
+            ); 
+            Navigator.pop(context); 
+          }, 
+          child: const Text("SAVE TEMPLATE")
         ),
-      ),
-    );
-  }
-
-  Widget _qrHandle(double left, double top) {
-    return Positioned(
-      left: left - 8,
-      top: top - 8,
-      child: Container(
-        width: 16,
-        height: 16,
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          shape: BoxShape.circle,
-        ),
-      ),
+      ]))),
     );
   }
 
   Widget _buildControls() {
     return Container(
       color: Colors.grey.shade900,
-      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      padding: const EdgeInsets.all(12),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Row(
             children: [
-              _modeButton(Icons.radio_button_checked, "Bubbles", !_isQrMode),
-              const SizedBox(width: 10),
-              _modeButton(Icons.qr_code, "QR Code", _isQrMode),
+              _modeBtn(0, Icons.radio_button_checked, "Bubbles"),
+              const SizedBox(width: 8),
+              _modeBtn(2, Icons.crop_din, "Boxes"),
+              const SizedBox(width: 8),
+              _modeBtn(1, Icons.qr_code, "QR"),
+              const SizedBox(width: 8),
+              _modeBtn(3, Icons.settings_overscan, "Set"),
             ],
           ),
-          const Divider(color: Colors.grey, height: 16),
-          if (!_isQrMode) 
+          if (_designerMode == 0 || _designerMode == 3) ...[
+            const SizedBox(height: 8),
             Row(
               children: [
                 const Icon(Icons.radio_button_checked, color: Colors.white, size: 20),
@@ -334,13 +239,15 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
                 Expanded(
                   child: Slider(
                     value: _globalRadius,
-                    min: 5,
-                    max: 40,
+                    min: 5, max: 40,
                     onChanged: (v) {
                       setState(() {
                         _globalRadius = v;
                         for (int i = 0; i < _bubbles.length; i++) {
                           _bubbles[i] = _bubbles[i].copyWith(radius: v);
+                        }
+                        for (int i = 0; i < _setBubbles.length; i++) {
+                          _setBubbles[i] = _setBubbles[i].copyWith(radius: v);
                         }
                       });
                     },
@@ -348,128 +255,80 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
                 ),
                 Text(_globalRadius.toStringAsFixed(0), style: const TextStyle(color: Colors.white, fontSize: 10)),
               ],
-            )
-          else
-            const Padding(
-              padding: EdgeInsets.all(8.0),
-              child: Text(
-                "Tap to place QR box, drag to move, corners to resize",
-                style: TextStyle(color: Colors.blueAccent, fontSize: 11),
-              ),
             ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _modeButton(IconData icon, String label, bool isActive) {
-    return Expanded(
-      child: InkWell(
-        onTap: () => setState(() => _isQrMode = label == "QR Code"),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          decoration: BoxDecoration(
-            color: isActive ? Colors.blueAccent : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: isActive ? Colors.blueAccent : Colors.grey),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, color: isActive ? Colors.white : Colors.grey, size: 18),
-              const SizedBox(width: 8),
-              Text(label, style: TextStyle(color: isActive ? Colors.white : Colors.grey, fontWeight: FontWeight.bold)),
-            ],
-          ),
-        ),
-      ),
-    );
+  Widget _modeBtn(int mode, IconData icon, String label) {
+    final active = _designerMode == mode;
+    return Expanded(child: InkWell(onTap: () => setState(() => _designerMode = mode), child: Container(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      decoration: BoxDecoration(color: active ? Colors.blueAccent : Colors.transparent, borderRadius: BorderRadius.circular(8), border: Border.all(color: active ? Colors.blueAccent : Colors.grey)),
+      child: Column(children: [Icon(icon, color: active ? Colors.white : Colors.grey, size: 18), Text(label, style: TextStyle(color: active ? Colors.white : Colors.grey, fontSize: 10))]),
+    )));
   }
 
   void _exportTemplate() {
-    if (_bubbles.isEmpty) return;
+    final String boxes = _answerBoxes.map((r) => "      Rect.fromLTRB(${r.left.toStringAsFixed(3)}, ${r.top.toStringAsFixed(3)}, ${r.right.toStringAsFixed(3)}, ${r.bottom.toStringAsFixed(3)}),").join("\n");
+    final String qr = _qrRect == null ? "" : "    qrRegion: Rect.fromLTRB(${_qrRect!.left.toStringAsFixed(3)}, ${_qrRect!.top.toStringAsFixed(3)}, ${_qrRect!.right.toStringAsFixed(3)}, ${_qrRect!.bottom.toStringAsFixed(3)}),";
+    final String sets = _setRect == null ? "" : "    setRegion: Rect.fromLTRB(${_setRect!.left.toStringAsFixed(3)}, ${_setRect!.top.toStringAsFixed(3)}, ${_setRect!.right.toStringAsFixed(3)}, ${_setRect!.bottom.toStringAsFixed(3)}),";
+    final String setBubblesCode = _setBubbles.isEmpty ? "" : "    setBubbles: [\n${_setBubbles.map((b) => "      Offset(${b.normalizedPosition.dx.toStringAsFixed(3)}, ${b.normalizedPosition.dy.toStringAsFixed(3)}),").join("\n")}\n    ],";
+    final String code = "answerRegions: [\n$boxes\n    ],\n$qr\n$sets\n$setBubblesCode";
+    showDialog(context: context, builder: (c) => AlertDialog(backgroundColor: Colors.grey.shade900, title: const Text("Export Code", style: TextStyle(color: Colors.white)), content: SelectableText(code, style: const TextStyle(color: Colors.greenAccent, fontSize: 10, fontFamily: 'monospace')), actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text("OK"))]));
+  }
+}
 
-    double minX = 1.0, maxX = 0.0, minY = 1.0, maxY = 0.0;
-    for (var b in _bubbles) {
-      if (b.normalizedPosition.dx < minX) minX = b.normalizedPosition.dx;
-      if (b.normalizedPosition.dx > maxX) maxX = b.normalizedPosition.dx;
-      if (b.normalizedPosition.dy < minY) minY = b.normalizedPosition.dy;
-      if (b.normalizedPosition.dy > maxY) maxY = b.normalizedPosition.dy;
+class DesignerPainter extends CustomPainter {
+  final List<BubblePoint> bubbles;
+  final List<BubblePoint> setBubbles;
+  final List<Rect> answerBoxes;
+  final Rect? qrRect;
+  final Rect? setRect;
+  final int mode;
+  DesignerPainter({required this.bubbles, required this.setBubbles, required this.answerBoxes, this.qrRect, this.setRect, required this.mode});
+  @override
+  void paint(Canvas canvas, Size size) {
+    final bPaint = Paint()..color = Colors.yellowAccent..style = PaintingStyle.stroke..strokeWidth = 2.0;
+    final sbPaint = Paint()..color = Colors.greenAccent..style = PaintingStyle.stroke..strokeWidth = 2.0;
+    final boxPaint = Paint()..color = Colors.redAccent..style = PaintingStyle.stroke..strokeWidth = 2.0;
+    final qrPaint = Paint()..color = Colors.blueAccent..style = PaintingStyle.stroke..strokeWidth = 2.5;
+    final setPaint = Paint()..color = Colors.greenAccent.withValues(alpha: 0.5)..style = PaintingStyle.stroke..strokeWidth = 2.0;
+    final handlePaint = Paint()..color = Colors.white..style = PaintingStyle.fill;
+
+    for (var b in bubbles) {
+      canvas.drawCircle(Offset(b.normalizedPosition.dx * size.width, b.normalizedPosition.dy * size.height), b.radius, bPaint);
+    }
+    for (var b in setBubbles) {
+      canvas.drawCircle(Offset(b.normalizedPosition.dx * size.width, b.normalizedPosition.dy * size.height), b.radius, sbPaint);
+    }
+    
+    for (var r in answerBoxes) {
+      final rect = Rect.fromLTRB(r.left * size.width, r.top * size.height, r.right * size.width, r.bottom * size.height);
+      canvas.drawRect(rect, boxPaint);
+      if (mode == 2) for (var p in [rect.topLeft, rect.topRight, rect.bottomLeft, rect.bottomRight]) { canvas.drawCircle(p, 6, handlePaint); canvas.drawCircle(p, 6, boxPaint); }
+    }
+    
+    if (qrRect != null) {
+      final rect = Rect.fromLTRB(qrRect!.left * size.width, qrRect!.top * size.height, qrRect!.right * size.width, qrRect!.bottom * size.height);
+      canvas.drawRect(rect, qrPaint);
+      if (mode == 1) for (var p in [rect.topLeft, rect.topRight, rect.bottomLeft, rect.bottomRight]) { canvas.drawCircle(p, 6, handlePaint); canvas.drawCircle(p, 6, qrPaint); }
     }
 
-    final double l = (minX - 0.02).clamp(0.0, 1.0);
-    final double t = (minY - 0.02).clamp(0.0, 1.0);
-    final double r = (maxX + 0.02).clamp(0.0, 1.0);
-    final double b = (maxY + 0.02).clamp(0.0, 1.0);
-
-    final String qrCode = _qrRect == null ? "" : """
-      qrRegion: Rect.fromLTRB(
-        ${_qrRect!.left.toStringAsFixed(3)}, 
-        ${_qrRect!.top.toStringAsFixed(3)}, 
-        ${_qrRect!.right.toStringAsFixed(3)}, 
-        ${_qrRect!.bottom.toStringAsFixed(3)}
-      ),""";
-
-    final String code = """
-  /// Copy this into lib/models/omr/templates/your_template.dart
-  factory BubbleSheetTemplate.customExam() {
-    return const BubbleSheetTemplate(
-      name: 'Custom Exam Sheet',
-      paperAspectRatio: 0.0, 
-      answerRegion: Rect.fromLTRB(
-        ${l.toStringAsFixed(3)}, 
-        ${t.toStringAsFixed(3)}, 
-        ${r.toStringAsFixed(3)}, 
-        ${b.toStringAsFixed(3)}
-      ),$qrCode
-      totalQuestions: 5, 
-      choicesPerQuestion: $_choicesCount,
-    );
+    if (setRect != null) {
+      final rect = Rect.fromLTRB(setRect!.left * size.width, setRect!.top * size.height, setRect!.right * size.width, setRect!.bottom * size.height);
+      canvas.drawRect(rect, setPaint);
+      if (mode == 3) for (var p in [rect.topLeft, rect.topRight, rect.bottomLeft, rect.bottomRight]) { canvas.drawCircle(p, 6, handlePaint); canvas.drawCircle(p, 6, setPaint); }
+    }
   }
-
-  // Point Map
-  // static const List<double> customXOffsets = [
-  //   ${_bubbles.take(_choicesCount).map((bp) => bp.normalizedPosition.dx.toStringAsFixed(3)).join(", ")}
-  // ];
-""";
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: Colors.grey.shade900,
-        title: const Row(
-          children: [
-            Icon(Icons.code, color: Colors.greenAccent),
-            SizedBox(width: 10),
-            Text("Production Template Code", style: TextStyle(color: Colors.white, fontSize: 16)),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: SelectableText(
-            code, 
-            style: const TextStyle(color: Colors.greenAccent, fontFamily: 'monospace', fontSize: 11)
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context), 
-            child: const Text("DONE")
-          ),
-        ],
-      ),
-    );
-  }
+  @override bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
 
 class BubblePoint {
   final Offset normalizedPosition;
   final double radius;
   BubblePoint({required this.normalizedPosition, required this.radius});
-
-  BubblePoint copyWith({Offset? normalizedPosition, double? radius}) {
-    return BubblePoint(
-      normalizedPosition: normalizedPosition ?? this.normalizedPosition,
-      radius: radius ?? this.radius,
-    );
-  }
+  BubblePoint copyWith({Offset? normalizedPosition, double? radius}) => BubblePoint(normalizedPosition: normalizedPosition ?? this.normalizedPosition, radius: radius ?? this.radius);
 }

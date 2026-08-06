@@ -1,10 +1,12 @@
 import 'dart:isolate';
+import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 import '../models/omr/bubble_sheet_template.dart';
 import '../models/omr/processed_sheet.dart';
 import '../models/omr/qr_data.dart';
 import '../models/omr/templates/py_image_search_5.dart';
+import '../models/omr/templates/standard_50_questions.dart';
 import 'cv/perspective_service.dart';
 import 'cv/threshold_service.dart';
 import 'cv/template_service.dart';
@@ -46,12 +48,18 @@ class OmrRequest {
   final List<double> corners; // Normalized corners from live detection
   final BubbleSheetTemplate template;
   final SendPort replyPort;
+  final double stripHeightMultiplier;
+  final Rect? customSetRegion;
+  final List<Offset>? customSetBubbles;
 
   OmrRequest({
     required this.bytes,
     required this.corners,
     required this.template,
     required this.replyPort,
+    this.stripHeightMultiplier = 1.2,
+    this.customSetRegion,
+    this.customSetBubbles,
   });
 }
 
@@ -76,6 +84,7 @@ class ImageProcessor {
 
   /// Background worker supporting both live detection and high-res OMR processing.
   static void edgeDetectionWorker(SendPort mainSendPort) {
+    debugPrint("OMR ISOLATE: Worker started");
     final receivePort = ReceivePort();
     mainSendPort.send(receivePort.sendPort);
 
@@ -83,6 +92,7 @@ class ImageProcessor {
       if (message is ScanRequest) {
         _handleLiveScan(message);
       } else if (message is OmrRequest) {
+        debugPrint("OMR ISOLATE: Received high-res request");
         _handleOmrProcess(message);
       }
     });
@@ -107,8 +117,10 @@ class ImageProcessor {
         mat = cv.Mat.fromList(message.height, message.width, cv.MatType.CV_8UC1, message.bytes);
       }
 
-      // 2. Optimization: Resize and Rotate
-      const double targetWidth = 800.0;
+      // 2. Optimization: Downscale for FAST background processing
+      // We process at 400px width for maximum performance, matching the logic of 
+      // capturing HD but analyzing at a lower resolution.
+      const double targetWidth = 400.0; 
       final double resizeScale = targetWidth / message.width;
       final int targetHeight = (message.height * resizeScale).toInt();
       final smallMat = cv.resize(mat, (targetWidth.toInt(), targetHeight));
@@ -126,12 +138,10 @@ class ImageProcessor {
       final int finalH = processedMat.height;
 
       // 3. Computer Vision Pipeline: Aggressive Noise Suppression
-      // Sharp images have too much texture noise. We blur heavily to find the paper outline.
-      final blurred = cv.gaussianBlur(processedMat, (7, 7), message.blurSigma);
+      final blurred = cv.gaussianBlur(processedMat, (15, 15), 3.0);
       final edged = cv.canny(blurred, message.cannyThreshold1, message.cannyThreshold2);
       
-      // Use Morphological Closing to consolidate the paper outline edges
-      final kernel = cv.getStructuringElement(cv.MORPH_RECT, (5, 5));
+      final kernel = cv.getStructuringElement(cv.MORPH_RECT, (9, 9));
       final closed = cv.morphologyEx(edged, cv.MORPH_CLOSE, kernel);
       final dilated = cv.dilate(closed, kernel);
 
@@ -164,7 +174,6 @@ class ImageProcessor {
           
           final double imgArea = (finalW * finalH).toDouble();
 
-          // STRICT QUADRILATERAL CHECK: Only return corners IF it is a 4-point shape
           if (maxArea > (imgArea * message.sensitivity) && approx.length == 4) { 
              foundPaper = true;
              paperCorners = [];
@@ -197,14 +206,65 @@ class ImageProcessor {
     }
   }
 
+  /// Detects 4 small square marks in the corners of the entire warped sheet for global rectification.
+  static List<cv.Point> _detectGlobalFiducials(cv.Mat colorSheet) {
+    if (colorSheet.isEmpty) return [];
+
+    final gray = cv.cvtColor(colorSheet, cv.COLOR_BGR2GRAY);
+    final blurred = cv.gaussianBlur(gray, (5, 5), 1.0);
+    // Use adaptive threshold to find markers in various lighting
+    final binary = cv.adaptiveThreshold(blurred, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+    
+    final int w = binary.width;
+    final int h = binary.height;
+
+    // Define 4 corner search zones (15% of sheet size)
+    final List<cv.Rect> zones = [
+      cv.Rect(0, 0, (w * 0.15).toInt(), (h * 0.15).toInt()), // TL
+      cv.Rect((w * 0.85).toInt(), 0, (w * 0.15).toInt(), (h * 0.15).toInt()), // TR
+      cv.Rect((w * 0.85).toInt(), (h * 0.85).toInt(), (w * 0.15).toInt(), (h * 0.15).toInt()), // BR
+      cv.Rect(0, (h * 0.85).toInt(), (w * 0.15).toInt(), (h * 0.15).toInt()), // BL
+    ];
+
+    final List<cv.Point> finalPoints = [];
+
+    for (var zone in zones) {
+      final zoneMat = binary.region(zone);
+      final (contours, _) = cv.findContours(zoneMat, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      
+      cv.Point? bestPoint;
+      double maxArea = 0;
+
+      for (int i = 0; i < contours.length; i++) {
+        final area = cv.contourArea(contours[i]);
+        final rect = cv.boundingRect(contours[i]);
+        final double ratio = rect.width / rect.height;
+
+        // Marks are expected to be solid squares in the corner
+        if (area > 40 && ratio > 0.6 && ratio < 1.4) {
+          if (area > maxArea) {
+            maxArea = area;
+            bestPoint = cv.Point(zone.x + rect.x + rect.width ~/ 2, zone.y + rect.y + rect.height ~/ 2);
+          }
+        }
+      }
+      
+      if (bestPoint != null) finalPoints.add(bestPoint);
+      zoneMat.dispose();
+      contours.dispose();
+    }
+
+    gray.dispose();
+    binary.dispose();
+    blurred.dispose();
+
+    return finalPoints.length == 4 ? finalPoints : [];
+  }
+
   static void _handleOmrProcess(OmrRequest message) {
     cv.Mat? mat;
-    cv.VecPoint? corners;
     cv.Mat? warped;
     cv.Mat? thresholded;
-    cv.Mat? answerArea;
-    cv.Mat? answerAreaBinary;
-    cv.QRCodeDetector? qrDetector;
 
     try {
       // 1. Load high-res image
@@ -214,11 +274,11 @@ class ImageProcessor {
         return;
       }
       
-      // 2. Map normalized corners to high-res coordinates
       final int matW = mat.width;
       final int matH = mat.height;
-      
-      corners = cv.VecPoint.fromList(
+
+      // 1.1 Rough perspective corners
+      final rawCorners = cv.VecPoint.fromList(
         List.generate(message.corners.length ~/ 2, (i) {
           return cv.Point(
             (message.corners[i * 2] * matW).toInt(),
@@ -226,91 +286,205 @@ class ImageProcessor {
           );
         }),
       );
-
-      // 3. Perspective Correction
+      
+      // 3. Perspective Correction (Pass 1: Paper Edges with Padding)
+      // Added 3% padding to ensure 4-corner square markers are NOT clipped.
       warped = PerspectiveService.warpPaper(
         mat, 
-        corners, 
+        rawCorners, 
         message.template.paperAspectRatio, 
-        message.template.targetWidth
+        message.template.targetWidth,
+        padding: 0.03
       );
       
-      if (warped.isEmpty) {
-        message.replyPort.send(null);
-        return;
+      rawCorners.dispose();
+
+      // 3.1 Precision Rectification (Pass 2: 4-Corner Marks)
+      final globalFiducials = _detectGlobalFiducials(warped);
+      if (globalFiducials.length == 4) {
+        debugPrint("OMR: Locked onto 4 square marks. Snapping to perfect grid...");
+        final refinedWarped = PerspectiveService.warpPaper(
+          warped, 
+          cv.VecPoint.fromList(globalFiducials), 
+          message.template.paperAspectRatio, 
+          message.template.targetWidth,
+          padding: 0.0 // Snap markers to exact corners (0.0 to 1.0)
+        );
+        warped.dispose();
+        warped = refinedWarped;
+      } else {
+        debugPrint("OMR: Square markers not found (${globalFiducials.length}/4). Using estimated grid.");
+        // Fallback: Perform a warp with 0 padding to remove the 3% safety border
+        final fallbackCorners = cv.VecPoint.fromList(List.generate(message.corners.length ~/ 2, (i) {
+          return cv.Point(
+            (message.corners[i * 2] * matW).toInt(),
+            (message.corners[i * 2 + 1] * matH).toInt(),
+          );
+        }));
+        final fallbackWarped = PerspectiveService.warpPaper(
+          mat, 
+          fallbackCorners,
+          message.template.paperAspectRatio, 
+          message.template.targetWidth
+        );
+        fallbackCorners.dispose();
+        warped.dispose();
+        warped = fallbackWarped;
       }
 
-      // 4. QR Code Recognition (New)
+      // 4. QR Code Recognition
       QrData? qrData;
-      try {
-        qrDetector = cv.QRCodeDetector.empty();
-        
-        cv.Mat qrInput = warped;
-        if (message.template.qrRegion != null) {
-          final qrRect = message.template.qrRegion!;
-          final int x = (qrRect.left * warped.width).toInt();
-          final int y = (qrRect.top * warped.height).toInt();
-          final int w = (qrRect.width * warped.width).toInt();
-          final int h = (qrRect.height * warped.height).toInt();
-          qrInput = warped.region(cv.Rect(x, y, w, h));
-        }
+      BubbleSheetTemplate activeTemplate = message.template;
 
-        final (qrText, _, _) = qrDetector!.detectAndDecode(qrInput);
-        if (qrText.isNotEmpty) {
-          qrData = QrData.fromRaw(qrText);
-          debugPrint("QR DETECTED: $qrText");
+      try {
+        final detector = cv.QRCodeDetector.empty();
+        final List<Rect> qrRegions = [
+          if (activeTemplate.qrRegion != null) activeTemplate.qrRegion!,
+          const Rect.fromLTRB(0.6, 0.05, 0.95, 0.3), // Typical QR area
+        ];
+
+        for (final region in qrRegions) {
+          final int x = (region.left * warped.width).toInt().clamp(0, warped.width - 1);
+          final int y = (region.top * warped.height).toInt().clamp(0, warped.height - 1);
+          final int w = (region.width * warped.width).toInt().clamp(1, warped.width - x);
+          final int h = (region.height * warped.height).toInt().clamp(1, warped.height - y);
+          
+          final qrInput = warped.region(cv.Rect(x, y, w, h));
+          final (text, points, _) = detector.detectAndDecode(qrInput);
+          
+          points.dispose();
+          qrInput.dispose();
+          
+          if (text.isNotEmpty) {
+            qrData = QrData.fromRaw(text);
+            debugPrint("QR DETECTED: $text");
+            if (qrData.templateName == 'Standard 50 Questions' || qrData.examCode.startsWith("CM50")) {
+              activeTemplate = Standard50QuestionsTemplate();
+            }
+            break;
+          }
         }
-        
-        if (qrInput != warped) qrInput.dispose();
+        detector.dispose();
       } catch (e) {
-        debugPrint("QR DETECTION ERROR: $e");
+        debugPrint("QR ENGINE SKIPPED: Missing Native Symbol ($e)");
       }
 
       // 5. Adaptive Thresholding
       thresholded = ThresholdService.applyOtsuThreshold(warped);
 
-      // 5. Answer Region Extraction
-      answerArea = TemplateService.extractAnswerRegion(warped, message.template);
-      answerAreaBinary = TemplateService.extractAnswerRegion(thresholded, message.template);
-      
-      // Final Precision Grid Calibration (PyImageSearch)
-      double gridStart = 0.15; // Global Default
-      double gridWidth = 0.82; // Global Default
-      int calibratedY = 60;    // Global Default
+      // 5.0 Set Detection (New)
+      String? detectedSet;
+      final setRegion = message.customSetRegion ?? activeTemplate.setRegion;
+      final setBubbles = message.customSetBubbles ?? activeTemplate.setBubbles;
 
-      if (message.template is PyImageSearch5Template) {
+      if (setBubbles != null && setBubbles.isNotEmpty) {
+        try {
+          final List<double> fills = [];
+          for (var p in setBubbles) {
+            final int x = (p.dx * thresholded.width).toInt();
+            final int y = (p.dy * thresholded.height).toInt();
+            const int sz = 25;
+            final r = cv.Rect((x - sz ~/ 2).clamp(0, thresholded.width - sz), (y - sz ~/ 2).clamp(0, thresholded.height - sz), sz, sz);
+            final bubbleMat = thresholded.region(r);
+            fills.add(cv.countNonZero(bubbleMat) / (sz * sz));
+            bubbleMat.dispose();
+          }
+          if (fills.isNotEmpty) {
+            int winner = 0;
+            for (int i = 1; i < fills.length; i++) {
+              if (fills[i] > fills[winner]) {
+                winner = i;
+              }
+            }
+            if (fills[winner] > 0.15) {
+              detectedSet = "SET ${String.fromCharCode(65 + winner)}";
+            }
+          }
+        } catch (e) {
+          debugPrint("SET BUBBLE DETECTION ERROR: $e");
+        }
+      } else if (setRegion != null) {
+        try {
+          final setMat = TemplateService.extractRegion(thresholded, setRegion);
+          final result = BubbleDetectionService.detectFilledBubble(
+            setMat, 2, 
+            isBinary: true, 
+            gridStart: 0.1, 
+            gridWidthRatio: 0.8
+          );
+          if (result.answer != null) {
+            detectedSet = result.answer == "A" ? "SET A" : "SET B";
+            debugPrint("OMR: Detected $detectedSet");
+          }
+          setMat.dispose();
+        } catch (e) {
+          debugPrint("SET REGION DETECTION ERROR: $e");
+        }
+      }
+
+      // 5.1 Dynamic Column Detection (NEW: Max Area Logic)
+      List<Rect> activeRegions = activeTemplate.answerRegions;
+      
+      // 5.2 Answer Region Extraction and Question Splitting
+      final List<BubbleResult> results = [];
+      final List<Uint8List> questionImages = [];
+      
+      // Default Calibration
+      double gridStart = 0.15;
+      double gridWidth = 0.82;
+      int calibratedY = 60;
+
+      if (activeTemplate is PyImageSearch5Template) {
         gridStart = PyImageSearch5Template.defaultGridStart;
         gridWidth = PyImageSearch5Template.defaultGridWidth;
         calibratedY = PyImageSearch5Template.calibratedYOffset;
+      } else if (activeTemplate is Standard50QuestionsTemplate) {
+        gridStart = Standard50QuestionsTemplate.defaultGridStart;
+        gridWidth = Standard50QuestionsTemplate.defaultGridWidth;
+        calibratedY = Standard50QuestionsTemplate.calibratedYOffset;
       }
 
-      final questionMats = TemplateService.splitQuestions(
-        answerAreaBinary, 
-        message.template,
-        yOffset: calibratedY,
-      );
-      
-      final List<BubbleResult> results = [];
-      final List<Uint8List> questionImages = [];
+      // Process each answer region (column)
+      final int questionsPerRegion = (activeTemplate.totalQuestions / activeRegions.length).ceil();
 
-      for (final m in questionMats) {
-        final result = BubbleDetectionService.detectFilledBubble(
-          m, 
-          message.template.choicesPerQuestion,
-          isBinary: true,
-          gridStart: gridStart,
-          gridWidthRatio: gridWidth,
+      for (int i = 0; i < activeRegions.length; i++) {
+        final region = activeRegions[i];
+        final regionMat = TemplateService.extractRegion(thresholded, region);
+        
+        final questionsInThisRegion = (i == activeRegions.length - 1) 
+            ? activeTemplate.totalQuestions - (questionsPerRegion * i)
+            : questionsPerRegion;
+
+        final questionMats = TemplateService.splitQuestions(
+          regionMat, 
+          questionsInThisRegion,
+          yOffset: calibratedY,
+          heightMultiplier: message.stripHeightMultiplier,
         );
-        results.add(result);
 
-        final bytes = Uint8List.fromList(cv.imencode(".jpg", m).$2);
-        questionImages.add(bytes);
-        m.dispose();
+        for (final m in questionMats) {
+          final result = BubbleDetectionService.detectFilledBubble(
+            m, 
+            activeTemplate.choicesPerQuestion,
+            isBinary: true,
+            gridStart: gridStart,
+            gridWidthRatio: gridWidth,
+          );
+          results.add(result);
+
+          final bytes = Uint8List.fromList(cv.imencode(".jpg", m).$2);
+          questionImages.add(bytes);
+          m.dispose();
+        }
+        regionMat.dispose();
       }
 
       final warpedBytes = Uint8List.fromList(cv.imencode(".jpg", warped).$2);
       final thresholdBytes = Uint8List.fromList(cv.imencode(".jpg", thresholded).$2);
-      final answerAreaBytes = Uint8List.fromList(cv.imencode(".jpg", answerArea).$2);
+      
+      final legacyAnswerArea = TemplateService.extractRegion(warped, activeTemplate.answerRegions.first);
+      final answerAreaBytes = Uint8List.fromList(cv.imencode(".jpg", legacyAnswerArea).$2);
+      legacyAnswerArea.dispose();
 
       message.replyPort.send(ProcessedSheet(
         warpedImage: warpedBytes,
@@ -319,19 +493,16 @@ class ImageProcessor {
         questionImages: questionImages,
         results: results,
         qrData: qrData,
+        detectedSet: detectedSet,
+        templateName: activeTemplate.name,
       ));
     } catch (e, stack) {
       debugPrint("OMR PROCESSOR ERROR: $e\n$stack");
       message.replyPort.send(null);
     } finally {
-      // Robust Resource Cleanup
       mat?.dispose();
-      corners?.dispose();
       warped?.dispose();
       thresholded?.dispose();
-      answerArea?.dispose();
-      answerAreaBinary?.dispose();
-      qrDetector?.dispose();
     }
   }
 }

@@ -12,11 +12,18 @@ class BubbleSheetTemplate {
   /// instead of forcing a specific size.
   final double paperAspectRatio;
   
-  /// The normalized region (0.0 to 1.0) where answers are located.
-  final Rect answerRegion;
+  /// The normalized regions (0.0 to 1.0) where answers are located.
+  /// Each Rect represents a column of questions.
+  final List<Rect> answerRegions;
 
   /// The normalized region (0.0 to 1.0) where the QR code is located.
   final Rect? qrRegion;
+
+  /// The normalized region (0.0 to 1.0) where the Set (A/B) checkboxes are located.
+  final Rect? setRegion;
+
+  /// Optional: Specific bubble coordinates for Set detection.
+  final List<Offset>? setBubbles;
   
   final int totalQuestions;
   final int choicesPerQuestion;
@@ -33,8 +40,10 @@ class BubbleSheetTemplate {
   const BubbleSheetTemplate({
     required this.name,
     this.paperAspectRatio = 0.707,
-    required this.answerRegion,
+    required this.answerRegions,
     this.qrRegion,
+    this.setRegion,
+    this.setBubbles,
     required this.totalQuestions,
     required this.choicesPerQuestion,
     this.columns = 1,

@@ -3,13 +3,42 @@ import 'package:opencv_dart/opencv_dart.dart' as cv;
 class BubbleResult {
   final String? answer;
   final double confidence;
-  BubbleResult({this.answer, required this.confidence});
+  final bool isFilled;
+  final List<String> multipleAnswers;
+  final bool isAmbiguous;
+
+  BubbleResult({
+    this.answer, 
+    required this.confidence, 
+    this.isFilled = false,
+    this.multipleAnswers = const [],
+    this.isAmbiguous = false,
+  });
 
   Map<String, dynamic> toMap() {
     return {
       'answer': answer,
       'confidence': confidence,
+      'isFilled': isFilled,
+      'multipleAnswers': multipleAnswers,
+      'isAmbiguous': isAmbiguous,
     };
+  }
+  
+  BubbleResult copyWith({
+    String? answer,
+    double? confidence,
+    bool? isFilled,
+    List<String>? multipleAnswers,
+    bool? isAmbiguous,
+  }) {
+    return BubbleResult(
+      answer: answer ?? this.answer,
+      confidence: confidence ?? this.confidence,
+      isFilled: isFilled ?? this.isFilled,
+      multipleAnswers: multipleAnswers ?? this.multipleAnswers,
+      isAmbiguous: isAmbiguous ?? this.isAmbiguous,
+    );
   }
 }
 
@@ -22,7 +51,10 @@ class BubbleDetectionService {
       bool isBinary = false, 
       double gridStart = 0.15, 
       double gridWidthRatio = 0.82,
+      double zoneWidthRatio = 0.45,
+      double zoneHeightRatio = 0.60,
       List<double>? customXOffsets, 
+      double threshold = 0.18,
     }
   ) {
     cv.Mat binary;
@@ -42,7 +74,6 @@ class BubbleDetectionService {
 
     // 2. MEASURE DENSITY
     if (customXOffsets != null && customXOffsets.isNotEmpty) {
-      // Use user-designed custom points from Template Designer
       for (double relX in customXOffsets) {
         final rect = cv.Rect(
           (relX * w - (w * 0.05)).toInt().clamp(0, w - 1), 
@@ -55,58 +86,49 @@ class BubbleDetectionService {
         cellMat.dispose();
       }
     } else {
-      // 1. DEFINE THE GRID:
       final double gridStartX = w * gridStart; 
       final double gridWidth = w * gridWidthRatio; 
       final double cellWidth = gridWidth / choicesCount;
 
-      // 2. MEASURE DENSITY IN EACH CELL
       for (int i = 0; i < choicesCount; i++) {
         final double xStart = gridStartX + (i * cellWidth);
-
-        // ULTRA-PRECISION SCAN: Focus ONLY on the center 45% of each cell.
-        // This prevents "ink leakage" between neighboring bubbles.
         final rect = cv.Rect(
-          (xStart + (cellWidth * 0.275)).toInt().clamp(0, w - 1),
-          (h * 0.20).toInt().clamp(0, h - 1),
-          (cellWidth * 0.45).toInt().clamp(1, w - (xStart + (cellWidth * 0.275)).toInt()),
-          (h * 0.60).toInt().clamp(1, h - (h * 0.20).toInt()),
+          (xStart + (cellWidth * (1 - zoneWidthRatio) / 2)).toInt().clamp(0, w - 1),
+          (h * (1 - zoneHeightRatio) / 2).toInt().clamp(0, h - 1),
+          (cellWidth * zoneWidthRatio).toInt().clamp(1, w - (xStart + (cellWidth * (1 - zoneWidthRatio) / 2)).toInt()),
+          (h * zoneHeightRatio).toInt().clamp(1, h - (h * (1 - zoneHeightRatio) / 2).toInt()),
         );
 
         final cellMat = binary.region(rect);
-        final double filledPixels = cv.countNonZero(cellMat).toDouble();
-        final double totalPixels = (rect.width * rect.height).toDouble();
-
-        fillRatios.add(filledPixels / totalPixels);
+        fillRatios.add(cv.countNonZero(cellMat) / (rect.width * rect.height));
         cellMat.dispose();
       }
     }
 
-    // 3. IDENTIFY THE WINNER
-    int winnerIdx = -1;
-    double maxFill = -1.0;
-    double secondMaxFill = 0.0;
-
+    // 3. IDENTIFY ALL FILLED BUBBLES
+    final List<int> filledIndices = [];
     for (int i = 0; i < fillRatios.length; i++) {
-      if (fillRatios[i] > maxFill) {
-        secondMaxFill = maxFill > 0 ? maxFill : 0.0;
-        maxFill = fillRatios[i];
-        winnerIdx = i;
-      } else if (fillRatios[i] > secondMaxFill) {
-        secondMaxFill = fillRatios[i];
+      if (fillRatios[i] > threshold) {
+        filledIndices.add(i);
       }
     }
 
     binary.dispose();
 
-    // 4. MAP TO LETTER (A-E)
-    final String letter = String.fromCharCode(65 + winnerIdx);
+    // 4. MAP TO LETTERS
+    final List<String> answers = filledIndices.map((i) => String.fromCharCode(65 + i)).toList();
+    
+    final sortedRatios = List<double>.from(fillRatios)..sort((a, b) => b.compareTo(a));
+    double maxFill = sortedRatios.isNotEmpty ? sortedRatios[0] : 0.0;
+    double secondMaxFill = sortedRatios.length > 1 ? sortedRatios[1] : 0.0;
     double confidence = (maxFill - secondMaxFill).clamp(0.0, 1.0);
 
     return BubbleResult(
-      // Robust threshold for filled bubble
-      answer: maxFill > 0.15 ? letter : null,
+      answer: answers.length == 1 ? answers.first : null,
       confidence: confidence,
+      isFilled: answers.isNotEmpty,
+      multipleAnswers: answers,
+      isAmbiguous: answers.length > 1,
     );
   }
 }

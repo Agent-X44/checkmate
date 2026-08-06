@@ -3,18 +3,14 @@ import 'package:opencv_dart/opencv_dart.dart' as cv;
 
 class PerspectiveService {
   /// Orders four points: [Top-Left, Top-Right, Bottom-Right, Bottom-Left].
-  /// This is essential for consistent warpPerspective results.
   static cv.VecPoint orderPoints(cv.VecPoint pts) {
     if (pts.length != 4) return pts;
-
     final sorted = List<cv.Point>.from(pts.toList());
     
-    // Sort by sum (x + y): Top-Left has smallest sum, Bottom-Right has largest.
     sorted.sort((a, b) => (a.x + a.y).compareTo(b.x + b.y));
     final tl = sorted[0];
     final br = sorted[3];
 
-    // Sort by difference (y - x): Top-Right has smallest diff, Bottom-Left has largest.
     sorted.sort((a, b) => (a.y - a.x).compareTo(b.y - b.x));
     final tr = sorted[0];
     final bl = sorted[3];
@@ -23,11 +19,12 @@ class PerspectiveService {
   }
 
   /// Performs a 4-point perspective transform to extract a rectangular paper image.
-  /// If [aspectRatio] is 0 or negative, it calculates the natural aspect ratio from the corners.
-  static cv.Mat warpPaper(cv.Mat src, cv.VecPoint corners, double aspectRatio, int targetWidth) {
+  /// [padding] allows expanding the destination points beyond the image boundaries (negative)
+  /// or shrinking them inside (positive). For Pass 1 OMR, we use padding to ensure 
+  /// corner markers aren't clipped.
+  static cv.Mat warpPaper(cv.Mat src, cv.VecPoint corners, double aspectRatio, int targetWidth, {double padding = 0.0}) {
     final orderedCorners = orderPoints(corners);
     
-    // Calculate natural aspect ratio to prevent horizontal/vertical distortion
     final p1 = orderedCorners[0]; // tl
     final p2 = orderedCorners[1]; // tr
     final p3 = orderedCorners[2]; // br
@@ -41,15 +38,19 @@ class PerspectiveService {
     final double heightLeft = math.sqrt(math.pow(p1.y - p4.y, 2) + math.pow(p1.x - p4.x, 2));
     final double maxHeight = math.max(heightRight, heightLeft);
 
-    // Use provided aspect ratio if valid (> 0.1), otherwise use natural
     final double finalRatio = (aspectRatio > 0.1) ? aspectRatio : (maxWidth / maxHeight);
     final int targetHeight = (targetWidth / finalRatio).toInt();
 
+    // Map source points to destination with padding.
+    // If padding is 0.03 (3%), we shift the corners 3% inwards from the edges.
+    final double offsetW = targetWidth * padding;
+    final double offsetH = targetHeight * padding;
+
     final destPoints = cv.VecPoint.fromList([
-      cv.Point(0, 0),
-      cv.Point(targetWidth, 0),
-      cv.Point(targetWidth, targetHeight),
-      cv.Point(0, targetHeight),
+      cv.Point(offsetW.toInt(), offsetH.toInt()),
+      cv.Point((targetWidth - offsetW).toInt(), offsetH.toInt()),
+      cv.Point((targetWidth - offsetW).toInt(), (targetHeight - offsetH).toInt()),
+      cv.Point(offsetW.toInt(), (targetHeight - offsetH).toInt()),
     ]);
 
     final M = cv.getPerspectiveTransform(orderedCorners, destPoints);

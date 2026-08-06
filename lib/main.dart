@@ -427,12 +427,12 @@ class _MainNavigationState extends State<MainNavigation> with SingleTickerProvid
                           color: Theme.of(context).colorScheme.secondary,
                           borderRadius: BorderRadius.circular(16),
                         ),
-                        child: Row(
+                        child: const Row(
                           mainAxisAlignment: MainAxisAlignment.center,
-                          children: const [
-                            const Icon(Icons.group_add, color: Colors.black),
-                            const SizedBox(width: 8),
-                            const Text('Join Course', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
+                          children: [
+                            Icon(Icons.group_add, color: Colors.black),
+                            SizedBox(width: 8),
+                            Text('Join Course', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
                           ],
                         ),
                       ),

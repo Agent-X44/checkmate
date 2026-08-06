@@ -67,9 +67,9 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
               color: Colors.orange.shade50,
-              child: Row(
+              child: const Row(
                 mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
+                children: [
                   Icon(Icons.lock_clock, size: 16, color: Colors.orange),
                   SizedBox(width: 8),
                   Text(
@@ -128,7 +128,7 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
         color: Theme.of(context).colorScheme.surface,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withAlpha(20),
+            color: Colors.black.withValues(alpha: 20 / 255),
             blurRadius: 4,
             offset: const Offset(0, -2),
           ),

@@ -3,16 +3,18 @@ class QrData {
   final String examCode;
   final String course;
   final String examTitle;
+  final String? templateName;
 
   QrData({
     required this.studentName,
     required this.examCode,
     required this.course,
     required this.examTitle,
+    this.templateName,
   });
 
   factory QrData.fromRaw(String raw) {
-    // Expected format: "Name,ExamCode,Course,Title"
+    // Expected format: "Name,ExamCode,Course,Title,TemplateName"
     final parts = raw.split(',');
     if (parts.length >= 4) {
       return QrData(
@@ -20,6 +22,7 @@ class QrData {
         examCode: parts[1].trim(),
         course: parts[2].trim(),
         examTitle: parts[3].trim(),
+        templateName: parts.length >= 5 ? parts[4].trim() : null,
       );
     }
     return QrData(
@@ -36,9 +39,10 @@ class QrData {
       'examCode': examCode,
       'course': course,
       'examTitle': examTitle,
+      'templateName': templateName,
     };
   }
 
   @override
-  String toString() => '$studentName - $examTitle ($examCode) [$course]';
+  String toString() => '$studentName - $examTitle ($examCode) [$course] ${templateName ?? ""}';
 }

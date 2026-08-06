@@ -82,7 +82,7 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
               hintText: 'e.g., "Principles of Digital Logic" or paste raw text...',
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(15)),
               filled: true,
-              fillColor: Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(50),
+              fillColor: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 50 / 255),
             ),
           ),
           const Spacer(),
@@ -101,10 +101,10 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
   }
 
   Widget _buildGeneratingStep() {
-    return Center(
+    return const Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
-        children: const [
+        children: [
           CircularProgressIndicator(),
           SizedBox(height: 24),
           Text(
@@ -121,8 +121,8 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
     return ListView(
       padding: const EdgeInsets.all(20),
       children: [
-        Row(
-          children: const [
+        const Row(
+          children: [
             Icon(Icons.check_circle, color: Colors.green),
             SizedBox(width: 8),
             Text(

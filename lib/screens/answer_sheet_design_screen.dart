@@ -14,16 +14,20 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
   final List<BubbleSheetTemplate> _templates = [
     const BubbleSheetTemplate(
       name: 'Standard 50 Questions',
-      answerRegion: Rect.fromLTRB(0.1, 0.05, 0.9, 0.95),
+      answerRegions: [
+        Rect.fromLTRB(0.04, 0.38, 0.48, 0.91), // Left Column Box
+        Rect.fromLTRB(0.52, 0.38, 0.96, 0.91), // Right Column Box
+      ],
       totalQuestions: 50,
-      choicesPerQuestion: 5,
+      choicesPerQuestion: 4, // A, B, C, D to match sample
       columns: 2,
       showColumnOutlines: true,
       columnSpacing: 0.08,
+      qrRegion: Rect.fromLTRB(0.68, 0.1, 0.94, 0.22),
     ),
     const BubbleSheetTemplate(
       name: 'Compact 100 Questions',
-      answerRegion: Rect.fromLTRB(0.1, 0.05, 0.9, 0.95),
+      answerRegions: [Rect.fromLTRB(0.1, 0.05, 0.9, 0.95)],
       totalQuestions: 100,
       choicesPerQuestion: 4,
       columns: 4,
@@ -32,7 +36,7 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
     ),
     const BubbleSheetTemplate(
       name: 'Quick Quiz (20 Questions)',
-      answerRegion: Rect.fromLTRB(0.2, 0.1, 0.8, 0.9),
+      answerRegions: [Rect.fromLTRB(0.2, 0.1, 0.8, 0.9)],
       totalQuestions: 20,
       choicesPerQuestion: 5,
       columns: 1,
@@ -42,12 +46,15 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
 
   late BubbleSheetTemplate _selectedTemplate;
   bool _isDebugAlignment = false;
+  String _selectedStudent = "JOHN DOE";
   
   // Alignment Debug Values
-  double _nameTop = 125;
-  double _nameLeft = 131;
-  double _qrTop = 86;
-  double _qrRight = 59;
+  double _nameTop = 87.1;
+  double _nameLeft = 145.0;
+  double _nameScale = 1.2;
+  double _qrTop = 33.0;
+  double _qrRight = 65.4;
+  double _qrSize = 118.4;
 
   @override
   void initState() {
@@ -86,7 +93,7 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
                         color: Colors.white,
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
+                            color: Colors.black.withValues(alpha: 0.1),
                             blurRadius: 15,
                             offset: const Offset(0, 5),
                           ),
@@ -110,7 +117,7 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
                                   top: (_nameTop - 20) * 0.5,
                                   left: (_nameLeft - 85) * 0.5,
                                   child: Transform.scale(
-                                    scale: 0.5,
+                                    scale: _nameScale * 0.5, // 0.5 for preview scaling
                                     alignment: Alignment.topLeft,
                                     child: Column(
                                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -119,9 +126,8 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
                                           children: [
                                             const Text('Name: ', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black)),
                                             Container(
-                                              width: 250,
                                               decoration: const BoxDecoration(border: Border(bottom: BorderSide(width: 1))),
-                                              child: const Text('JOHN DOE', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black)),
+                                              child: Text(_selectedStudent, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black)),
                                             ),
                                           ],
                                         ),
@@ -142,30 +148,26 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
                                 Positioned(
                                   top: _qrTop * 0.5,
                                   right: _qrRight * 0.5,
-                                  child: Transform.scale(
-                                    scale: 0.5,
-                                    alignment: Alignment.topRight,
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      crossAxisAlignment: CrossAxisAlignment.center,
-                                      children: [
-                                        Container(
-                                          width: 75,
-                                          height: 75,
-                                          color: Colors.grey.shade300,
-                                          child: const Center(child: Icon(Icons.qr_code, size: 40)),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment: CrossAxisAlignment.center,
+                                    children: [
+                                      Container(
+                                        width: _qrSize * 0.5,
+                                        height: _qrSize * 0.5,
+                                        color: Colors.grey.shade300,
+                                        child: const Center(child: Icon(Icons.qr_code, size: 20)),
+                                      ),
+                                      const SizedBox(height: 2.5),
+                                      const Text(
+                                        'Sheet ID: CM50-A-0001',
+                                        style: TextStyle(
+                                          fontSize: 4.5,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.black,
                                         ),
-                                        const SizedBox(height: 5), // Decreased space
-                                        const Text(
-                                          'Sheet ID: CM50-A-0001',
-                                          style: TextStyle(
-                                            fontSize: 9,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.black,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ],
@@ -192,21 +194,32 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
             ),
           ),
           
-          if (_isDebugAlignment) _buildAlignmentSliders(),
+          if (_isDebugAlignment) Expanded(flex: 2, child: _buildAlignmentSliders()),
 
           // Selection Section
-          Expanded(
+          if (!_isDebugAlignment) Expanded(
             flex: 2,
             child: Container(
               color: Colors.white,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Padding(
-                    padding: EdgeInsets.fromLTRB(20, 20, 20, 10),
-                    child: Text(
-                      'SELECT LAYOUT',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'SELECT LAYOUT',
+                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey),
+                        ),
+                        DropdownButton<String>(
+                          value: _selectedStudent,
+                          items: ["JOHN DOE", "JANE DOE"].map((s) => DropdownMenuItem(value: s, child: Text(s, style: const TextStyle(fontSize: 12)))).toList(),
+                          onChanged: (v) => setState(() => _selectedStudent = v!),
+                          underline: Container(),
+                        ),
+                      ],
                     ),
                   ),
                   Expanded(
@@ -266,7 +279,7 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
       bottom: b != null ? b * 0.5 : null,
       child: Container(
         padding: const EdgeInsets.all(2),
-        color: Colors.red.withOpacity(0.3),
+        color: Colors.red.withValues(alpha: 0.3),
         child: Text(label, style: const TextStyle(fontSize: 8, color: Colors.red, fontWeight: FontWeight.bold)),
       ),
     );
@@ -275,13 +288,25 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
   Widget _buildAlignmentSliders() {
     return Container(
       color: Colors.white,
-      padding: const EdgeInsets.all(16),
-      child: Column(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: ListView(
         children: [
-          _slider("Name Top", _nameTop, 0, 300, (v) => setState(() => _nameTop = v)),
-          _slider("Name Left", _nameLeft, 0, 300, (v) => setState(() => _nameLeft = v)),
-          _slider("QR Top", _qrTop, 0, 300, (v) => setState(() => _qrTop = v)),
-          _slider("QR Right", _qrRight, 0, 300, (v) => setState(() => _qrRight = v)),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8.0),
+            child: Text('NAME & SET OVERLAY', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.blue)),
+          ),
+          _slider("Top", _nameTop, 0, 400, (v) => setState(() => _nameTop = v)),
+          _slider("Left", _nameLeft, 0, 400, (v) => setState(() => _nameLeft = v)),
+          _slider("Scale", _nameScale, 0.5, 2.0, (v) => setState(() => _nameScale = v)),
+          const Divider(),
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8.0),
+            child: Text('QR CODE OVERLAY', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.blue)),
+          ),
+          _slider("Top", _qrTop, 0, 400, (v) => setState(() => _qrTop = v)),
+          _slider("Right", _qrRight, 0, 400, (v) => setState(() => _qrRight = v)),
+          _slider("Size", _qrSize, 40, 150, (v) => setState(() => _qrSize = v)),
+          const SizedBox(height: 20),
         ],
       ),
     );
@@ -290,35 +315,66 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
   Widget _slider(String label, double val, double min, double max, ValueChanged<double> onChanged) {
     return Row(
       children: [
-        SizedBox(width: 80, child: Text(label, style: const TextStyle(fontSize: 11))),
+        SizedBox(width: 60, child: Text(label, style: const TextStyle(fontSize: 11))),
         Expanded(child: Slider(value: val, min: min, max: max, onChanged: onChanged)),
-        Text(val.toStringAsFixed(0), style: const TextStyle(fontSize: 10)),
+        SizedBox(width: 35, child: Text(val.toStringAsFixed(1), style: const TextStyle(fontSize: 10))),
       ],
     );
   }
 
   Widget _buildActionButton() {
     return Container(
-      padding: const EdgeInsets.all(20),
-      child: SizedBox(
-        width: double.infinity,
-        height: 55,
-        child: ElevatedButton.icon(
-          onPressed: () async {
-            await PdfGenerator.generateAndPrint(
-              _selectedTemplate,
-              alignment: PdfAlignment(
-                nameTop: _nameTop,
-                nameLeft: _nameLeft,
-                qrTop: _qrTop,
-                qrRight: _qrRight,
-              ),
-            );
-          },
-          icon: const Icon(Icons.picture_as_pdf),
-          label: const Text('GENERATE PRINTABLE PDF', style: TextStyle(fontWeight: FontWeight.bold)),
-          style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-        ),
+      padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+      child: Column(
+        children: [
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton.icon(
+              onPressed: () async {
+                await PdfGenerator.generateAndPrint(
+                  _selectedTemplate,
+                  alignment: PdfAlignment(
+                    nameTop: _nameTop,
+                    nameLeft: _nameLeft,
+                    nameScale: _nameScale,
+                    qrTop: _qrTop,
+                    qrRight: _qrRight,
+                    qrSize: _qrSize,
+                  ),
+                  studentNames: [_selectedStudent],
+                );
+              },
+              icon: const Icon(Icons.person),
+              label: Text('EXPORT ONLY $_selectedStudent', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+            ),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            height: 55,
+            child: ElevatedButton.icon(
+              onPressed: () async {
+                await PdfGenerator.generateAndPrint(
+                  _selectedTemplate,
+                  alignment: PdfAlignment(
+                    nameTop: _nameTop,
+                    nameLeft: _nameLeft,
+                    nameScale: _nameScale,
+                    qrTop: _qrTop,
+                    qrRight: _qrRight,
+                    qrSize: _qrSize,
+                  ),
+                  studentNames: ["JOHN DOE", "JANE DOE"], // The list of all students
+                );
+              },
+              icon: const Icon(Icons.group),
+              label: const Text('GENERATE FOR ALL STUDENTS', style: TextStyle(fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+            ),
+          ),
+        ],
       ),
     );
   }

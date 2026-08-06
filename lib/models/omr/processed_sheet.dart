@@ -25,6 +25,12 @@ class ProcessedSheet {
   /// The data decoded from the QR code on the sheet.
   final QrData? qrData;
 
+  /// The detected Exam Set (A or B).
+  final String? detectedSet;
+
+  /// The name of the template used for processing.
+  final String templateName;
+
   ProcessedSheet({
     required this.warpedImage,
     required this.thresholdImage,
@@ -32,6 +38,8 @@ class ProcessedSheet {
     required this.questionImages,
     required this.results,
     this.qrData,
+    this.detectedSet,
+    required this.templateName,
   });
 
   Map<String, dynamic> toMap() {
@@ -42,6 +50,8 @@ class ProcessedSheet {
       'questionImages': questionImages.map((img) => base64Encode(img)).toList(),
       'results': results.map((res) => res.toMap()).toList(),
       'qrData': qrData?.toMap(),
+      'detectedSet': detectedSet,
+      'templateName': templateName,
     };
   }
 
