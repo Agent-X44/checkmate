@@ -50,7 +50,9 @@ class _LoginScreenState extends State<LoginScreen> {
                   return Icon(
                     Icons.check_circle_outline,
                     size: 100,
-                    color: isDark ? theme.colorScheme.secondary : theme.colorScheme.primary,
+                    color: isDark
+                        ? theme.colorScheme.secondary
+                        : theme.colorScheme.primary,
                   );
                 },
               ),
@@ -59,7 +61,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 'Checkmate',
                 style: theme.textTheme.headlineLarge?.copyWith(
                   fontWeight: FontWeight.bold,
-                  color: isDark ? theme.colorScheme.secondary : theme.colorScheme.primary,
+                  color: isDark
+                      ? theme.colorScheme.secondary
+                      : theme.colorScheme.primary,
                 ),
               ),
               const Text(
@@ -68,14 +72,15 @@ class _LoginScreenState extends State<LoginScreen> {
                 style: TextStyle(fontSize: 14, color: Colors.grey),
               ),
               const SizedBox(height: 40),
-              
+
               // Animated Switcher for Login/Sign Up Mode Title
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 300),
                 child: Text(
                   _isLoginMode ? 'Welcome Back' : 'Create Account',
                   key: ValueKey<bool>(_isLoginMode),
-                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                      fontSize: 24, fontWeight: FontWeight.bold),
                 ),
               ),
               const SizedBox(height: 30),
@@ -87,7 +92,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   decoration: const InputDecoration(
                     labelText: 'Email Address',
                     prefixIcon: Icon(Icons.email),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.all(Radius.circular(12))),
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -98,7 +104,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 decoration: const InputDecoration(
                   labelText: 'Username',
                   prefixIcon: Icon(Icons.person),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.all(Radius.circular(12))),
                 ),
               ),
               const SizedBox(height: 16),
@@ -108,7 +115,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 decoration: const InputDecoration(
                   labelText: 'Password',
                   prefixIcon: Icon(Icons.lock),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.all(Radius.circular(12))),
                 ),
               ),
               const SizedBox(height: 30),
@@ -120,11 +128,13 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: ElevatedButton(
                   onPressed: _handleAuth,
                   style: ElevatedButton.styleFrom(
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                   ),
                   child: Text(
                     _isLoginMode ? 'LOGIN' : 'SIGN UP',
-                    style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                    style: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold),
                   ),
                 ),
               ),
@@ -138,9 +148,9 @@ class _LoginScreenState extends State<LoginScreen> {
                   });
                 },
                 child: Text(
-                  _isLoginMode 
-                    ? "Don't have an account? Sign Up" 
-                    : "Already have an account? Login",
+                  _isLoginMode
+                      ? "Don't have an account? Sign Up"
+                      : "Already have an account? Login",
                   style: TextStyle(color: theme.colorScheme.primary),
                 ),
               ),

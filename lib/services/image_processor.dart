@@ -19,7 +19,7 @@ class ScanRequest {
   final int height;
   final int bytesPerRow;
   final SendPort replyPort;
-  
+
   final double cannyThreshold1;
   final double cannyThreshold2;
   final double blurSigma;
@@ -73,10 +73,9 @@ class ScanResponse {
 }
 
 class ImageProcessor {
-  
   static String getOpenCVVersion() {
     try {
-      return "OpenCV (via opencv_dart)"; 
+      return "OpenCV (via opencv_dart)";
     } catch (e) {
       return "Error: $e";
     }
@@ -112,26 +111,28 @@ class ImageProcessor {
             message.bytes.getRange(start, start + message.width),
           );
         }
-        mat = cv.Mat.fromList(message.height, message.width, cv.MatType.CV_8UC1, cleanBytes);
+        mat = cv.Mat.fromList(
+            message.height, message.width, cv.MatType.CV_8UC1, cleanBytes);
       } else {
-        mat = cv.Mat.fromList(message.height, message.width, cv.MatType.CV_8UC1, message.bytes);
+        mat = cv.Mat.fromList(
+            message.height, message.width, cv.MatType.CV_8UC1, message.bytes);
       }
 
       // 2. Optimization: Downscale for FAST background processing
-      // We process at 400px width for maximum performance, matching the logic of 
+      // We process at 400px width for maximum performance, matching the logic of
       // capturing HD but analyzing at a lower resolution.
-      const double targetWidth = 400.0; 
+      const double targetWidth = 400.0;
       final double resizeScale = targetWidth / message.width;
       final int targetHeight = (message.height * resizeScale).toInt();
       final smallMat = cv.resize(mat, (targetWidth.toInt(), targetHeight));
-      
+
       var processedMat = smallMat;
       if (message.rotationIndex == 1) {
-         processedMat = cv.rotate(smallMat, cv.ROTATE_90_CLOCKWISE);
+        processedMat = cv.rotate(smallMat, cv.ROTATE_90_CLOCKWISE);
       } else if (message.rotationIndex == 2) {
-         processedMat = cv.rotate(smallMat, cv.ROTATE_180);
+        processedMat = cv.rotate(smallMat, cv.ROTATE_180);
       } else if (message.rotationIndex == 3) {
-         processedMat = cv.rotate(smallMat, cv.ROTATE_90_COUNTERCLOCKWISE);
+        processedMat = cv.rotate(smallMat, cv.ROTATE_90_COUNTERCLOCKWISE);
       }
 
       final int finalW = processedMat.width;
@@ -139,15 +140,17 @@ class ImageProcessor {
 
       // 3. Computer Vision Pipeline: Aggressive Noise Suppression
       final blurred = cv.gaussianBlur(processedMat, (15, 15), 3.0);
-      final edged = cv.canny(blurred, message.cannyThreshold1, message.cannyThreshold2);
-      
+      final edged =
+          cv.canny(blurred, message.cannyThreshold1, message.cannyThreshold2);
+
       final kernel = cv.getStructuringElement(cv.MORPH_RECT, (9, 9));
       final closed = cv.morphologyEx(edged, cv.MORPH_CLOSE, kernel);
       final dilated = cv.dilate(closed, kernel);
 
       // 4. Contour Analysis
-      final (contours, _) = cv.findContours(dilated, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-      
+      final (contours, _) =
+          cv.findContours(dilated, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
       bool foundPaper = false;
       List<double>? paperCorners;
       Uint8List? debugBytes;
@@ -156,7 +159,7 @@ class ImageProcessor {
         final (_, encoded) = cv.imencode(".jpg", dilated);
         debugBytes = Uint8List.fromList(encoded);
       }
-      
+
       if (contours.isNotEmpty) {
         double maxArea = 0;
         cv.VecPoint? bestContour;
@@ -171,16 +174,16 @@ class ImageProcessor {
         if (bestContour != null) {
           final perimeter = cv.arcLength(bestContour, true);
           final approx = cv.approxPolyDP(bestContour, 0.02 * perimeter, true);
-          
+
           final double imgArea = (finalW * finalH).toDouble();
 
-          if (maxArea > (imgArea * message.sensitivity) && approx.length == 4) { 
-             foundPaper = true;
-             paperCorners = [];
-             for (var i = 0; i < approx.length; i++) {
-               paperCorners.add(approx[i].x.toDouble() / finalW);
-               paperCorners.add(approx[i].y.toDouble() / finalH);
-             }
+          if (maxArea > (imgArea * message.sensitivity) && approx.length == 4) {
+            foundPaper = true;
+            paperCorners = [];
+            for (var i = 0; i < approx.length; i++) {
+              paperCorners.add(approx[i].x.toDouble() / finalW);
+              paperCorners.add(approx[i].y.toDouble() / finalH);
+            }
           }
         }
       }
@@ -190,7 +193,7 @@ class ImageProcessor {
         corners: paperCorners,
         debugImage: debugBytes,
       ));
-      
+
       // Resource Cleanup
       mat.dispose();
       smallMat.dispose();
@@ -213,25 +216,30 @@ class ImageProcessor {
     final gray = cv.cvtColor(colorSheet, cv.COLOR_BGR2GRAY);
     final blurred = cv.gaussianBlur(gray, (5, 5), 1.0);
     // Use adaptive threshold to find markers in various lighting
-    final binary = cv.adaptiveThreshold(blurred, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
-    
+    final binary = cv.adaptiveThreshold(blurred, 255,
+        cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+
     final int w = binary.width;
     final int h = binary.height;
 
     // Define 4 corner search zones (15% of sheet size)
     final List<cv.Rect> zones = [
       cv.Rect(0, 0, (w * 0.15).toInt(), (h * 0.15).toInt()), // TL
-      cv.Rect((w * 0.85).toInt(), 0, (w * 0.15).toInt(), (h * 0.15).toInt()), // TR
-      cv.Rect((w * 0.85).toInt(), (h * 0.85).toInt(), (w * 0.15).toInt(), (h * 0.15).toInt()), // BR
-      cv.Rect(0, (h * 0.85).toInt(), (w * 0.15).toInt(), (h * 0.15).toInt()), // BL
+      cv.Rect(
+          (w * 0.85).toInt(), 0, (w * 0.15).toInt(), (h * 0.15).toInt()), // TR
+      cv.Rect((w * 0.85).toInt(), (h * 0.85).toInt(), (w * 0.15).toInt(),
+          (h * 0.15).toInt()), // BR
+      cv.Rect(
+          0, (h * 0.85).toInt(), (w * 0.15).toInt(), (h * 0.15).toInt()), // BL
     ];
 
     final List<cv.Point> finalPoints = [];
 
     for (var zone in zones) {
       final zoneMat = binary.region(zone);
-      final (contours, _) = cv.findContours(zoneMat, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-      
+      final (contours, _) =
+          cv.findContours(zoneMat, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
       cv.Point? bestPoint;
       double maxArea = 0;
 
@@ -244,11 +252,12 @@ class ImageProcessor {
         if (area > 40 && ratio > 0.6 && ratio < 1.4) {
           if (area > maxArea) {
             maxArea = area;
-            bestPoint = cv.Point(zone.x + rect.x + rect.width ~/ 2, zone.y + rect.y + rect.height ~/ 2);
+            bestPoint = cv.Point(zone.x + rect.x + rect.width ~/ 2,
+                zone.y + rect.y + rect.height ~/ 2);
           }
         }
       }
-      
+
       if (bestPoint != null) finalPoints.add(bestPoint);
       zoneMat.dispose();
       contours.dispose();
@@ -273,7 +282,7 @@ class ImageProcessor {
         message.replyPort.send(null);
         return;
       }
-      
+
       final int matW = mat.width;
       final int matH = mat.height;
 
@@ -286,47 +295,45 @@ class ImageProcessor {
           );
         }),
       );
-      
+
       // 3. Perspective Correction (Pass 1: Paper Edges with Padding)
       // Added 3% padding to ensure 4-corner square markers are NOT clipped.
-      warped = PerspectiveService.warpPaper(
-        mat, 
-        rawCorners, 
-        message.template.paperAspectRatio, 
-        message.template.targetWidth,
-        padding: 0.03
-      );
-      
+      warped = PerspectiveService.warpPaper(mat, rawCorners,
+          message.template.paperAspectRatio, message.template.targetWidth,
+          padding: 0.03);
+
       rawCorners.dispose();
 
       // 3.1 Precision Rectification (Pass 2: 4-Corner Marks)
       final globalFiducials = _detectGlobalFiducials(warped);
       if (globalFiducials.length == 4) {
-        debugPrint("OMR: Locked onto 4 square marks. Snapping to perfect grid...");
+        debugPrint(
+            "OMR: Locked onto 4 square marks. Snapping to perfect grid...");
         final refinedWarped = PerspectiveService.warpPaper(
-          warped, 
-          cv.VecPoint.fromList(globalFiducials), 
-          message.template.paperAspectRatio, 
-          message.template.targetWidth,
-          padding: 0.0 // Snap markers to exact corners (0.0 to 1.0)
-        );
+            warped,
+            cv.VecPoint.fromList(globalFiducials),
+            message.template.paperAspectRatio,
+            message.template.targetWidth,
+            padding: 0.0 // Snap markers to exact corners (0.0 to 1.0)
+            );
         warped.dispose();
         warped = refinedWarped;
       } else {
-        debugPrint("OMR: Square markers not found (${globalFiducials.length}/4). Using estimated grid.");
+        debugPrint(
+            "OMR: Square markers not found (${globalFiducials.length}/4). Using estimated grid.");
         // Fallback: Perform a warp with 0 padding to remove the 3% safety border
-        final fallbackCorners = cv.VecPoint.fromList(List.generate(message.corners.length ~/ 2, (i) {
+        final fallbackCorners = cv.VecPoint.fromList(
+            List.generate(message.corners.length ~/ 2, (i) {
           return cv.Point(
             (message.corners[i * 2] * matW).toInt(),
             (message.corners[i * 2 + 1] * matH).toInt(),
           );
         }));
         final fallbackWarped = PerspectiveService.warpPaper(
-          mat, 
-          fallbackCorners,
-          message.template.paperAspectRatio, 
-          message.template.targetWidth
-        );
+            mat,
+            fallbackCorners,
+            message.template.paperAspectRatio,
+            message.template.targetWidth);
         fallbackCorners.dispose();
         warped.dispose();
         warped = fallbackWarped;
@@ -344,21 +351,27 @@ class ImageProcessor {
         ];
 
         for (final region in qrRegions) {
-          final int x = (region.left * warped.width).toInt().clamp(0, warped.width - 1);
-          final int y = (region.top * warped.height).toInt().clamp(0, warped.height - 1);
-          final int w = (region.width * warped.width).toInt().clamp(1, warped.width - x);
-          final int h = (region.height * warped.height).toInt().clamp(1, warped.height - y);
-          
+          final int x =
+              (region.left * warped.width).toInt().clamp(0, warped.width - 1);
+          final int y =
+              (region.top * warped.height).toInt().clamp(0, warped.height - 1);
+          final int w =
+              (region.width * warped.width).toInt().clamp(1, warped.width - x);
+          final int h = (region.height * warped.height)
+              .toInt()
+              .clamp(1, warped.height - y);
+
           final qrInput = warped.region(cv.Rect(x, y, w, h));
           final (text, points, _) = detector.detectAndDecode(qrInput);
-          
+
           points.dispose();
           qrInput.dispose();
-          
+
           if (text.isNotEmpty) {
             qrData = QrData.fromRaw(text);
             debugPrint("QR DETECTED: $text");
-            if (qrData.templateName == 'Standard 50 Questions' || qrData.examCode.startsWith("CM50")) {
+            if (qrData.templateName == 'Standard 50 Questions' ||
+                qrData.examCode.startsWith("CM50")) {
               activeTemplate = Standard50QuestionsTemplate();
             }
             break;
@@ -384,7 +397,8 @@ class ImageProcessor {
             final int x = (p.dx * thresholded.width).toInt();
             final int y = (p.dy * thresholded.height).toInt();
             const int sz = 25;
-            final r = cv.Rect((x - sz ~/ 2).clamp(0, thresholded.width - sz), (y - sz ~/ 2).clamp(0, thresholded.height - sz), sz, sz);
+            final r = cv.Rect((x - sz ~/ 2).clamp(0, thresholded.width - sz),
+                (y - sz ~/ 2).clamp(0, thresholded.height - sz), sz, sz);
             final bubbleMat = thresholded.region(r);
             fills.add(cv.countNonZero(bubbleMat) / (sz * sz));
             bubbleMat.dispose();
@@ -406,12 +420,8 @@ class ImageProcessor {
       } else if (setRegion != null) {
         try {
           final setMat = TemplateService.extractRegion(thresholded, setRegion);
-          final result = BubbleDetectionService.detectFilledBubble(
-            setMat, 2, 
-            isBinary: true, 
-            gridStart: 0.1, 
-            gridWidthRatio: 0.8
-          );
+          final result = BubbleDetectionService.detectFilledBubble(setMat, 2,
+              isBinary: true, gridStart: 0.1, gridWidthRatio: 0.8);
           if (result.answer != null) {
             detectedSet = result.answer == "A" ? "SET A" : "SET B";
             debugPrint("OMR: Detected $detectedSet");
@@ -424,11 +434,11 @@ class ImageProcessor {
 
       // 5.1 Dynamic Column Detection (NEW: Max Area Logic)
       List<Rect> activeRegions = activeTemplate.answerRegions;
-      
+
       // 5.2 Answer Region Extraction and Question Splitting
       final List<BubbleResult> results = [];
       final List<Uint8List> questionImages = [];
-      
+
       // Default Calibration
       double gridStart = 0.15;
       double gridWidth = 0.82;
@@ -445,18 +455,19 @@ class ImageProcessor {
       }
 
       // Process each answer region (column)
-      final int questionsPerRegion = (activeTemplate.totalQuestions / activeRegions.length).ceil();
+      final int questionsPerRegion =
+          (activeTemplate.totalQuestions / activeRegions.length).ceil();
 
       for (int i = 0; i < activeRegions.length; i++) {
         final region = activeRegions[i];
         final regionMat = TemplateService.extractRegion(thresholded, region);
-        
-        final questionsInThisRegion = (i == activeRegions.length - 1) 
+
+        final questionsInThisRegion = (i == activeRegions.length - 1)
             ? activeTemplate.totalQuestions - (questionsPerRegion * i)
             : questionsPerRegion;
 
         final questionMats = TemplateService.splitQuestions(
-          regionMat, 
+          regionMat,
           questionsInThisRegion,
           yOffset: calibratedY,
           heightMultiplier: message.stripHeightMultiplier,
@@ -464,7 +475,7 @@ class ImageProcessor {
 
         for (final m in questionMats) {
           final result = BubbleDetectionService.detectFilledBubble(
-            m, 
+            m,
             activeTemplate.choicesPerQuestion,
             isBinary: true,
             gridStart: gridStart,
@@ -480,10 +491,13 @@ class ImageProcessor {
       }
 
       final warpedBytes = Uint8List.fromList(cv.imencode(".jpg", warped).$2);
-      final thresholdBytes = Uint8List.fromList(cv.imencode(".jpg", thresholded).$2);
-      
-      final legacyAnswerArea = TemplateService.extractRegion(warped, activeTemplate.answerRegions.first);
-      final answerAreaBytes = Uint8List.fromList(cv.imencode(".jpg", legacyAnswerArea).$2);
+      final thresholdBytes =
+          Uint8List.fromList(cv.imencode(".jpg", thresholded).$2);
+
+      final legacyAnswerArea = TemplateService.extractRegion(
+          warped, activeTemplate.answerRegions.first);
+      final answerAreaBytes =
+          Uint8List.fromList(cv.imencode(".jpg", legacyAnswerArea).$2);
       legacyAnswerArea.dispose();
 
       message.replyPort.send(ProcessedSheet(

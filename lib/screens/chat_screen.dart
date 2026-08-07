@@ -46,16 +46,16 @@ class _ChatScreenState extends State<ChatScreen> {
                     builder: (context) => PrivateChatScreen(
                       course: widget.course,
                       student: Student(
-                        id: 'instructor_id', 
-                        name: widget.course.instructor, 
-                        avatar: widget.course.instructor[0]
-                      ),
+                          id: 'instructor_id',
+                          name: widget.course.instructor,
+                          avatar: widget.course.instructor[0]),
                     ),
                   ),
                 );
               },
               icon: const Icon(Icons.person, color: Colors.white, size: 18),
-              label: const Text('PROFESSOR', style: TextStyle(color: Colors.white, fontSize: 12)),
+              label: const Text('PROFESSOR',
+                  style: TextStyle(color: Colors.white, fontSize: 12)),
             ),
         ],
       ),
@@ -67,7 +67,8 @@ class _ChatScreenState extends State<ChatScreen> {
               reverse: true,
               itemCount: widget.course.groupMessages.length,
               itemBuilder: (context, index) {
-                final message = widget.course.groupMessages[widget.course.groupMessages.length - 1 - index];
+                final message = widget.course.groupMessages[
+                    widget.course.groupMessages.length - 1 - index];
                 return _buildMessageBubble(message);
               },
             ),
@@ -85,12 +86,16 @@ class _ChatScreenState extends State<ChatScreen> {
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         decoration: BoxDecoration(
-          color: message.isMe 
-              ? Theme.of(context).colorScheme.primary 
+          color: message.isMe
+              ? Theme.of(context).colorScheme.primary
               : Theme.of(context).colorScheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(20).copyWith(
-            bottomRight: message.isMe ? const Radius.circular(0) : const Radius.circular(20),
-            bottomLeft: message.isMe ? const Radius.circular(20) : const Radius.circular(0),
+            bottomRight: message.isMe
+                ? const Radius.circular(0)
+                : const Radius.circular(20),
+            bottomLeft: message.isMe
+                ? const Radius.circular(20)
+                : const Radius.circular(0),
           ),
         ),
         child: Column(
@@ -100,7 +105,7 @@ class _ChatScreenState extends State<ChatScreen> {
               Text(
                 message.sender,
                 style: TextStyle(
-                  fontSize: 12, 
+                  fontSize: 12,
                   fontWeight: FontWeight.bold,
                   color: Theme.of(context).colorScheme.primary,
                 ),

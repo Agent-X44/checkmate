@@ -34,7 +34,7 @@ class Student {
 
 class Course {
   final String id;
-  final String code; 
+  final String code;
   final String name;
   final String instructor;
   final String averageGrade;
@@ -66,7 +66,10 @@ class Course {
 
 String generateJoinCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  return List.generate(6, (index) => chars[(DateTime.now().microsecondsSinceEpoch + index) % chars.length]).join();
+  return List.generate(
+      6,
+      (index) => chars[(DateTime.now().microsecondsSinceEpoch + index) %
+          chars.length]).join();
 }
 
 // Updated global state to show a MIX of roles for the same user
@@ -91,7 +94,7 @@ List<Course> globalDummyCourses = [
     id: '3',
     code: 'CPE 411',
     name: 'Embedded Systems Design',
-    instructor: 'Dr. Alan Turing', 
+    instructor: 'Dr. Alan Turing',
     averageGrade: '78%',
     isOwner: false,
     joinCode: 'EMB123',

@@ -14,20 +14,14 @@ rootProject.layout.buildDirectory.value(newBuildDir)
 subprojects {
     val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
     project.layout.buildDirectory.value(newSubprojectBuildDir)
-}
-subprojects {
-    project.evaluationDependsOn(":app")
-}
 
-// Force a consistent compileSdk across all subprojects WITHOUT afterEvaluate
-// This avoids the "project already evaluated" error.
-subprojects {
-    plugins.withType<com.android.build.gradle.api.AndroidBasePlugin> {
-        extensions.configure<com.android.build.gradle.BaseExtension> {
-            compileSdkVersion(36)
+    // Fix for missing CallbackToFutureAdapter in some plugins
+    afterEvaluate {
+        if (project.plugins.hasPlugin("com.android.library") || project.plugins.hasPlugin("com.android.application")) {
+            project.dependencies {
+                add("implementation", "androidx.concurrent:concurrent-futures:1.2.0")
+            }
         }
-        // Fix for CameraX CallbackToFutureAdapter error
-        project.dependencies.add("implementation", "androidx.concurrent:concurrent-futures:1.2.0")
     }
 }
 

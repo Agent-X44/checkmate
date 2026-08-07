@@ -55,7 +55,8 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(widget.student.name, style: const TextStyle(fontSize: 16)),
-            Text(widget.course.code, style: const TextStyle(fontSize: 12, color: Colors.white70)),
+            Text(widget.course.code,
+                style: const TextStyle(fontSize: 12, color: Colors.white70)),
           ],
         ),
       ),
@@ -74,7 +75,10 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
                   SizedBox(width: 8),
                   Text(
                     'The instructor has disabled replies for this course.',
-                    style: TextStyle(fontSize: 12, color: Colors.orange, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.orange,
+                        fontWeight: FontWeight.bold),
                   ),
                 ],
               ),
@@ -85,7 +89,8 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
               reverse: true,
               itemCount: _chat.messages.length,
               itemBuilder: (context, index) {
-                final message = _chat.messages[_chat.messages.length - 1 - index];
+                final message =
+                    _chat.messages[_chat.messages.length - 1 - index];
                 return _buildMessageBubble(message);
               },
             ),
@@ -103,12 +108,16 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         decoration: BoxDecoration(
-          color: message.isMe 
-              ? Theme.of(context).colorScheme.primary 
+          color: message.isMe
+              ? Theme.of(context).colorScheme.primary
               : Theme.of(context).colorScheme.surfaceContainerHighest,
           borderRadius: BorderRadius.circular(20).copyWith(
-            bottomRight: message.isMe ? const Radius.circular(0) : const Radius.circular(20),
-            bottomLeft: message.isMe ? const Radius.circular(20) : const Radius.circular(0),
+            bottomRight: message.isMe
+                ? const Radius.circular(0)
+                : const Radius.circular(20),
+            bottomLeft: message.isMe
+                ? const Radius.circular(20)
+                : const Radius.circular(0),
           ),
         ),
         child: Text(

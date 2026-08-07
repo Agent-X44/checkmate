@@ -11,7 +11,7 @@ class BubbleSheetTemplate {
   /// calculated from the detected physical corners of the paper
   /// instead of forcing a specific size.
   final double paperAspectRatio;
-  
+
   /// The normalized regions (0.0 to 1.0) where answers are located.
   /// Each Rect represents a column of questions.
   final List<Rect> answerRegions;
@@ -24,16 +24,16 @@ class BubbleSheetTemplate {
 
   /// Optional: Specific bubble coordinates for Set detection.
   final List<Offset>? setBubbles;
-  
+
   final int totalQuestions;
   final int choicesPerQuestion;
   final int columns;
-  
+
   /// Visual configuration for the sheet generator.
   final bool showColumnOutlines;
   final double columnSpacing;
   final double innerPadding;
-  
+
   /// Width of the final warped paper image for processing.
   final int targetWidth;
 
@@ -58,5 +58,6 @@ class BubbleSheetTemplate {
   bool get isAdaptableAspectRatio => paperAspectRatio <= 0;
 
   /// Returns the target height based on width and aspect ratio.
-  int get targetHeight => isAdaptableAspectRatio ? -1 : (targetWidth / paperAspectRatio).round();
+  int get targetHeight =>
+      isAdaptableAspectRatio ? -1 : (targetWidth / paperAspectRatio).round();
 }

@@ -9,13 +9,13 @@ import 'qr_data.dart';
 class ProcessedSheet {
   /// The high-res paper image after perspective correction.
   final Uint8List warpedImage;
-  
+
   /// The binary (black and white) image of the entire paper.
   final Uint8List thresholdImage;
-  
+
   /// The specific cropped region containing only the bubbles.
   final Uint8List answerRegion;
-  
+
   /// A list of individual crops, each containing exactly one question row.
   final List<Uint8List> questionImages;
 

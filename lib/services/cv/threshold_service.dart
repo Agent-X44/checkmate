@@ -5,7 +5,8 @@ class ThresholdService {
   /// Reverted from Adaptive because Otsu was producing cleaner strips for this paper type.
   static cv.Mat applyOtsuThreshold(cv.Mat src, {double sigma = 0.2}) {
     // 1. Grayscale
-    cv.Mat gray = src.channels == 3 ? cv.cvtColor(src, cv.COLOR_BGR2GRAY) : src.clone();
+    cv.Mat gray =
+        src.channels == 3 ? cv.cvtColor(src, cv.COLOR_BGR2GRAY) : src.clone();
 
     // 2. Normalize Lighting (Keep CLAHE as it helps Otsu too)
     final clahe = cv.createCLAHE(clipLimit: 2.0, tileGridSize: (8, 8));

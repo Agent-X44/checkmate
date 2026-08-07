@@ -45,7 +45,8 @@ class PdfGenerator {
       pdf.addPage(
         pw.Page(
           pageFormat: PdfPageFormat.a4,
-          margin: const pw.EdgeInsets.only(top: 35, left: 25, right: 25, bottom: 25),
+          margin: const pw.EdgeInsets.only(
+              top: 35, left: 25, right: 25, bottom: 25),
           build: (pw.Context context) {
             return pw.Stack(
               children: [
@@ -65,18 +66,19 @@ class PdfGenerator {
                           children: [
                             pw.Text(
                               'Name: ',
-                              style: pw.TextStyle(
+                              style: const pw.TextStyle(
                                 fontSize: 14,
                                 fontWeight: pw.FontWeight.bold,
                               ),
                             ),
                             pw.Container(
                               decoration: const pw.BoxDecoration(
-                                border: pw.Border(bottom: pw.BorderSide(width: 1)),
+                                border:
+                                    pw.Border(bottom: pw.BorderSide(width: 1)),
                               ),
                               child: pw.Text(
                                 studentName,
-                                style: pw.TextStyle(
+                                style: const pw.TextStyle(
                                   fontSize: 16,
                                   fontWeight: pw.FontWeight.bold,
                                 ),
@@ -89,7 +91,7 @@ class PdfGenerator {
                           children: [
                             pw.Text(
                               'Set: ',
-                              style: pw.TextStyle(
+                              style: const pw.TextStyle(
                                 fontSize: 14,
                                 fontWeight: pw.FontWeight.bold,
                               ),
@@ -116,14 +118,15 @@ class PdfGenerator {
                         height: alignment.qrSize,
                         child: pw.BarcodeWidget(
                           barcode: pw.Barcode.qrCode(),
-                          data: '$studentName, $sheetId, CS101, Midterm Exam, ${template.name}',
+                          data:
+                              '$studentName, $sheetId, CS101, Midterm Exam, ${template.name}',
                           drawText: false,
                         ),
                       ),
                       pw.SizedBox(height: 5),
                       pw.Text(
                         'Sheet ID: $sheetId',
-                        style: pw.TextStyle(
+                        style: const pw.TextStyle(
                           fontSize: 9,
                           fontWeight: pw.FontWeight.bold,
                           color: PdfColors.black,
@@ -151,14 +154,17 @@ class PdfGenerator {
         pw.Container(
           width: 15,
           height: 15,
-          decoration: const pw.BoxDecoration(border: pw.Border(
+          decoration: const pw.BoxDecoration(
+              border: pw.Border(
             top: pw.BorderSide(width: 1),
             left: pw.BorderSide(width: 1),
             right: pw.BorderSide(width: 1),
             bottom: pw.BorderSide(width: 1),
           )),
           child: isChecked
-              ? pw.Center(child: pw.Container(width: 8, height: 8, color: PdfColors.black))
+              ? pw.Center(
+                  child:
+                      pw.Container(width: 8, height: 8, color: PdfColors.black))
               : null,
         ),
         pw.SizedBox(width: 5),

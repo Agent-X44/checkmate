@@ -29,8 +29,8 @@ class _StudentsListScreenState extends State<StudentsListScreen> {
                     });
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text(value 
-                            ? 'Students can now reply to private messages.' 
+                        content: Text(value
+                            ? 'Students can now reply to private messages.'
                             : 'Student replies have been disabled.'),
                         duration: const Duration(seconds: 2),
                       ),
@@ -47,10 +47,12 @@ class _StudentsListScreenState extends State<StudentsListScreen> {
           if (widget.course.isOwner)
             Container(
               padding: const EdgeInsets.all(12),
-              color: Theme.of(context).colorScheme.primaryContainer.withAlpha(50),
+              color:
+                  Theme.of(context).colorScheme.primaryContainer.withAlpha(50),
               child: Row(
                 children: [
-                  Icon(Icons.info_outline, size: 16, color: Theme.of(context).colorScheme.primary),
+                  Icon(Icons.info_outline,
+                      size: 16, color: Theme.of(context).colorScheme.primary),
                   const SizedBox(width: 8),
                   const Expanded(
                     child: Text(
@@ -68,7 +70,7 @@ class _StudentsListScreenState extends State<StudentsListScreen> {
               separatorBuilder: (context, index) => const Divider(),
               itemBuilder: (context, index) {
                 final student = widget.course.enrolledStudents[index];
-                
+
                 // Determine if messaging is allowed (only for the course owner/teacher)
                 final bool canMessage = widget.course.isOwner;
 
@@ -83,20 +85,23 @@ class _StudentsListScreenState extends State<StudentsListScreen> {
                     title: Text(student.name),
                     subtitle: const Text('Regular Student'),
                     // Only show message icon and enable tap if the user is the teacher
-                    trailing: canMessage 
-                        ? const Icon(Icons.message, size: 20, color: Colors.blue)
+                    trailing: canMessage
+                        ? const Icon(Icons.message,
+                            size: 20, color: Colors.blue)
                         : null,
-                    onTap: canMessage ? () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => PrivateChatScreen(
-                            course: widget.course,
-                            student: student,
-                          ),
-                        ),
-                      );
-                    } : null,
+                    onTap: canMessage
+                        ? () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => PrivateChatScreen(
+                                  course: widget.course,
+                                  student: student,
+                                ),
+                              ),
+                            );
+                          }
+                        : null,
                   ),
                 );
               },

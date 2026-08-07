@@ -37,7 +37,8 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (context) => ChatScreen(course: widget.course)),
+                MaterialPageRoute(
+                    builder: (context) => ChatScreen(course: widget.course)),
               );
             },
           ),
@@ -91,7 +92,8 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
                   if (!isTeacherView)
                     Text(
                       'Instructor: ${widget.course.instructor}',
-                      style: const TextStyle(color: Colors.white70, fontSize: 16),
+                      style:
+                          const TextStyle(color: Colors.white70, fontSize: 16),
                     ),
                 ],
               ),
@@ -103,37 +105,51 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
                 children: [
                   Text(
                     'Analytics Overview',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.copyWith(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 12),
-                  isTeacherView ? _buildTeacherAnalytics(context) : _buildStudentAnalytics(context),
+                  isTeacherView
+                      ? _buildTeacherAnalytics(context)
+                      : _buildStudentAnalytics(context),
                   const SizedBox(height: 24),
                   Text(
                     'Course Materials',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                    style: Theme.of(context)
+                        .textTheme
+                        .titleLarge
+                        ?.copyWith(fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 12),
                   _buildSectionCard(
                     context,
                     'Assignments',
-                    isTeacherView ? 'View and create assignments' : '3 pending assignments',
+                    isTeacherView
+                        ? 'View and create assignments'
+                        : '3 pending assignments',
                     Icons.assignment,
                     Colors.orange,
                     () => Navigator.push(
-                      context, 
-                      MaterialPageRoute(builder: (context) => AssignmentsScreen(isOwner: isTeacherView))
-                    ),
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) =>
+                                AssignmentsScreen(isOwner: isTeacherView))),
                   ),
                   _buildSectionCard(
                     context,
                     'Quizzes & Exams',
-                    isTeacherView ? 'Manage exams with AI' : 'Next exam on Friday',
+                    isTeacherView
+                        ? 'Manage exams with AI'
+                        : 'Next exam on Friday',
                     Icons.quiz,
                     Colors.red,
                     () => Navigator.push(
-                      context, 
-                      MaterialPageRoute(builder: (context) => QuizzesExamsScreen(isOwner: isTeacherView))
-                    ),
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) =>
+                                QuizzesExamsScreen(isOwner: isTeacherView))),
                   ),
                   _buildSectionCard(
                     context,
@@ -141,7 +157,11 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
                     '${widget.course.enrolledStudents.length} enrolled students',
                     Icons.people,
                     Colors.blue,
-                    () => Navigator.push(context, MaterialPageRoute(builder: (context) => StudentsListScreen(course: widget.course))),
+                    () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) =>
+                                StudentsListScreen(course: widget.course))),
                   ),
                   if (isTeacherView)
                     Padding(
@@ -265,8 +285,10 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
                   child: LinearProgressIndicator(
                     value: 0.65,
                     minHeight: 12,
-                    backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    valueColor: AlwaysStoppedAnimation<Color>(widget.course.gradient[0]),
+                    backgroundColor:
+                        Theme.of(context).colorScheme.surfaceContainerHighest,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                        widget.course.gradient[0]),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -282,7 +304,8 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
     );
   }
 
-  Widget _buildMetricCard(BuildContext context, String label, String value, IconData icon, Color color) {
+  Widget _buildMetricCard(BuildContext context, String label, String value,
+      IconData icon, Color color) {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -323,7 +346,8 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
               height: 100 * heights[index],
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.primary.withAlpha(150),
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+                borderRadius:
+                    const BorderRadius.vertical(top: Radius.circular(4)),
               ),
             ),
             const SizedBox(height: 4),
@@ -334,7 +358,8 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
     );
   }
 
-  Widget _buildSectionCard(BuildContext context, String title, String subtitle, IconData icon, Color color, VoidCallback onTap) {
+  Widget _buildSectionCard(BuildContext context, String title, String subtitle,
+      IconData icon, Color color, VoidCallback onTap) {
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       child: ListTile(

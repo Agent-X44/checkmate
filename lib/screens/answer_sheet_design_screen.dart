@@ -7,7 +7,8 @@ class AnswerSheetDesignScreen extends StatefulWidget {
   const AnswerSheetDesignScreen({super.key});
 
   @override
-  State<AnswerSheetDesignScreen> createState() => _AnswerSheetDesignScreenState();
+  State<AnswerSheetDesignScreen> createState() =>
+      _AnswerSheetDesignScreenState();
 }
 
 class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
@@ -47,7 +48,7 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
   late BubbleSheetTemplate _selectedTemplate;
   bool _isDebugAlignment = false;
   String _selectedStudent = "JOHN DOE";
-  
+
   // Alignment Debug Values
   double _nameTop = 87.1;
   double _nameLeft = 145.0;
@@ -70,7 +71,8 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
         actions: [
           IconButton(
             icon: Icon(_isDebugAlignment ? Icons.grid_on : Icons.grid_off),
-            onPressed: () => setState(() => _isDebugAlignment = !_isDebugAlignment),
+            onPressed: () =>
+                setState(() => _isDebugAlignment = !_isDebugAlignment),
             tooltip: "Debug Alignment",
           ),
         ],
@@ -101,40 +103,60 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
                       ),
                       child: Padding(
                         padding: const EdgeInsets.fromLTRB(
-                          25 * 0.5, // side margin scaled
-                          35 * 0.5, // top margin scaled
-                          25 * 0.5, 
-                          25 * 0.5
-                        ),
+                            25 * 0.5, // side margin scaled
+                            35 * 0.5, // top margin scaled
+                            25 * 0.5,
+                            25 * 0.5),
                         child: Stack(
                           clipBehavior: Clip.none,
                           children: [
-                            if (_selectedTemplate.name == 'Standard 50 Questions') ...[
-                              Positioned.fill(child: Image.asset('assets/50_questions.png', fit: BoxFit.contain)),
+                            if (_selectedTemplate.name ==
+                                'Standard 50 Questions') ...[
+                              Positioned.fill(
+                                  child: Image.asset('assets/50_questions.png',
+                                      fit: BoxFit.contain)),
                               if (_isDebugAlignment) ...[
                                 // Name/Set Overlay Preview
                                 Positioned(
                                   top: (_nameTop - 20) * 0.5,
                                   left: (_nameLeft - 85) * 0.5,
                                   child: Transform.scale(
-                                    scale: _nameScale * 0.5, // 0.5 for preview scaling
+                                    scale: _nameScale *
+                                        0.5, // 0.5 for preview scaling
                                     alignment: Alignment.topLeft,
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Row(
                                           children: [
-                                            const Text('Name: ', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black)),
+                                            const Text('Name: ',
+                                                style: TextStyle(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.bold,
+                                                    color: Colors.black)),
                                             Container(
-                                              decoration: const BoxDecoration(border: Border(bottom: BorderSide(width: 1))),
-                                              child: Text(_selectedStudent, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black)),
+                                              decoration: const BoxDecoration(
+                                                  border: Border(
+                                                      bottom: BorderSide(
+                                                          width: 1))),
+                                              child: Text(_selectedStudent,
+                                                  style: const TextStyle(
+                                                      fontSize: 16,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      color: Colors.black)),
                                             ),
                                           ],
                                         ),
                                         const SizedBox(height: 15),
                                         Row(
                                           children: [
-                                            const Text('Set: ', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.black)),
+                                            const Text('Set: ',
+                                                style: TextStyle(
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.bold,
+                                                    color: Colors.black)),
                                             _miniCheckbox('A', false),
                                             const SizedBox(width: 20),
                                             _miniCheckbox('B', false),
@@ -150,13 +172,16 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
                                   right: _qrRight * 0.5,
                                   child: Column(
                                     mainAxisSize: MainAxisSize.min,
-                                    crossAxisAlignment: CrossAxisAlignment.center,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.center,
                                     children: [
                                       Container(
                                         width: _qrSize * 0.5,
                                         height: _qrSize * 0.5,
                                         color: Colors.grey.shade300,
-                                        child: const Center(child: Icon(Icons.qr_code, size: 20)),
+                                        child: const Center(
+                                            child:
+                                                Icon(Icons.qr_code, size: 20)),
                                       ),
                                       const SizedBox(height: 2.5),
                                       const Text(
@@ -172,17 +197,21 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
                                 ),
                               ],
                             ],
-                            
-                            if (_selectedTemplate.name != 'Standard 50 Questions')
+
+                            if (_selectedTemplate.name !=
+                                'Standard 50 Questions')
                               CustomPaint(
-                                painter: AnswerSheetPainter(template: _selectedTemplate),
+                                painter: AnswerSheetPainter(
+                                    template: _selectedTemplate),
                                 size: Size.infinite,
                               ),
 
                             // Debug Overlay Indicators (Scaled roughly to preview size)
                             if (_isDebugAlignment) ...[
-                               _buildDebugBox("NAME", _nameTop, _nameLeft, null, null),
-                               _buildDebugBox("QR", _qrTop, null, _qrRight, null),
+                              _buildDebugBox(
+                                  "NAME", _nameTop, _nameLeft, null, null),
+                              _buildDebugBox(
+                                  "QR", _qrTop, null, _qrRight, null),
                             ]
                           ],
                         ),
@@ -193,62 +222,94 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
               ),
             ),
           ),
-          
-          if (_isDebugAlignment) Expanded(flex: 2, child: _buildAlignmentSliders()),
+
+          if (_isDebugAlignment)
+            Expanded(flex: 2, child: _buildAlignmentSliders()),
 
           // Selection Section
-          if (!_isDebugAlignment) Expanded(
-            flex: 2,
-            child: Container(
-              color: Colors.white,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'SELECT LAYOUT',
-                          style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey),
-                        ),
-                        DropdownButton<String>(
-                          value: _selectedStudent,
-                          items: ["JOHN DOE", "JANE DOE"].map((s) => DropdownMenuItem(value: s, child: Text(s, style: const TextStyle(fontSize: 12)))).toList(),
-                          onChanged: (v) => setState(() => _selectedStudent = v!),
-                          underline: Container(),
-                        ),
-                      ],
+          if (!_isDebugAlignment)
+            Expanded(
+              flex: 2,
+              child: Container(
+                color: Colors.white,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'SELECT LAYOUT',
+                            style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.grey),
+                          ),
+                          DropdownButton<String>(
+                            value: _selectedStudent,
+                            items: ["JOHN DOE", "JANE DOE"]
+                                .map((s) => DropdownMenuItem(
+                                    value: s,
+                                    child: Text(s,
+                                        style: const TextStyle(fontSize: 12))))
+                                .toList(),
+                            onChanged: (v) =>
+                                setState(() => _selectedStudent = v!),
+                            underline: Container(),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  Expanded(
-                    child: ListView.separated(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: _templates.length,
-                      separatorBuilder: (context, index) => const SizedBox(height: 8),
-                      itemBuilder: (context, index) {
-                        final template = _templates[index];
-                        final isSelected = _selectedTemplate == template;
-                        return ListTile(
-                          selected: isSelected,
-                          onTap: () => setState(() => _selectedTemplate = template),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: isSelected ? Colors.blue : Colors.grey.shade300)),
-                          leading: index == 0 
-                            ? ClipRRect(borderRadius: BorderRadius.circular(4), child: Image.asset('assets/50_questions.png', width: 40, height: 40, fit: BoxFit.cover))
-                            : Icon(index == 1 ? Icons.grid_view : Icons.article),
-                          title: Text(template.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                          subtitle: Text('${template.totalQuestions} Qs • ${template.columns} Columns'),
-                          trailing: isSelected ? const Icon(Icons.check_circle, color: Colors.blue) : null,
-                        );
-                      },
+                    Expanded(
+                      child: ListView.separated(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        itemCount: _templates.length,
+                        separatorBuilder: (context, index) =>
+                            const SizedBox(height: 8),
+                        itemBuilder: (context, index) {
+                          final template = _templates[index];
+                          final isSelected = _selectedTemplate == template;
+                          return ListTile(
+                            selected: isSelected,
+                            onTap: () =>
+                                setState(() => _selectedTemplate = template),
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                side: BorderSide(
+                                    color: isSelected
+                                        ? Colors.blue
+                                        : Colors.grey.shade300)),
+                            leading: index == 0
+                                ? ClipRRect(
+                                    borderRadius: BorderRadius.circular(4),
+                                    child: Image.asset(
+                                        'assets/50_questions.png',
+                                        width: 40,
+                                        height: 40,
+                                        fit: BoxFit.cover))
+                                : Icon(index == 1
+                                    ? Icons.grid_view
+                                    : Icons.article),
+                            title: Text(template.name,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold)),
+                            subtitle: Text(
+                                '${template.totalQuestions} Qs • ${template.columns} Columns'),
+                            trailing: isSelected
+                                ? const Icon(Icons.check_circle,
+                                    color: Colors.blue)
+                                : null,
+                          );
+                        },
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-          
+
           // Action Section
           _buildActionButton(),
         ],
@@ -262,8 +323,12 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
         Container(
           width: 15,
           height: 15,
-          decoration: BoxDecoration(border: Border.all(width: 1, color: Colors.black)),
-          child: isChecked ? Center(child: Container(width: 8, height: 8, color: Colors.black)) : null,
+          decoration:
+              BoxDecoration(border: Border.all(width: 1, color: Colors.black)),
+          child: isChecked
+              ? Center(
+                  child: Container(width: 8, height: 8, color: Colors.black))
+              : null,
         ),
         const SizedBox(width: 5),
         Text(label, style: const TextStyle(fontSize: 14, color: Colors.black)),
@@ -271,7 +336,8 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
     );
   }
 
-  Widget _buildDebugBox(String label, double? t, double? l, double? r, double? b) {
+  Widget _buildDebugBox(
+      String label, double? t, double? l, double? r, double? b) {
     return Positioned(
       top: t != null ? t * 0.5 : null, // Scale for preview
       left: l != null ? l * 0.5 : null,
@@ -280,7 +346,9 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
       child: Container(
         padding: const EdgeInsets.all(2),
         color: Colors.red.withValues(alpha: 0.3),
-        child: Text(label, style: const TextStyle(fontSize: 8, color: Colors.red, fontWeight: FontWeight.bold)),
+        child: Text(label,
+            style: const TextStyle(
+                fontSize: 8, color: Colors.red, fontWeight: FontWeight.bold)),
       ),
     );
   }
@@ -293,18 +361,29 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
         children: [
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 8.0),
-            child: Text('NAME & SET OVERLAY', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.blue)),
+            child: Text('NAME & SET OVERLAY',
+                style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                    color: Colors.blue)),
           ),
           _slider("Top", _nameTop, 0, 400, (v) => setState(() => _nameTop = v)),
-          _slider("Left", _nameLeft, 0, 400, (v) => setState(() => _nameLeft = v)),
-          _slider("Scale", _nameScale, 0.5, 2.0, (v) => setState(() => _nameScale = v)),
+          _slider(
+              "Left", _nameLeft, 0, 400, (v) => setState(() => _nameLeft = v)),
+          _slider("Scale", _nameScale, 0.5, 2.0,
+              (v) => setState(() => _nameScale = v)),
           const Divider(),
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 8.0),
-            child: Text('QR CODE OVERLAY', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.blue)),
+            child: Text('QR CODE OVERLAY',
+                style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                    color: Colors.blue)),
           ),
           _slider("Top", _qrTop, 0, 400, (v) => setState(() => _qrTop = v)),
-          _slider("Right", _qrRight, 0, 400, (v) => setState(() => _qrRight = v)),
+          _slider(
+              "Right", _qrRight, 0, 400, (v) => setState(() => _qrRight = v)),
           _slider("Size", _qrSize, 40, 150, (v) => setState(() => _qrSize = v)),
           const SizedBox(height: 20),
         ],
@@ -312,12 +391,20 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
     );
   }
 
-  Widget _slider(String label, double val, double min, double max, ValueChanged<double> onChanged) {
+  Widget _slider(String label, double val, double min, double max,
+      ValueChanged<double> onChanged) {
     return Row(
       children: [
-        SizedBox(width: 60, child: Text(label, style: const TextStyle(fontSize: 11))),
-        Expanded(child: Slider(value: val, min: min, max: max, onChanged: onChanged)),
-        SizedBox(width: 35, child: Text(val.toStringAsFixed(1), style: const TextStyle(fontSize: 10))),
+        SizedBox(
+            width: 60,
+            child: Text(label, style: const TextStyle(fontSize: 11))),
+        Expanded(
+            child:
+                Slider(value: val, min: min, max: max, onChanged: onChanged)),
+        SizedBox(
+            width: 35,
+            child: Text(val.toStringAsFixed(1),
+                style: const TextStyle(fontSize: 10))),
       ],
     );
   }
@@ -346,8 +433,14 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
                 );
               },
               icon: const Icon(Icons.person),
-              label: Text('EXPORT ONLY $_selectedStudent', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+              label: Text('EXPORT ONLY $_selectedStudent',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.bold, fontSize: 12)),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blueAccent,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12))),
             ),
           ),
           const SizedBox(height: 10),
@@ -366,12 +459,20 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
                     qrRight: _qrRight,
                     qrSize: _qrSize,
                   ),
-                  studentNames: ["JOHN DOE", "JANE DOE"], // The list of all students
+                  studentNames: [
+                    "JOHN DOE",
+                    "JANE DOE"
+                  ], // The list of all students
                 );
               },
               icon: const Icon(Icons.group),
-              label: const Text('GENERATE FOR ALL STUDENTS', style: TextStyle(fontWeight: FontWeight.bold)),
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+              label: const Text('GENERATE FOR ALL STUDENTS',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.redAccent,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12))),
             ),
           ),
         ],

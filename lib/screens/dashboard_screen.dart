@@ -21,7 +21,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
         title: const Text('Delete Course'),
         content: Text('Are you sure you want to delete ${course.code}?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('CANCEL')),
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('CANCEL')),
           TextButton(
             onPressed: () {
               setState(() {
@@ -39,7 +41,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     final myCourses = globalDummyCourses.where((c) => c.isOwner).toList();
-    final enrolledCourses = globalDummyCourses.where((c) => !c.isOwner).toList();
+    final enrolledCourses =
+        globalDummyCourses.where((c) => !c.isOwner).toList();
 
     return Scaffold(
       body: CustomScrollView(
@@ -47,12 +50,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
           SliverToBoxAdapter(
             child: _buildCombinedSummary(context),
           ),
-          
+
           // Created Courses Section
           if (myCourses.isNotEmpty) ...[
             _buildCollapsibleHeader(
-              context, 
-              'Created Courses', 
+              context,
+              'Created Courses',
               _createdExpanded,
               () => setState(() => _createdExpanded = !_createdExpanded),
             ),
@@ -67,8 +70,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           if (enrolledCourses.isNotEmpty) ...[
             const SliverToBoxAdapter(child: SizedBox(height: 8)),
             _buildCollapsibleHeader(
-              context, 
-              'Enrolled Courses', 
+              context,
+              'Enrolled Courses',
               _enrolledExpanded,
               () => setState(() => _enrolledExpanded = !_enrolledExpanded),
             ),
@@ -87,7 +90,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildCollapsibleHeader(BuildContext context, String title, bool isExpanded, VoidCallback onTap) {
+  Widget _buildCollapsibleHeader(
+      BuildContext context, String title, bool isExpanded, VoidCallback onTap) {
     return SliverToBoxAdapter(
       child: InkWell(
         onTap: onTap,
@@ -117,7 +121,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 20),
-      color: Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(76),
+      color:
+          Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(76),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -172,7 +177,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                  Text(title,
+                      style: const TextStyle(fontSize: 10, color: Colors.grey)),
                   Text(value,
                       style: const TextStyle(
                           fontSize: 14, fontWeight: FontWeight.bold)),
@@ -255,7 +261,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           course.name,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(color: Colors.white, fontSize: 18),
+                          style: const TextStyle(
+                              color: Colors.white, fontSize: 18),
                         ),
                       ],
                     ),
@@ -274,7 +281,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         course.instructor,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Colors.white70, fontSize: 14),
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 14),
                       ),
                     )
                   else
@@ -294,7 +302,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => const AnswerSheetDesignScreen(),
+                            builder: (context) =>
+                                const AnswerSheetDesignScreen(),
                           ),
                         );
                       },
@@ -302,7 +311,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       child: CircleAvatar(
                         radius: 18,
                         backgroundColor: Colors.white.withAlpha(51),
-                        child: const Icon(Icons.print, size: 18, color: Colors.white),
+                        child: const Icon(Icons.print,
+                            size: 18, color: Colors.white),
                       ),
                     ),
                 ],

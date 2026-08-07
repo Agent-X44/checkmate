@@ -8,8 +8,8 @@ class BubbleResult {
   final bool isAmbiguous;
 
   BubbleResult({
-    this.answer, 
-    required this.confidence, 
+    this.answer,
+    required this.confidence,
     this.isFilled = false,
     this.multipleAnswers = const [],
     this.isAmbiguous = false,
@@ -24,7 +24,7 @@ class BubbleResult {
       'isAmbiguous': isAmbiguous,
     };
   }
-  
+
   BubbleResult copyWith({
     String? answer,
     double? confidence,
@@ -45,24 +45,25 @@ class BubbleResult {
 class BubbleDetectionService {
   /// Processes a single question row using HIGH-PRECISION GRID mapping.
   static BubbleResult detectFilledBubble(
-    cv.Mat rowMat, 
-    int choicesCount, 
-    {
-      bool isBinary = false, 
-      double gridStart = 0.15, 
-      double gridWidthRatio = 0.82,
-      double zoneWidthRatio = 0.45,
-      double zoneHeightRatio = 0.60,
-      List<double>? customXOffsets, 
-      double threshold = 0.18,
-    }
-  ) {
+    cv.Mat rowMat,
+    int choicesCount, {
+    bool isBinary = false,
+    double gridStart = 0.15,
+    double gridWidthRatio = 0.82,
+    double zoneWidthRatio = 0.45,
+    double zoneHeightRatio = 0.60,
+    List<double>? customXOffsets,
+    double threshold = 0.18,
+  }) {
     cv.Mat binary;
     if (isBinary) {
       binary = rowMat.clone();
     } else {
-      cv.Mat gray = rowMat.channels == 3 ? cv.cvtColor(rowMat, cv.COLOR_BGR2GRAY) : rowMat.clone();
-      final (_, otsu) = cv.threshold(gray, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+      cv.Mat gray = rowMat.channels == 3
+          ? cv.cvtColor(rowMat, cv.COLOR_BGR2GRAY)
+          : rowMat.clone();
+      final (_, otsu) =
+          cv.threshold(gray, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
       binary = otsu;
       gray.dispose();
     }
@@ -76,7 +77,7 @@ class BubbleDetectionService {
     if (customXOffsets != null && customXOffsets.isNotEmpty) {
       for (double relX in customXOffsets) {
         final rect = cv.Rect(
-          (relX * w - (w * 0.05)).toInt().clamp(0, w - 1), 
+          (relX * w - (w * 0.05)).toInt().clamp(0, w - 1),
           (h * 0.15).toInt().clamp(0, h - 1),
           (w * 0.10).toInt().clamp(1, w - (relX * w - (w * 0.05)).toInt()),
           (h * 0.70).toInt().clamp(1, h - (h * 0.15).toInt()),
@@ -86,17 +87,22 @@ class BubbleDetectionService {
         cellMat.dispose();
       }
     } else {
-      final double gridStartX = w * gridStart; 
-      final double gridWidth = w * gridWidthRatio; 
+      final double gridStartX = w * gridStart;
+      final double gridWidth = w * gridWidthRatio;
       final double cellWidth = gridWidth / choicesCount;
 
       for (int i = 0; i < choicesCount; i++) {
         final double xStart = gridStartX + (i * cellWidth);
         final rect = cv.Rect(
-          (xStart + (cellWidth * (1 - zoneWidthRatio) / 2)).toInt().clamp(0, w - 1),
+          (xStart + (cellWidth * (1 - zoneWidthRatio) / 2))
+              .toInt()
+              .clamp(0, w - 1),
           (h * (1 - zoneHeightRatio) / 2).toInt().clamp(0, h - 1),
-          (cellWidth * zoneWidthRatio).toInt().clamp(1, w - (xStart + (cellWidth * (1 - zoneWidthRatio) / 2)).toInt()),
-          (h * zoneHeightRatio).toInt().clamp(1, h - (h * (1 - zoneHeightRatio) / 2).toInt()),
+          (cellWidth * zoneWidthRatio).toInt().clamp(
+              1, w - (xStart + (cellWidth * (1 - zoneWidthRatio) / 2)).toInt()),
+          (h * zoneHeightRatio)
+              .toInt()
+              .clamp(1, h - (h * (1 - zoneHeightRatio) / 2).toInt()),
         );
 
         final cellMat = binary.region(rect);
@@ -116,9 +122,11 @@ class BubbleDetectionService {
     binary.dispose();
 
     // 4. MAP TO LETTERS
-    final List<String> answers = filledIndices.map((i) => String.fromCharCode(65 + i)).toList();
-    
-    final sortedRatios = List<double>.from(fillRatios)..sort((a, b) => b.compareTo(a));
+    final List<String> answers =
+        filledIndices.map((i) => String.fromCharCode(65 + i)).toList();
+
+    final sortedRatios = List<double>.from(fillRatios)
+      ..sort((a, b) => b.compareTo(a));
     double maxFill = sortedRatios.isNotEmpty ? sortedRatios[0] : 0.0;
     double secondMaxFill = sortedRatios.length > 1 ? sortedRatios[1] : 0.0;
     double confidence = (maxFill - secondMaxFill).clamp(0.0, 1.0);

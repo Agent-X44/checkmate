@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
+import '../services/api_service.dart';
 
 class AIQuestionnaireScreen extends StatefulWidget {
-  final String type; 
+  final String type;
   const AIQuestionnaireScreen({super.key, required this.type});
 
   @override
@@ -17,22 +18,26 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
 
   void _startGeneration() async {
     if (_inputController.text.trim().isEmpty) return;
-    
+
     setState(() => _currentStep = 1);
 
-    // Fast simulation for a snappy demo
-    await Future.delayed(const Duration(seconds: 1));
-
-    if (mounted) {
-      setState(() {
-        _mockQuestions = [
-          "1. What is the primary purpose of ${_inputController.text}?",
-          "2. Compare and contrast the two main methods in this field.",
-          "3. Multiple Choice: Which scientist first proposed this theory?",
-          "4. Explain the impact of this topic on modern technology.",
-        ];
-        _currentStep = 2;
-      });
+    try {
+      final data = await ApiService.generateExam(_inputController.text);
+      if (mounted) {
+        setState(() {
+          _mockQuestions = (data['questions'] as List)
+              .map((q) => "${q['text']}\nOptions: ${q['options'].join(', ')}")
+              .toList();
+          _currentStep = 2;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _currentStep = 0);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to generate: $e')),
+        );
+      }
     }
   }
 
@@ -73,16 +78,22 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
             style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
-          const Text('Enter a topic or paste existing questions for the AI to process.'),
+          const Text(
+              'Enter a topic or paste existing questions for the AI to process.'),
           const SizedBox(height: 24),
           TextField(
             controller: _inputController,
             maxLines: 6,
             decoration: InputDecoration(
-              hintText: 'e.g., "Principles of Digital Logic" or paste raw text...',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(15)),
+              hintText:
+                  'e.g., "Principles of Digital Logic" or paste raw text...',
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(15)),
               filled: true,
-              fillColor: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 50 / 255),
+              fillColor: Theme.of(context)
+                  .colorScheme
+                  .surfaceContainerHighest
+                  .withValues(alpha: 50 / 255),
             ),
           ),
           const Spacer(),
@@ -133,12 +144,12 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
         ),
         const SizedBox(height: 16),
         ..._mockQuestions.map((q) => Card(
-          margin: const EdgeInsets.only(bottom: 12),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Text(q),
-          ),
-        )),
+              margin: const EdgeInsets.only(bottom: 12),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Text(q),
+              ),
+            )),
         const SizedBox(height: 24),
         Row(
           children: [
@@ -152,9 +163,9 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
             Expanded(
               child: ElevatedButton(
                 onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('AI Knowledge base updated for this course!'))
-                  );
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                      content:
+                          Text('AI Knowledge base updated for this course!')));
                   Navigator.pop(context);
                 },
                 child: const Text('SAVE & FINALIZE'),

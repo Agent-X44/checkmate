@@ -14,24 +14,30 @@ class AssignmentsScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          _buildAssignmentCard('Assignment 1: Matrix Basics', 'Due: June 20, 2026', Colors.orange),
-          _buildAssignmentCard('Assignment 2: Fourier Transforms', 'Due: June 25, 2026', Colors.blue),
-          _buildAssignmentCard('Project Proposal: Signal Filter', 'Due: July 05, 2026', Colors.purple),
+          _buildAssignmentCard('Assignment 1: Matrix Basics',
+              'Due: June 20, 2026', Colors.orange),
+          _buildAssignmentCard('Assignment 2: Fourier Transforms',
+              'Due: June 25, 2026', Colors.blue),
+          _buildAssignmentCard('Project Proposal: Signal Filter',
+              'Due: July 05, 2026', Colors.purple),
         ],
       ),
-      floatingActionButton: isOwner ? FloatingActionButton(
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const AIQuestionnaireScreen(type: 'Assignment'),
-            ),
-          );
-        },
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        foregroundColor: Colors.white,
-        child: const Icon(Icons.add),
-      ) : null,
+      floatingActionButton: isOwner
+          ? FloatingActionButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) =>
+                        const AIQuestionnaireScreen(type: 'Assignment'),
+                  ),
+                );
+              },
+              backgroundColor: Theme.of(context).colorScheme.primary,
+              foregroundColor: Colors.white,
+              child: const Icon(Icons.add),
+            )
+          : null,
     );
   }
 

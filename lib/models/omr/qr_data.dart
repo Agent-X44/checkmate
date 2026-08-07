@@ -44,5 +44,6 @@ class QrData {
   }
 
   @override
-  String toString() => '$studentName - $examTitle ($examCode) [$course] ${templateName ?? ""}';
+  String toString() =>
+      '$studentName - $examTitle ($examCode) [$course] ${templateName ?? ""}';
 }
