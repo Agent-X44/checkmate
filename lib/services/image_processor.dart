@@ -209,62 +209,73 @@ class ImageProcessor {
     }
   }
 
-  /// Detects 4 small square marks in the corners of the entire warped sheet for global rectification.
+  /// Production-grade fiducial detection using Centroid analysis.
+  /// Expects solid circular marks in the 4 corners of the sheet.
   static List<cv.Point> _detectGlobalFiducials(cv.Mat colorSheet) {
     if (colorSheet.isEmpty) return [];
 
     final gray = cv.cvtColor(colorSheet, cv.COLOR_BGR2GRAY);
-    final blurred = cv.gaussianBlur(gray, (5, 5), 1.0);
-    // Use adaptive threshold to find markers in various lighting
-    final binary = cv.adaptiveThreshold(blurred, 255,
-        cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+    // 1. Stabilize image with Gaussian Blur
+    final blurred = cv.gaussianBlur(gray, (5, 5), 1.5);
 
-    final int w = binary.width;
-    final int h = binary.height;
+    final int w = gray.width;
+    final int h = gray.height;
 
-    // Define 4 corner search zones (15% of sheet size)
+    // Define 4 corner search zones (12% of sheet size)
     final List<cv.Rect> zones = [
-      cv.Rect(0, 0, (w * 0.15).toInt(), (h * 0.15).toInt()), // TL
+      cv.Rect(0, 0, (w * 0.12).toInt(), (h * 0.12).toInt()), // TL
       cv.Rect(
-          (w * 0.85).toInt(), 0, (w * 0.15).toInt(), (h * 0.15).toInt()), // TR
-      cv.Rect((w * 0.85).toInt(), (h * 0.85).toInt(), (w * 0.15).toInt(),
-          (h * 0.15).toInt()), // BR
+          (w * 0.88).toInt(), 0, (w * 0.12).toInt(), (h * 0.12).toInt()), // TR
+      cv.Rect((w * 0.88).toInt(), (h * 0.88).toInt(), (w * 0.12).toInt(),
+          (h * 0.12).toInt()), // BR
       cv.Rect(
-          0, (h * 0.85).toInt(), (w * 0.15).toInt(), (h * 0.15).toInt()), // BL
+          0, (h * 0.88).toInt(), (w * 0.12).toInt(), (h * 0.12).toInt()), // BL
     ];
 
     final List<cv.Point> finalPoints = [];
 
     for (var zone in zones) {
-      final zoneMat = binary.region(zone);
-      final (contours, _) =
-          cv.findContours(zoneMat, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      final zoneMat = blurred.region(zone);
 
-      cv.Point? bestPoint;
-      double maxArea = 0;
+      // 2. Local Adaptive Thresholding (Crucial for uneven lighting)
+      final binary = cv.adaptiveThreshold(zoneMat, 255,
+          cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 21, 5);
+
+      final (contours, _) =
+          cv.findContours(binary, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+      cv.Point? bestCentroid;
+      double bestCircularity = 0;
 
       for (int i = 0; i < contours.length; i++) {
         final area = cv.contourArea(contours[i]);
-        final rect = cv.boundingRect(contours[i]);
-        final double ratio = rect.width / rect.height;
+        final perimeter = cv.arcLength(contours[i], true);
+        if (perimeter == 0) continue;
 
-        // Marks are expected to be solid squares in the corner
-        if (area > 40 && ratio > 0.6 && ratio < 1.4) {
-          if (area > maxArea) {
-            maxArea = area;
-            bestPoint = cv.Point(zone.x + rect.x + rect.width ~/ 2,
+        // 3. Circularity Check (Production-level filtering)
+        // Formula: 4 * pi * area / (perimeter^2). 1.0 is a perfect circle.
+        final double circularity =
+            (4 * 3.14159 * area) / (perimeter * perimeter);
+
+        // 4. Robust Anchor Constraints (Area must be significant but not too big)
+        if (area > 80 && area < (zone.width * zone.height * 0.3)) {
+          if (circularity > 0.65 && circularity > bestCircularity) {
+            // 5. Centroid Calculation via Bounding Box center (Stable)
+            final rect = cv.boundingRect(contours[i]);
+            bestCircularity = circularity;
+            bestCentroid = cv.Point(zone.x + rect.x + rect.width ~/ 2,
                 zone.y + rect.y + rect.height ~/ 2);
           }
         }
       }
 
-      if (bestPoint != null) finalPoints.add(bestPoint);
+      if (bestCentroid != null) finalPoints.add(bestCentroid);
       zoneMat.dispose();
+      binary.dispose();
       contours.dispose();
     }
 
     gray.dispose();
-    binary.dispose();
     blurred.dispose();
 
     return finalPoints.length == 4 ? finalPoints : [];

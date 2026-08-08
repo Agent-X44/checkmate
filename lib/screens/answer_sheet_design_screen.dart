@@ -50,12 +50,12 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
   String _selectedStudent = "JOHN DOE";
 
   // Alignment Debug Values
-  double _nameTop = 87.1;
-  double _nameLeft = 145.0;
-  double _nameScale = 1.2;
-  double _qrTop = 33.0;
-  double _qrRight = 65.4;
-  double _qrSize = 118.4;
+  double _nameTop = 115.8;
+  double _nameLeft = 172.5;
+  double _nameScale = 1.0;
+  double _qrTop = 57.0;
+  double _qrRight = 99.6;
+  double _qrSize = 107.0;
 
   @override
   void initState() {

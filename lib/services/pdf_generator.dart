@@ -15,12 +15,12 @@ class PdfAlignment {
   final double setALeft;
 
   const PdfAlignment({
-    this.nameTop = 87.1,
-    this.nameLeft = 145.0,
-    this.nameScale = 1.2,
-    this.qrTop = 33.0,
-    this.qrRight = 65.4,
-    this.qrSize = 118.4,
+    this.nameTop = 115.8,
+    this.nameLeft = 172.5,
+    this.nameScale = 1.0,
+    this.qrTop = 57.0,
+    this.qrRight = 99.6,
+    this.qrSize = 107.0,
     this.setATop = 175,
     this.setALeft = 145,
   });

@@ -106,7 +106,27 @@ class BubbleDetectionService {
         );
 
         final cellMat = binary.region(rect);
-        fillRatios.add(cv.countNonZero(cellMat) / (rect.width * rect.height));
+
+        // PRODUCTION REFINEMENT: Find the actual mass (bubble) within the zone
+        // This handles minor grid misalignments.
+        double fillRatio = 0;
+        final (innerContours, _) =
+            cv.findContours(cellMat, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+        if (innerContours.isNotEmpty) {
+          double maxMassArea = 0;
+          for (int j = 0; j < innerContours.length; j++) {
+            final cArea = cv.contourArea(innerContours[j]);
+            if (cArea > maxMassArea) maxMassArea = cArea;
+          }
+          // Use the largest detected mass for fill calculation
+          fillRatio = maxMassArea / (rect.width * rect.height);
+        } else {
+          // Fallback to simple pixel count if no distinct contours found
+          fillRatio = cv.countNonZero(cellMat) / (rect.width * rect.height);
+        }
+
+        fillRatios.add(fillRatio);
         cellMat.dispose();
       }
     }
