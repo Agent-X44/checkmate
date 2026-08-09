@@ -16,19 +16,22 @@ class Standard50QuestionsTemplate extends BubbleSheetTemplate {
   /// * 50 total questions across 2 columns.
   /// * 4 choices per question.
   /// * A target width of 1500 pixels for OMR processing.
+  /// 
+  /// NOTE: Coordinates are now normalized relative to the centers of the 
+  /// 4 corner markers (Marker-to-Marker reference frame).
   Standard50QuestionsTemplate()
       : super(
           name: 'Standard 50 Questions',
           paperAspectRatio: 0.707, // A4
           answerRegions: [
-            const Rect.fromLTRB(0.117, 0.416, 0.455, 0.937), // Left Column Box
-            const Rect.fromLTRB(0.625, 0.416, 0.961, 0.937), // Right Column Box
+            const Rect.fromLTRB(0.044, 0.350, 0.446, 0.940), // Left Column Box
+            const Rect.fromLTRB(0.648, 0.350, 0.980, 0.940), // Right Column Box
           ],
-          qrRegion: const Rect.fromLTRB(0.729, 0.099, 0.885, 0.209),
-          setRegion: const Rect.fromLTRB(0.128, 0.169, 0.286, 0.204),
+          qrRegion: const Rect.fromLTRB(0.750, 0.005, 0.960, 0.150),
+          setRegion: const Rect.fromLTRB(0.050, 0.080, 0.250, 0.130),
           setBubbles: const [
-            Offset(0.149, 0.187),
-            Offset(0.240, 0.186),
+            Offset(0.085, 0.105),
+            Offset(0.195, 0.105),
           ],
           totalQuestions: 50,
           choicesPerQuestion: 4,
@@ -43,10 +46,10 @@ class Standard50QuestionsTemplate extends BubbleSheetTemplate {
   static const int calibratedXOffset = 0;
 
   /// The normalized starting position for the bubble grid within an answer region.
-  static const double defaultGridStart = 0.006;
+  static const double defaultGridStart = 0.050;
 
   /// The normalized width of the bubble grid relative to the answer region.
-  static const double defaultGridWidth = 1.000;
+  static const double defaultGridWidth = 0.920;
 
   /// The normalized vertical spacing between questions in the grid.
   static const double defaultGridYSpace = 0.006;

@@ -3,19 +3,64 @@ import 'package:opencv_dart/opencv_dart.dart' as cv;
 
 class PerspectiveService {
   /// Orders four points: [Top-Left, Top-Right, Bottom-Right, Bottom-Left].
+  /// Uses a robust sum-difference method for consistent OMR mapping.
   static cv.VecPoint orderPoints(cv.VecPoint pts) {
     if (pts.length != 4) return pts;
-    final sorted = List<cv.Point>.from(pts.toList());
+    final points = pts.toList();
 
-    sorted.sort((a, b) => (a.x + a.y).compareTo(b.x + b.y));
-    final tl = sorted[0];
-    final br = sorted[3];
+    // Sum-Difference method (very robust for paper-like rectangles)
+    // TL: min(x+y), BR: max(x+y)
+    // TR: min(y-x), BL: max(y-x)
+    
+    points.sort((a, b) => (a.x + a.y).compareTo(b.x + b.y));
+    final tl = points[0];
+    final br = points[3];
 
-    sorted.sort((a, b) => (a.y - a.x).compareTo(b.y - b.x));
-    final tr = sorted[0];
-    final bl = sorted[3];
+    final others = [points[1], points[2]];
+    others.sort((a, b) => (a.y - a.x).compareTo(b.y - b.x));
+    final tr = others[0];
+    final bl = others[1];
 
     return cv.VecPoint.fromList([tl, tr, br, bl]);
+  }
+
+  /// Calculates the destination points for a warped paper based on aspect ratio and padding.
+  static cv.VecPoint getDestPoints(int targetWidth, int targetHeight, double padding) {
+    final double offsetW = targetWidth * padding;
+    final double offsetH = targetHeight * padding;
+
+    return cv.VecPoint.fromList([
+      cv.Point(offsetW.toInt(), offsetH.toInt()),
+      cv.Point((targetWidth - offsetW).toInt(), offsetH.toInt()),
+      cv.Point((targetWidth - offsetW).toInt(), (targetHeight - offsetH).toInt()),
+      cv.Point(offsetW.toInt(), (targetHeight - offsetH).toInt()),
+    ]);
+  }
+
+  /// Maps a list of points from one coordinate system to another using a transformation matrix.
+  static List<cv.Point> transformPoints(List<cv.Point> pts, cv.Mat matrix) {
+    if (pts.isEmpty) return [];
+    
+    try {
+      // Ensure we get double values from the matrix (usually CV_64F)
+      final m = List.generate(3, (r) => 
+        List.generate(3, (c) => matrix.at<double>(r, c))
+      );
+      
+      return pts.map((p) {
+        final double x = p.x.toDouble();
+        final double y = p.y.toDouble();
+        final double w = m[2][0] * x + m[2][1] * y + m[2][2];
+        if (w.abs() < 1e-9) return p;
+        
+        return cv.Point(
+          ((m[0][0] * x + m[0][1] * y + m[0][2]) / w).round(),
+          ((m[1][0] * x + m[1][1] * y + m[1][2]) / w).round(),
+        );
+      }).toList();
+    } catch (e) {
+      return pts;
+    }
   }
 
   /// Performs a 4-point perspective transform to extract a rectangular paper image.

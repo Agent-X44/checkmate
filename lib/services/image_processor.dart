@@ -1,4 +1,5 @@
 import 'dart:isolate';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:opencv_dart/opencv_dart.dart' as cv;
@@ -211,68 +212,92 @@ class ImageProcessor {
 
   /// Production-grade fiducial detection using Centroid analysis.
   /// Expects solid circular marks in the 4 corners of the sheet.
+  /// Optimized for steep angles and varied lighting.
   static List<cv.Point> _detectGlobalFiducials(cv.Mat colorSheet) {
     if (colorSheet.isEmpty) return [];
 
     final gray = cv.cvtColor(colorSheet, cv.COLOR_BGR2GRAY);
-    // 1. Stabilize image with Gaussian Blur
+    // 1. Stabilize image
     final blurred = cv.gaussianBlur(gray, (5, 5), 1.5);
 
     final int w = gray.width;
     final int h = gray.height;
 
-    // Define 4 corner search zones (12% of sheet size)
+    // Define 4 corner search zones (30% to handle loose paper detection)
     final List<cv.Rect> zones = [
-      cv.Rect(0, 0, (w * 0.12).toInt(), (h * 0.12).toInt()), // TL
-      cv.Rect(
-          (w * 0.88).toInt(), 0, (w * 0.12).toInt(), (h * 0.12).toInt()), // TR
-      cv.Rect((w * 0.88).toInt(), (h * 0.88).toInt(), (w * 0.12).toInt(),
-          (h * 0.12).toInt()), // BR
-      cv.Rect(
-          0, (h * 0.88).toInt(), (w * 0.12).toInt(), (h * 0.12).toInt()), // BL
+      cv.Rect(0, 0, (w * 0.30).toInt(), (h * 0.30).toInt()), // TL
+      cv.Rect((w * 0.70).toInt(), 0, (w * 0.30).toInt(), (h * 0.30).toInt()), // TR
+      cv.Rect((w * 0.70).toInt(), (h * 0.70).toInt(), (w * 0.30).toInt(), (h * 0.30).toInt()), // BR
+      cv.Rect(0, (h * 0.70).toInt(), (w * 0.30).toInt(), (h * 0.30).toInt()), // BL
     ];
 
     final List<cv.Point> finalPoints = [];
 
-    for (var zone in zones) {
+    for (int zoneIdx = 0; zoneIdx < zones.length; zoneIdx++) {
+      final zone = zones[zoneIdx];
       final zoneMat = blurred.region(zone);
 
-      // 2. Local Adaptive Thresholding (Crucial for uneven lighting)
-      final binary = cv.adaptiveThreshold(zoneMat, 255,
-          cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 21, 5);
-
-      final (contours, _) =
-          cv.findContours(binary, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      // Try multiple threshold levels to find the solid black dot
+      cv.Mat binary = cv.Mat.empty();
+      
+      // Strategy 1: Aggressive Adaptive Threshold
+      binary = cv.adaptiveThreshold(zoneMat, 255,
+          cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 51, 10);
+      
+      var (contours, _) = cv.findContours(binary, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      
+      // If Strategy 1 fails, try Strategy 2: Simple Threshold
+      if (contours.isEmpty) {
+        binary.dispose();
+        final (_, b2) = cv.threshold(zoneMat, 100, 255, cv.THRESH_BINARY_INV);
+        binary = b2;
+        final (c2, _) = cv.findContours(binary, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+        contours = c2;
+      }
 
       cv.Point? bestCentroid;
-      double bestCircularity = 0;
+      double bestScore = -1.0;
 
       for (int i = 0; i < contours.length; i++) {
         final area = cv.contourArea(contours[i]);
         final perimeter = cv.arcLength(contours[i], true);
-        if (perimeter == 0) continue;
+        if (perimeter < 10) continue;
 
-        // 3. Circularity Check (Production-level filtering)
-        // Formula: 4 * pi * area / (perimeter^2). 1.0 is a perfect circle.
-        final double circularity =
-            (4 * 3.14159 * area) / (perimeter * perimeter);
+        // Circularity: Accept very distorted ellipses
+        final double circularity = (4 * 3.14159 * area) / (perimeter * perimeter);
 
-        // 4. Robust Anchor Constraints (Area must be significant but not too big)
-        if (area > 80 && area < (zone.width * zone.height * 0.3)) {
-          if (circularity > 0.65 && circularity > bestCircularity) {
-            // 5. Centroid Calculation via Bounding Box center (Stable)
-            final rect = cv.boundingRect(contours[i]);
-            bestCircularity = circularity;
-            bestCentroid = cv.Point(zone.x + rect.x + rect.width ~/ 2,
-                zone.y + rect.y + rect.height ~/ 2);
+        // Dot area constraints: 1500px wide image, dots are ~30-80px.
+        // Area should be between 200 and 10000.
+        if (area > 200 && area < (zone.width * zone.height * 0.2)) {
+          // Weight circularity and area. Dots are usually the most "solid" things in corners.
+          final double score = circularity * area;
+          
+          if (circularity > 0.2 && score > bestScore) {
+            final contourPts = contours[i].toList();
+            if (contourPts.isNotEmpty) {
+              double sumX = 0, sumY = 0;
+              for (var p in contourPts) {
+                sumX += p.x;
+                sumY += p.y;
+              }
+              bestScore = score;
+              bestCentroid = cv.Point(
+                zone.x + (sumX / contourPts.length).round(),
+                zone.y + (sumY / contourPts.length).round(),
+              );
+            }
           }
         }
       }
 
-      if (bestCentroid != null) finalPoints.add(bestCentroid);
+      if (bestCentroid != null) {
+        finalPoints.add(bestCentroid);
+      } else {
+        debugPrint("OMR: Missing fiducial in zone $zoneIdx (Candidates: ${contours.length})");
+      }
+      
       zoneMat.dispose();
       binary.dispose();
-      contours.dispose();
     }
 
     gray.dispose();
@@ -308,47 +333,70 @@ class ImageProcessor {
       );
 
       // 3. Perspective Correction (Pass 1: Paper Edges with Padding)
-      // Added 3% padding to ensure 4-corner square markers are NOT clipped.
-      warped = PerspectiveService.warpPaper(mat, rawCorners,
-          message.template.paperAspectRatio, message.template.targetWidth,
-          padding: 0.03);
+      // Increased padding to 8% to ensure 4-corner markers are fully visible even with imperfect detection.
+      final int targetWidth = message.template.targetWidth;
+      final double aspectRatio = message.template.paperAspectRatio;
+      final orderedCorners = PerspectiveService.orderPoints(rawCorners);
+      
+      // Calculate target height
+      final double widthBottom = math.sqrt(math.pow(orderedCorners[2].x - orderedCorners[3].x, 2) + math.pow(orderedCorners[2].y - orderedCorners[3].y, 2));
+      final double widthTop = math.sqrt(math.pow(orderedCorners[1].x - orderedCorners[0].x, 2) + math.pow(orderedCorners[1].y - orderedCorners[0].y, 2));
+      final double maxWidth = math.max(widthBottom, widthTop);
+      final double heightRight = math.sqrt(math.pow(orderedCorners[1].y - orderedCorners[2].y, 2) + math.pow(orderedCorners[1].x - orderedCorners[2].x, 2));
+      final double heightLeft = math.sqrt(math.pow(orderedCorners[0].y - orderedCorners[3].y, 2) + math.pow(orderedCorners[0].x - orderedCorners[3].x, 2));
+      final double maxHeight = math.max(heightRight, heightLeft);
+      final double finalRatio = (aspectRatio > 0.1) ? aspectRatio : (maxWidth / maxHeight);
+      final int targetHeight = (targetWidth / finalRatio).toInt();
 
-      rawCorners.dispose();
+      final destPointsPadded = PerspectiveService.getDestPoints(targetWidth, targetHeight, 0.08);
+      final mFwd = cv.getPerspectiveTransform(orderedCorners, destPointsPadded);
+      warped = cv.warpPerspective(mat, mFwd, (targetWidth, targetHeight));
 
-      // 3.1 Precision Rectification (Pass 2: 4-Corner Marks)
+      // 3.1 Precision Rectification (Pass 2 Logic with Single-Pass Optimization)
       final globalFiducials = _detectGlobalFiducials(warped);
+      
       if (globalFiducials.length == 4) {
-        debugPrint(
-            "OMR: Locked onto 4 square marks. Snapping to perfect grid...");
-        final refinedWarped = PerspectiveService.warpPaper(
-            warped,
-            cv.VecPoint.fromList(globalFiducials),
-            message.template.paperAspectRatio,
-            message.template.targetWidth,
-            padding: 0.0 // Snap markers to exact corners (0.0 to 1.0)
-            );
+        debugPrint("OMR: Locked onto 4 fiducials. Target centers: ${globalFiducials.map((p) => '(${p.x},${p.y})').toList()}");
+        debugPrint("OMR: Snapping to perfect grid (centers to corners)...");
+        
+        // Map detected fiducials back to original coordinate space
+        final mRev = cv.getPerspectiveTransform(destPointsPadded, orderedCorners);
+        final mappedFiducials = PerspectiveService.transformPoints(globalFiducials, mRev);
+        
+        // Now perform a SINGLE high-quality warp from original Mat using precise fiducial centers
+        final destPointsExact = PerspectiveService.getDestPoints(targetWidth, targetHeight, 0.0);
+        final finalCorners = cv.VecPoint.fromList(mappedFiducials);
+        final finalOrdered = PerspectiveService.orderPoints(finalCorners);
+        
+        final mFinal = cv.getPerspectiveTransform(finalOrdered, destPointsExact);
+        final refinedWarped = cv.warpPerspective(mat, mFinal, (targetWidth, targetHeight));
+        
         warped.dispose();
         warped = refinedWarped;
+        
+        mRev.dispose();
+        mFinal.dispose();
+        finalCorners.dispose();
+        finalOrdered.dispose();
+        destPointsExact.dispose();
       } else {
-        debugPrint(
-            "OMR: Square markers not found (${globalFiducials.length}/4). Using estimated grid.");
-        // Fallback: Perform a warp with 0 padding to remove the 3% safety border
-        final fallbackCorners = cv.VecPoint.fromList(
-            List.generate(message.corners.length ~/ 2, (i) {
-          return cv.Point(
-            (message.corners[i * 2] * matW).toInt(),
-            (message.corners[i * 2 + 1] * matH).toInt(),
-          );
-        }));
-        final fallbackWarped = PerspectiveService.warpPaper(
-            mat,
-            fallbackCorners,
-            message.template.paperAspectRatio,
-            message.template.targetWidth);
-        fallbackCorners.dispose();
+        debugPrint("OMR: Square markers not found (${globalFiducials.length}/4). Using rough edge detection.");
+        // Fallback: Just re-warp without padding to get the full sheet
+        final destPointsExact = PerspectiveService.getDestPoints(targetWidth, targetHeight, 0.0);
+        final mFinal = cv.getPerspectiveTransform(orderedCorners, destPointsExact);
+        final fallbackWarped = cv.warpPerspective(mat, mFinal, (targetWidth, targetHeight));
+        
         warped.dispose();
         warped = fallbackWarped;
+        
+        mFinal.dispose();
+        destPointsExact.dispose();
       }
+
+      mFwd.dispose();
+      destPointsPadded.dispose();
+      orderedCorners.dispose();
+      rawCorners.dispose();
 
       // 4. QR Code Recognition
       QrData? qrData;
