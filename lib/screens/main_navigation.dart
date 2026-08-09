@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../models/course.dart';
 import 'dashboard_screen.dart';
 import 'scanner_screen.dart';
@@ -9,11 +11,13 @@ import '../main.dart'; // To access globalCameras and CheckmateApp (for logout)
 class MainNavigation extends StatefulWidget {
   final ThemeMode themeMode;
   final ValueChanged<bool> onThemeChanged;
+  final VoidCallback onLogout;
 
   const MainNavigation({
     super.key,
     required this.themeMode,
     required this.onThemeChanged,
+    required this.onLogout,
   });
 
   @override
@@ -24,15 +28,102 @@ class _MainNavigationState extends State<MainNavigation>
     with SingleTickerProviderStateMixin {
   int _selectedIndex = 0;
   bool _isFabExpanded = false;
+  bool _notificationsOn = true;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   late AnimationController _animationController;
   late Animation<double> _expandAnimation;
   late Animation<double> _opacityAnimation;
 
+  Future<void> _loadNotificationPreference() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _notificationsOn = prefs.getBool('notificationsEnabled') ?? true;
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _toggleNotifications() async {
+    final newState = !_notificationsOn;
+
+    if (newState) {
+      debugPrint("DEBUG: Requesting Notification Permission...");
+      
+      // 1. Check current status
+      var status = await Permission.notification.status;
+      debugPrint("DEBUG: Initial status: $status");
+
+      // 2. Small delay to ensure UI focus is stable (Helps on MIUI)
+      await Future.delayed(const Duration(milliseconds: 200));
+      
+      // 3. Request it
+      status = await Permission.notification.request();
+      debugPrint("DEBUG: Status after request: $status");
+
+      // 4. Handle results
+      if (status.isPermanentlyDenied) {
+        debugPrint("DEBUG: Permanently Denied. Showing Settings Dialog.");
+        if (mounted) _showPermissionSettingsDialog();
+        return;
+      } else if (status.isDenied) {
+        // Fallback for MIUI/Android 13+ where request might be silently ignored
+        if (mounted) {
+          _showPermissionSettingsDialog();
+        }
+        return;
+      }
+    }
+
+    setState(() {
+      _notificationsOn = newState;
+    });
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('notificationsEnabled', newState);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(newState ? 'Notifications Enabled' : 'Notifications Muted'),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+            backgroundColor: Theme.of(context).colorScheme.primary,
+          ),
+        );
+      }
+    } catch (_) {}
+  }
+
+  void _showPermissionSettingsDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Notification Permission'),
+        content: const Text('Notifications are currently disabled. Please enable them in settings to receive updates.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCEL'),
+          ),
+          TextButton(
+            onPressed: () {
+              openAppSettings();
+              Navigator.pop(context);
+            },
+            child: const Text('OPEN SETTINGS'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
+    _loadNotificationPreference();
     _animationController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 300),
@@ -175,12 +266,7 @@ class _MainNavigationState extends State<MainNavigation>
       SettingsScreen(
         themeMode: widget.themeMode,
         onThemeChanged: widget.onThemeChanged,
-        onLogout: () {
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (context) => const CheckmateApp()),
-            (route) => false,
-          );
-        },
+        onLogout: widget.onLogout,
       ),
     ];
 
@@ -194,8 +280,18 @@ class _MainNavigationState extends State<MainNavigation>
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.notifications),
-            onPressed: () {},
+            icon: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              transitionBuilder: (Widget child, Animation<double> animation) {
+                return ScaleTransition(scale: animation, child: child);
+              },
+              child: Icon(
+                _notificationsOn ? Icons.notifications : Icons.notifications_off,
+                key: ValueKey<bool>(_notificationsOn),
+                color: Colors.white,
+              ),
+            ),
+            onPressed: _toggleNotifications,
           ),
           Padding(
             padding: const EdgeInsets.only(right: 12.0),
@@ -256,12 +352,7 @@ class _MainNavigationState extends State<MainNavigation>
             ListTile(
               leading: const Icon(Icons.logout, color: Colors.red),
               title: const Text('Logout', style: TextStyle(color: Colors.red)),
-              onTap: () {
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (context) => const CheckmateApp()),
-                  (route) => false,
-                );
-              },
+              onTap: widget.onLogout,
             ),
           ],
         ),

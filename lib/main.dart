@@ -75,8 +75,20 @@ class _CheckmateAppState extends State<CheckmateApp> {
         colorScheme: ColorScheme.fromSeed(
           seedColor: primaryBlue,
           primary: primaryBlue,
+          onPrimary: Colors.white,
           secondary: accentYellow,
+          onSecondary: Colors.black,
           brightness: Brightness.light,
+          onSurface: Colors.black,
+          onSurfaceVariant: Colors.black54,
+        ),
+        textTheme: const TextTheme(
+          headlineLarge: TextStyle(color: primaryBlue, fontWeight: FontWeight.bold),
+          headlineMedium: TextStyle(color: primaryBlue, fontWeight: FontWeight.bold),
+          titleLarge: TextStyle(color: primaryBlue, fontWeight: FontWeight.bold),
+          bodyLarge: TextStyle(color: Colors.black),
+          bodyMedium: TextStyle(color: Colors.black),
+          bodySmall: TextStyle(color: Colors.black54),
         ),
         appBarTheme: const AppBarTheme(
           backgroundColor: primaryBlue,
@@ -89,8 +101,20 @@ class _CheckmateAppState extends State<CheckmateApp> {
         colorScheme: ColorScheme.fromSeed(
           seedColor: primaryBlue,
           primary: primaryBlue,
+          onPrimary: Colors.white,
           secondary: accentYellow,
+          onSecondary: Colors.black,
           brightness: Brightness.dark,
+          onSurface: Colors.white,
+          onSurfaceVariant: Colors.white70,
+        ),
+        textTheme: const TextTheme(
+          headlineLarge: TextStyle(color: accentYellow, fontWeight: FontWeight.bold),
+          headlineMedium: TextStyle(color: accentYellow, fontWeight: FontWeight.bold),
+          titleLarge: TextStyle(color: accentYellow, fontWeight: FontWeight.bold),
+          bodyLarge: TextStyle(color: Colors.white),
+          bodyMedium: TextStyle(color: Colors.white),
+          bodySmall: TextStyle(color: Colors.white70),
         ),
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFF121212),
