@@ -118,8 +118,7 @@ class PdfGenerator {
                         height: alignment.qrSize,
                         child: pw.BarcodeWidget(
                           barcode: pw.Barcode.qrCode(),
-                          data:
-                              '$studentName, $sheetId, CS101, Midterm Exam, ${template.name}',
+                          data: sheetId,
                           drawText: false,
                         ),
                       ),

@@ -568,16 +568,20 @@ class _AIAnalysisScreenState extends State<AIAnalysisScreen> {
 
   Widget _buildStudentInfo(dynamic qr) {
     final sheet = _currentSheet;
+    final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    final Color accentColor =
+        isDarkMode ? Colors.yellowAccent : Colors.blueAccent;
+    final Color qrTextColor = isDarkMode ? Colors.white : Colors.black87;
+
     return Column(
       children: [
         Card(
           margin: const EdgeInsets.only(bottom: 12),
           elevation: 0,
-          color: Colors.blueAccent.withValues(alpha: 0.05),
+          color: accentColor.withValues(alpha: 0.05),
           shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
-              side:
-                  BorderSide(color: Colors.blueAccent.withValues(alpha: 0.2))),
+              side: BorderSide(color: accentColor.withValues(alpha: 0.2))),
           child: Padding(
               padding: const EdgeInsets.all(16),
               child: Column(
@@ -596,11 +600,13 @@ class _AIAnalysisScreenState extends State<AIAnalysisScreen> {
                             padding: const EdgeInsets.symmetric(
                                 horizontal: 10, vertical: 4),
                             decoration: BoxDecoration(
-                                color: Colors.blueAccent,
+                                color: accentColor,
                                 borderRadius: BorderRadius.circular(8)),
                             child: Text(sheet!.detectedSet!,
-                                style: const TextStyle(
-                                    color: Colors.white,
+                                style: TextStyle(
+                                    color: isDarkMode
+                                        ? Colors.black
+                                        : Colors.white,
                                     fontSize: 12,
                                     fontWeight: FontWeight.bold)),
                           ),
@@ -609,25 +615,25 @@ class _AIAnalysisScreenState extends State<AIAnalysisScreen> {
                     Text("${qr.examTitle} • ${qr.examCode}",
                         style:
                             const TextStyle(color: Colors.grey, fontSize: 12)),
-                    const Divider(height: 24, color: Colors.blueAccent),
+                    Divider(height: 24, color: accentColor),
                     Row(
                       children: [
-                        const Icon(Icons.qr_code_scanner,
-                            size: 16, color: Colors.blueAccent),
+                        Icon(Icons.qr_code_scanner,
+                            size: 16, color: accentColor),
                         const SizedBox(width: 8),
-                        const Text("QR CONTENT:",
+                        Text("QR CONTENT:",
                             style: TextStyle(
                                 fontSize: 10,
                                 fontWeight: FontWeight.bold,
-                                color: Colors.blueAccent)),
+                                color: accentColor)),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
                             qr.toString(),
-                            style: const TextStyle(
+                            style: TextStyle(
                                 fontSize: 10,
                                 fontFamily: 'monospace',
-                                color: Colors.black87),
+                                color: qrTextColor),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
@@ -640,25 +646,29 @@ class _AIAnalysisScreenState extends State<AIAnalysisScreen> {
   }
 
   Widget _buildSetResultTile(String setLabel) {
+    final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    final Color accentColor =
+        isDarkMode ? Colors.yellowAccent : Colors.blueAccent;
+
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      color: Colors.blueAccent.withValues(alpha: 0.1),
+      color: accentColor.withValues(alpha: 0.1),
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
-        side: const BorderSide(color: Colors.blueAccent, width: 1.5),
+        side: BorderSide(color: accentColor, width: 1.5),
       ),
       child: ListTile(
-        leading: const CircleAvatar(
-          backgroundColor: Colors.blueAccent,
-          child:
-              Icon(Icons.assignment_turned_in, color: Colors.white, size: 20),
+        leading: CircleAvatar(
+          backgroundColor: accentColor,
+          child: Icon(Icons.assignment_turned_in,
+              color: isDarkMode ? Colors.black : Colors.white, size: 20),
         ),
-        title: const Text(
+        title: Text(
           "EXAM SET DETECTED",
           style: TextStyle(
               fontSize: 10,
               fontWeight: FontWeight.bold,
-              color: Colors.blueAccent,
+              color: accentColor,
               letterSpacing: 1.1),
         ),
         subtitle: Text(

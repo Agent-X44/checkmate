@@ -14,7 +14,7 @@ class QrData {
   });
 
   factory QrData.fromRaw(String raw) {
-    // Expected format: "Name,ExamCode,Course,Title,TemplateName"
+    // 1. Handle Legacy Format: "Name,ExamCode,Course,Title,TemplateName"
     final parts = raw.split(',');
     if (parts.length >= 4) {
       return QrData(
@@ -25,9 +25,28 @@ class QrData {
         templateName: parts.length >= 5 ? parts[4].trim() : null,
       );
     }
+
+    // 2. Handle Optimized Payload (Single SheetID): e.g., "CM50-A-0001"
+    if (raw.startsWith("CM") && raw.contains("-")) {
+      final segments = raw.split('-');
+      String templateInferred = "Unknown";
+      if (segments[0] == "CM50") templateInferred = "Standard 50 Questions";
+      
+      final studentSerial = segments.length > 2 ? segments[2] : "Unknown";
+
+      return QrData(
+        studentName: 'Student #$studentSerial',
+        examCode: raw.trim(), // The full ID is the exam code
+        course: 'Checkmate LMS',
+        examTitle: templateInferred,
+        templateName: templateInferred,
+      );
+    }
+
+    // 3. Fallback
     return QrData(
-      studentName: 'Unknown',
-      examCode: 'Unknown',
+      studentName: raw.isEmpty ? 'Unknown' : 'ID: $raw',
+      examCode: raw.isEmpty ? 'Unknown' : raw,
       course: 'Unknown',
       examTitle: 'Unknown',
     );
