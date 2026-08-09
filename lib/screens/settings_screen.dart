@@ -22,16 +22,19 @@ class SettingsScreen extends StatelessWidget {
       ),
       body: ListView(
         children: [
-          const Padding(
-            padding: EdgeInsets.all(16.0),
+          Padding(
+            padding: const EdgeInsets.all(16.0),
             child: Text(
               'Appearance',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              style: Theme.of(context).textTheme.titleLarge,
             ),
           ),
           SwitchListTile(
             title: const Text('Dark Mode'),
-            subtitle: const Text('Toggle between light and dark themes'),
+            subtitle: Text(
+              'Toggle between light and dark themes',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
             value: isDarkMode,
             activeThumbColor: Theme.of(context).colorScheme.secondary,
             onChanged: (bool value) {
@@ -51,11 +54,11 @@ class SettingsScreen extends StatelessWidget {
             ),
           ),
           const Divider(),
-          const Padding(
-            padding: EdgeInsets.all(16.0),
+          Padding(
+            padding: const EdgeInsets.all(16.0),
             child: Text(
               'Account',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              style: Theme.of(context).textTheme.titleLarge,
             ),
           ),
           const ListTile(
@@ -69,11 +72,11 @@ class SettingsScreen extends StatelessWidget {
             trailing: Icon(Icons.chevron_right),
           ),
           const Divider(),
-          const Padding(
-            padding: EdgeInsets.all(16.0),
+          Padding(
+            padding: const EdgeInsets.all(16.0),
             child: Text(
               'About',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              style: Theme.of(context).textTheme.titleLarge,
             ),
           ),
           const ListTile(

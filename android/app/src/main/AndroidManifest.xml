@@ -1,8 +1,17 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="com.checkmate.checkmate"
+    tools:ignore="MissingVersion,OldTargetApi,GoogleAppIndexingWarning">
+
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="36" />
+
     <application
         android:label="checkmate"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_launcher"
+        tools:ignore="Instantiatable">
         <activity
             android:name=".MainActivity"
             android:exported="true"

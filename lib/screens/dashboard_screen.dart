@@ -92,6 +92,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildCollapsibleHeader(
       BuildContext context, String title, bool isExpanded, VoidCallback onTap) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return SliverToBoxAdapter(
       child: InkWell(
         onTap: onTap,
@@ -104,6 +105,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 title,
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.bold,
+                      color: isDark ? Colors.white : Colors.black,
                     ),
               ),
               Icon(
@@ -118,6 +120,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildCombinedSummary(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 20),
@@ -126,9 +129,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
+          Text(
             'Academic Overview',
-            style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey),
+            style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: isDark ? Colors.white : Colors.black),
           ),
           const SizedBox(height: 12),
           Row(

@@ -59,17 +59,14 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 16),
               Text(
                 'Checkmate',
-                style: theme.textTheme.headlineLarge?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  color: isDark
-                      ? theme.colorScheme.secondary
-                      : theme.colorScheme.primary,
-                ),
+                style: theme.textTheme.headlineLarge,
               ),
-              const Text(
+              Text(
                 'AI-Powered Exam Scanner & LMS',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 14, color: Colors.grey),
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: isDark ? Colors.white70 : Colors.black54,
+                ),
               ),
               const SizedBox(height: 40),
 
@@ -79,8 +76,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: Text(
                   _isLoginMode ? 'Welcome Back' : 'Create Account',
                   key: ValueKey<bool>(_isLoginMode),
-                  style: const TextStyle(
-                      fontSize: 24, fontWeight: FontWeight.bold),
+                  style: theme.textTheme.headlineMedium?.copyWith(
+                    color: isDark ? Colors.white : Colors.black,
+                  ),
                 ),
               ),
               const SizedBox(height: 30),
@@ -128,6 +126,12 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: ElevatedButton(
                   onPressed: _handleAuth,
                   style: ElevatedButton.styleFrom(
+                    backgroundColor: isDark 
+                        ? theme.colorScheme.secondary 
+                        : theme.colorScheme.primary,
+                    foregroundColor: isDark 
+                        ? Colors.black 
+                        : Colors.white,
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12)),
                   ),
@@ -151,7 +155,9 @@ class _LoginScreenState extends State<LoginScreen> {
                   _isLoginMode
                       ? "Don't have an account? Sign Up"
                       : "Already have an account? Login",
-                  style: TextStyle(color: theme.colorScheme.primary),
+                  style: TextStyle(
+                    color: isDark ? Colors.white : Colors.black,
+                  ),
                 ),
               ),
             ],
