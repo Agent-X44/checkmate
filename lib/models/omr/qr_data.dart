@@ -4,17 +4,18 @@ class QrData {
   final String course;
   final String examTitle;
   final String? templateName;
+  final String sheetIdentifier;
 
   QrData({
     required this.studentName,
     required this.examCode,
     required this.course,
     required this.examTitle,
+    required this.sheetIdentifier,
     this.templateName,
   });
 
   factory QrData.fromRaw(String raw) {
-    // 1. Handle Legacy Format: "Name,ExamCode,Course,Title,TemplateName"
     final parts = raw.split(',');
     if (parts.length >= 4) {
       return QrData(
@@ -22,33 +23,28 @@ class QrData {
         examCode: parts[1].trim(),
         course: parts[2].trim(),
         examTitle: parts[3].trim(),
+        sheetIdentifier: parts[1].trim(),
         templateName: parts.length >= 5 ? parts[4].trim() : null,
       );
     }
 
-    // 2. Handle Optimized Payload (Single SheetID): e.g., "CM50-A-0001"
-    if (raw.startsWith("CM") && raw.contains("-")) {
-      final segments = raw.split('-');
-      String templateInferred = "Unknown";
-      if (segments[0] == "CM50") templateInferred = "Standard 50 Questions";
-      
-      final studentSerial = segments.length > 2 ? segments[2] : "Unknown";
-
+    if (raw.isNotEmpty) {
       return QrData(
-        studentName: 'Student #$studentSerial',
-        examCode: raw.trim(), // The full ID is the exam code
+        studentName: 'Resolving Student...',
+        examCode: raw.trim(),
         course: 'Checkmate LMS',
-        examTitle: templateInferred,
-        templateName: templateInferred,
+        examTitle: 'Assessment: $raw',
+        sheetIdentifier: raw.trim(),
+        templateName: "Standard 50 Questions",
       );
     }
 
-    // 3. Fallback
     return QrData(
-      studentName: raw.isEmpty ? 'Unknown' : 'ID: $raw',
-      examCode: raw.isEmpty ? 'Unknown' : raw,
+      studentName: 'Unknown',
+      examCode: 'UNKNOWN',
       course: 'Unknown',
       examTitle: 'Unknown',
+      sheetIdentifier: 'UNKNOWN',
     );
   }
 
@@ -58,11 +54,11 @@ class QrData {
       'examCode': examCode,
       'course': course,
       'examTitle': examTitle,
+      'sheetIdentifier': sheetIdentifier,
       'templateName': templateName,
     };
   }
 
   @override
-  String toString() =>
-      '$studentName - $examTitle ($examCode) [$course] ${templateName ?? ""}';
+  String toString() => '$studentName ($sheetIdentifier)';
 }

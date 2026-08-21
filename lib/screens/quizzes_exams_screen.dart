@@ -3,7 +3,13 @@ import 'ai_questionnaire_screen.dart';
 
 class QuizzesExamsScreen extends StatelessWidget {
   final bool isOwner;
-  const QuizzesExamsScreen({super.key, required this.isOwner});
+  final String courseId;
+
+  const QuizzesExamsScreen({
+    super.key,
+    required this.isOwner,
+    required this.courseId,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -28,8 +34,10 @@ class QuizzesExamsScreen extends StatelessWidget {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) =>
-                        const AIQuestionnaireScreen(type: 'Quiz/Exam'),
+                    builder: (context) => AIQuestionnaireScreen(
+                      type: 'Quiz/Exam',
+                      classId: courseId,
+                    ),
                   ),
                 );
               },

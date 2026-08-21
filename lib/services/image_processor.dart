@@ -417,6 +417,7 @@ class ImageProcessor {
             examCode: "CM50-AUTO",
             course: "Auto-Detected",
             examTitle: activeTemplate.name,
+            sheetIdentifier: "CM50-AUTO",
           );
         }
         

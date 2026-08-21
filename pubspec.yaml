@@ -40,15 +40,20 @@ dependencies:
   permission_handler: ^11.3.1
   path_provider: ^2.1.6
   path: ^1.9.1
+  supabase_flutter: ^2.8.3
+  google_sign_in: ^6.2.2
   dio: ^5.7.0
   google_fonts: ^8.2.1
   pdf: ^3.11.1
   printing: ^5.13.2
+  open_filex: ^4.5.0
+  share_plus: ^10.1.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_launcher_icons: ^0.14.4
+  mockito: ^5.4.4
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is

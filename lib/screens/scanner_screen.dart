@@ -4,13 +4,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import '../services/image_processor.dart';
+import '../services/api_service.dart';
+import '../models/omr/processed_sheet.dart';
+import '../models/omr/templates/standard_50_questions.dart';
 import 'ai_analysis_screen.dart';
 
+/// Screen responsible for live camera feed and document edge detection.
+/// Enforces BR-06: Local Edge OMR Processing (Isolate-based).
 class ScannerScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
   final bool isActive;
-  const ScannerScreen(
-      {super.key, required this.cameras, required this.isActive});
+  const ScannerScreen({super.key, required this.cameras, required this.isActive});
 
   @override
   State<ScannerScreen> createState() => _ScannerScreenState();
@@ -29,6 +33,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
   List<double>? _rawCorners;
   Offset? _focusPoint;
   DateTime _lastUIUpdate = DateTime.now();
+
+  // Session Management (BR-07: Results retained on device until Finish)
+  final List<ProcessedSheet> _scannedResults = [];
+  final Set<String> _processedSheetIds = {};
 
   Isolate? _isolate;
   SendPort? _isolateSendPort;
@@ -66,7 +74,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
       if (controller.value.isStreamingImages) {
         await controller.stopImageStream();
       }
-      // Force flash off before disposal
       await controller.setFlashMode(FlashMode.off);
       await controller.dispose();
     } catch (_) {}
@@ -93,10 +100,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
     _isolate = null;
   }
 
+  /// Offloads heavy CV processing to a separate Isolate to prevent UI jank.
   Future<void> _startIsolate() async {
-    if (_isolate != null) {
-      return;
-    }
+    if (_isolate != null) return;
     _isolate = await Isolate.spawn(
         ImageProcessor.edgeDetectionWorker, _mainReceivePort.sendPort);
     _mainReceivePort.listen((message) {
@@ -104,6 +110,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
         _isolateSendPort = message;
       } else if (message is ScanResponse && mounted && !_isProcessing) {
         _handleLiveResponse(message);
+      } else if (message is ProcessedSheet && mounted) {
+        _handleProcessedSheet(message);
       }
     });
   }
@@ -117,7 +125,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
     }
 
     final detected = _detectionCounter > 0;
-    // Fast processing doesn't need heavy UI updates
+    // Throttled UI updates (10fps max for detection overlays)
     if (DateTime.now().difference(_lastUIUpdate).inMilliseconds > 100) {
       if (mounted) {
         setState(() {
@@ -136,12 +144,49 @@ class _ScannerScreenState extends State<ScannerScreen> {
     }
   }
 
+  /// BR-05 Enforcement: Resolve Sheet ID via backend before grading.
+  Future<void> _handleProcessedSheet(ProcessedSheet sheet) async {
+    final identifier = sheet.qrData?.sheetIdentifier ?? "UNKNOWN";
+
+    if (_processedSheetIds.contains(identifier) && identifier != "UNKNOWN") {
+      _showErrorSnackBar("Duplicate sheet detected. Skipping.");
+      setState(() => _isProcessing = false);
+      return;
+    }
+
+    try {
+      // Resolve metadata from Supabase via FastAPI
+      final metadata = await ApiService.resolveSheet(identifier);
+      
+      setState(() {
+        _scannedResults.add(sheet);
+        _processedSheetIds.add(identifier);
+        _isProcessing = false;
+      });
+
+      _showSuccessSnackBar("Scanned: ${metadata['student_name']}");
+    } catch (e) {
+      _showErrorSnackBar("Identification failed: $e");
+      setState(() => _isProcessing = false);
+    }
+  }
+
+  void _showErrorSnackBar(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), backgroundColor: Colors.redAccent));
+  }
+
+  void _showSuccessSnackBar(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), backgroundColor: Colors.green, duration: const Duration(seconds: 1)));
+  }
+
   Future<void> _initializeCamera() async {
     if (widget.cameras.isEmpty) return;
 
     _controller = CameraController(
       widget.cameras[0],
-      ResolutionPreset.high, // HD Live Feed
+      ResolutionPreset.high,
       enableAudio: false,
       imageFormatGroup: ImageFormatGroup.yuv420,
     );
@@ -169,6 +214,20 @@ class _ScannerScreenState extends State<ScannerScreen> {
     }
   }
 
+  Future<void> _handleTapToFocus(TapDownDetails details, Size widgetSize) async {
+    if (_controller == null || !_controller!.value.isInitialized) return;
+    try {
+      final offset = details.localPosition;
+      final nx = offset.dy / widgetSize.height;
+      final ny = 1.0 - (offset.dx / widgetSize.width);
+      setState(() => _focusPoint = offset);
+      await _controller!.setFocusPoint(Offset(nx.clamp(0.05, 0.95), ny.clamp(0.05, 0.95)));
+      await _controller!.setExposurePoint(Offset(nx.clamp(0.05, 0.95), ny.clamp(0.05, 0.95)));
+      await Future.delayed(const Duration(milliseconds: 500));
+      if (mounted) setState(() => _focusPoint = null);
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
     _disposeCameraAndRestore();
@@ -176,33 +235,12 @@ class _ScannerScreenState extends State<ScannerScreen> {
     super.dispose();
   }
 
-  Future<void> _handleTapToFocus(
-      TapDownDetails details, Size widgetSize) async {
-    if (_controller == null || !_controller!.value.isInitialized) return;
-    try {
-      final offset = details.localPosition;
-      final nx = offset.dy / widgetSize.height;
-      final ny = 1.0 - (offset.dx / widgetSize.width);
-      setState(() => _focusPoint = offset);
-      await _controller!
-          .setFocusPoint(Offset(nx.clamp(0.05, 0.95), ny.clamp(0.05, 0.95)));
-      await _controller!
-          .setExposurePoint(Offset(nx.clamp(0.05, 0.95), ny.clamp(0.05, 0.95)));
-      await Future.delayed(const Duration(milliseconds: 500));
-      if (mounted) setState(() => _focusPoint = null);
-    } catch (_) {}
-  }
-
   @override
   Widget build(BuildContext context) {
-    if (!_isInitialized ||
-        _controller == null ||
-        !_controller!.value.isInitialized ||
-        _isProcessing) {
+    if (!_isInitialized || _controller == null) {
       return const Scaffold(
           backgroundColor: Colors.black,
-          body: Center(
-              child: CircularProgressIndicator(color: Colors.yellowAccent)));
+          body: Center(child: CircularProgressIndicator(color: Colors.yellowAccent)));
     }
     final size = MediaQuery.of(context).size;
     final cameraValue = _controller!.value;
@@ -223,9 +261,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
                   final widgetSize = constraints.biggest;
                   return Stack(children: [
                     GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTapDown: (d) => _handleTapToFocus(d, widgetSize),
-                        child: CameraPreview(_controller!)),
+                      behavior: HitTestBehavior.opaque,
+                      onTapDown: (d) => _handleTapToFocus(d, widgetSize),
+                      child: CameraPreview(_controller!),
+                    ),
                     if (_focusPoint != null)
                       Positioned(
                           left: _focusPoint!.dx - 30,
@@ -234,9 +273,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
                               width: 60,
                               height: 60,
                               decoration: BoxDecoration(
-                                  border: Border.all(
-                                      color: Colors.yellowAccent,
-                                      width: 1.5)))),
+                                  border: Border.all(color: Colors.yellowAccent, width: 1.5)))),
                     if (_detectedCorners != null)
                       Positioned.fill(
                           child: IgnorePointer(
@@ -249,114 +286,120 @@ class _ScannerScreenState extends State<ScannerScreen> {
               ),
             ),
           ),
-          if (_paperDetected)
-            Positioned(
-              top: size.height * 0.45,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 28, vertical: 14),
-                  decoration: BoxDecoration(
-                    color: Colors.yellowAccent.withValues(alpha: 0.9),
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                  child: const Text('READY TO SCAN',
-                      style: TextStyle(
-                          color: Colors.black,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 18,
-                          letterSpacing: 1.5)),
+          
+          if (_isProcessing)
+            Container(
+              color: Colors.black54,
+              child: const Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(color: Colors.yellowAccent),
+                    SizedBox(height: 16),
+                    Text("IDENTIFYING STUDENT...", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
+                  ],
                 ),
               ),
             ),
+
           Positioned(
-            top: 40,
+            top: 50,
             left: 20,
             right: 20,
             child: Row(
               children: [
-                IconButton(
-                    icon: Icon(_isFlashOn ? Icons.flash_on : Icons.flash_off,
-                        color: Colors.white, size: 28),
-                    onPressed: () async {
-                      if (_controller == null) return;
-                      final nextMode =
-                          _isFlashOn ? FlashMode.off : FlashMode.torch;
-                      await _controller!.setFlashMode(nextMode);
-                      setState(() => _isFlashOn = !_isFlashOn);
-                    }),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(20)),
+                  child: Text("SCANNED: ${_scannedResults.length}", style: const TextStyle(color: Colors.yellowAccent, fontWeight: FontWeight.bold)),
+                ),
                 const Spacer(),
-                IconButton(
-                    icon: const Icon(Icons.close, color: Colors.white),
-                    onPressed: () => Navigator.pop(context)),
+                IconButton(icon: const Icon(Icons.close, color: Colors.white), onPressed: () => Navigator.pop(context)),
               ],
             ),
           ),
+
           Positioned(
             bottom: 40,
             left: 0,
             right: 0,
-            child: Center(
-              child: FloatingActionButton.large(
-                // Logic: Only enable button if paper is detected
-                onPressed: _paperDetected
-                    ? () async {
-                        final nav = Navigator.of(context);
-                        if (_isProcessing ||
-                            _controller == null ||
-                            _rawCorners == null) {
-                          return;
-                        }
-                        final corners = List<double>.from(_rawCorners!);
-                        setState(() => _isProcessing = true);
+            child: Column(
+              children: [
+                if (_paperDetected && !_isProcessing)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 20.0),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10.0),
+                      decoration: BoxDecoration(color: Colors.yellowAccent, borderRadius: BorderRadius.circular(30)),
+                      child: const Text("PAPER DETECTED", style: TextStyle(fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    FloatingActionButton(
+                      heroTag: 'flash',
+                      onPressed: () async {
+                        final nextMode = _isFlashOn ? FlashMode.off : FlashMode.torch;
+                        await _controller?.setFlashMode(nextMode);
+                        setState(() => _isFlashOn = !_isFlashOn);
+                      },
+                      backgroundColor: Colors.white10,
+                      child: Icon(_isFlashOn ? Icons.flash_on : Icons.flash_off, color: Colors.white),
+                    ),
+                    
+                    FloatingActionButton.large(
+                      heroTag: 'capture',
+                      onPressed: (_paperDetected && !_isProcessing) ? _captureAndProcess : null,
+                      backgroundColor: _paperDetected ? Colors.yellowAccent : Colors.white10,
+                      child: Icon(Icons.qr_code_scanner, color: _paperDetected ? Colors.black : Colors.white24, size: 40),
+                    ),
 
-                        try {
-                          final XFile photo = await _controller!.takePicture();
-                          final Uint8List bytes = await photo.readAsBytes();
-                          if (mounted) {
-                            await _disposeCameraOnly();
-                            if (!mounted) {
-                              return;
-                            }
-                            nav.push(
-                                MaterialPageRoute(
-                                    builder: (context) => AIAnalysisScreen(
-                                        rawImage: bytes,
-                                        rawCorners: corners))).then((_) {
-                              if (mounted) {
-                                setState(() {
-                                  _isProcessing = false;
-                                  _paperDetected = false;
-                                  _detectedCorners = null;
-                                  _isFlashOn = false;
-                                });
-                                _initializeCamera();
-                              }
-                            });
-                          }
-                        } catch (e) {
-                          debugPrint("Capture error: $e");
-                          if (mounted) {
-                            setState(() {
-                              _isProcessing = false;
-                              _isFlashOn = false;
-                            });
-                            _initializeCamera();
-                          }
-                        }
-                      }
-                    : null,
-                backgroundColor:
-                    _paperDetected ? Colors.yellowAccent : Colors.white10,
-                child: Icon(Icons.camera,
-                    color: _paperDetected ? Colors.black : Colors.white24,
-                    size: 36),
-              ),
+                    FloatingActionButton(
+                      heroTag: 'finish',
+                      onPressed: _scannedResults.isNotEmpty ? _finishSession : null,
+                      backgroundColor: _scannedResults.isNotEmpty ? Colors.green : Colors.white10,
+                      child: const Icon(Icons.check, color: Colors.white),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Future<void> _captureAndProcess() async {
+    if (_isolateSendPort == null || _rawCorners == null) return;
+    
+    final corners = List<double>.from(_rawCorners!);
+    setState(() => _isProcessing = true);
+
+    try {
+      final XFile photo = await _controller!.takePicture();
+      final Uint8List bytes = await photo.readAsBytes();
+      
+      _isolateSendPort!.send(OmrRequest(
+        bytes: bytes,
+        corners: corners,
+        template: Standard50QuestionsTemplate(),
+        replyPort: _mainReceivePort.sendPort,
+      ));
+    } catch (e) {
+      _showErrorSnackBar("Capture failed: $e");
+      setState(() => _isProcessing = false);
+    }
+  }
+
+  void _finishSession() {
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AIAnalysisScreen(
+          sheets: _scannedResults,
+        ),
       ),
     );
   }
@@ -368,24 +411,17 @@ class EdgePainter extends CustomPainter {
   EdgePainter({required this.corners, this.isDetected = false});
   @override
   void paint(Canvas canvas, Size size) {
-    if (corners.isEmpty) {
-      return;
-    }
+    if (corners.isEmpty) return;
     final paint = Paint()
-      ..color = isDetected
-          ? Colors.yellowAccent.withValues(alpha: 0.5)
-          : Colors.white24
+      ..color = isDetected ? Colors.yellowAccent.withValues(alpha: 0.5) : Colors.white24
       ..strokeWidth = isDetected ? 3 : 1
       ..style = PaintingStyle.stroke;
 
-    final pts = corners
-        .map((p) => Offset(p.dx * size.width, p.dy * size.height))
-        .toList();
+    final pts = corners.map((p) => Offset(p.dx * size.width, p.dy * size.height)).toList();
     double cx = pts.map((p) => p.dx).reduce((a, b) => a + b) / 4;
     double cy = pts.map((p) => p.dy).reduce((a, b) => a + b) / 4;
-    pts.sort((a, b) => math
-        .atan2(a.dy - cy, a.dx - cx)
-        .compareTo(math.atan2(b.dy - cy, b.dx - cx)));
+    pts.sort((a, b) => math.atan2(a.dy - cy, a.dx - cx).compareTo(math.atan2(b.dy - cy, b.dx - cx)));
+    
     final path = Path()
       ..moveTo(pts[0].dx, pts[0].dy)
       ..lineTo(pts[1].dx, pts[1].dy)
@@ -394,7 +430,6 @@ class EdgePainter extends CustomPainter {
       ..close();
     canvas.drawPath(path, paint);
   }
-
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

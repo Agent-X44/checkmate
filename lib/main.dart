@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:camera/camera.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'services/image_processor.dart';
 import 'screens/root_auth_wrapper.dart';
 
@@ -8,6 +9,11 @@ List<CameraDescription> globalCameras = [];
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await Supabase.initialize(
+    url: 'https://ssfzrtenhiaiumxmuabq.supabase.co',
+    anonKey: 'sb_publishable_RySftOBho4GUXi4k1i4V6g_rhAjVBha',
+  );
 
   try {
     globalCameras = await availableCameras();

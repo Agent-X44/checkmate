@@ -135,7 +135,10 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
                         context,
                         MaterialPageRoute(
                             builder: (context) =>
-                                AssignmentsScreen(isOwner: isTeacherView))),
+                                AssignmentsScreen(
+                                  isOwner: isTeacherView,
+                                  courseId: widget.course.id,
+                                ))),
                   ),
                   _buildSectionCard(
                     context,
@@ -149,7 +152,10 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
                         context,
                         MaterialPageRoute(
                             builder: (context) =>
-                                QuizzesExamsScreen(isOwner: isTeacherView))),
+                                QuizzesExamsScreen(
+                                  isOwner: isTeacherView,
+                                  courseId: widget.course.id,
+                                ))),
                   ),
                   _buildSectionCard(
                     context,

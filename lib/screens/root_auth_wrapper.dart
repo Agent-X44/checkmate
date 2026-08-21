@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../services/supabase_service.dart';
 import 'login_screen.dart';
 import 'main_navigation.dart';
 
@@ -6,38 +8,48 @@ class RootAuthWrapper extends StatefulWidget {
   final ThemeMode themeMode;
   final Function(bool) onThemeChanged;
 
-  const RootAuthWrapper(
-      {super.key, required this.themeMode, required this.onThemeChanged});
+  const RootAuthWrapper({
+    super.key, 
+    required this.themeMode, 
+    required this.onThemeChanged
+  });
 
   @override
   State<RootAuthWrapper> createState() => _RootAuthWrapperState();
 }
 
 class _RootAuthWrapperState extends State<RootAuthWrapper> {
-  bool _isAuthenticated = false;
+  User? _user;
 
-  void _login() {
-    setState(() {
-      _isAuthenticated = true;
-    });
+  @override
+  void initState() {
+    super.initState();
+    _user = Supabase.instance.client.auth.currentUser;
+    _setupAuthListener();
   }
 
-  void _logout() {
-    setState(() {
-      _isAuthenticated = false;
+  void _setupAuthListener() {
+    Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      if (mounted) {
+        setState(() {
+          _user = data.user;
+        });
+      }
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isAuthenticated) {
+    if (_user != null) {
       return MainNavigation(
         themeMode: widget.themeMode,
         onThemeChanged: widget.onThemeChanged,
-        onLogout: _logout,
+        onLogout: () async {
+          await SupabaseService.signOut();
+        },
       );
     }
 
-    return LoginScreen(onLogin: _login);
+    return const LoginScreen();
   }
 }
