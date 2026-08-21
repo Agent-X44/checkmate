@@ -32,7 +32,7 @@ class _RootAuthWrapperState extends State<RootAuthWrapper> {
     Supabase.instance.client.auth.onAuthStateChange.listen((data) {
       if (mounted) {
         setState(() {
-          _user = data.user;
+          _user = data.session?.user;
         });
       }
     });
