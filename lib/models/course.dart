@@ -62,6 +62,30 @@ class Course {
   })  : groupMessages = groupMessages ?? [],
         enrolledStudents = enrolledStudents ?? [],
         privateChats = privateChats ?? {};
+
+  factory Course.fromMap(Map<String, dynamic> map, {required bool isOwner}) {
+    // Generate a consistent gradient based on the ID string
+    final idHash = map['id'].toString().hashCode;
+    final List<List<Color>> presets = [
+      [Colors.blue.shade700, Colors.blue.shade400],
+      [Colors.indigo.shade700, Colors.indigo.shade400],
+      [Colors.teal.shade700, Colors.teal.shade400],
+      [Colors.orange.shade700, Colors.orange.shade400],
+      [Colors.purple.shade700, Colors.purple.shade400],
+    ];
+    final gradient = presets[idHash % presets.length];
+
+    return Course(
+      id: map['id'],
+      code: map['code'] ?? 'N/A',
+      name: map['name'] ?? 'Untitled Course',
+      instructor: map['profiles']?['name'] ?? 'Instructor',
+      averageGrade: 'N/A', // Calculated later
+      gradient: gradient,
+      joinCode: map['code'] ?? '', // Using code as join code for simplicity
+      isOwner: isOwner,
+    );
+  }
 }
 
 String generateJoinCode() {
@@ -72,49 +96,5 @@ String generateJoinCode() {
           chars.length]).join();
 }
 
-// Updated global state to show a MIX of roles for the same user
-List<Course> globalDummyCourses = [
-  // User is the TEACHER here
-  Course(
-    id: '1',
-    code: 'CPE 311',
-    name: 'Digital Signal Processing',
-    instructor: 'Hilda Santos',
-    averageGrade: '85%',
-    isOwner: true,
-    joinCode: 'DSP789',
-    gradient: [Colors.blue.shade700, Colors.blue.shade400],
-    enrolledStudents: [
-      Student(id: 's1', name: 'John Doe', avatar: 'JD'),
-      Student(id: 's2', name: 'Jane Smith', avatar: 'JS'),
-    ],
-  ),
-  // User is the STUDENT here
-  Course(
-    id: '3',
-    code: 'CPE 411',
-    name: 'Embedded Systems Design',
-    instructor: 'Dr. Alan Turing',
-    averageGrade: '78%',
-    isOwner: false,
-    joinCode: 'EMB123',
-    gradient: [Colors.teal.shade700, Colors.teal.shade400],
-    enrolledStudents: [
-      Student(id: 'me', name: 'Hilda Santos', avatar: 'HS'),
-    ],
-  ),
-  // User is the TEACHER here
-  Course(
-    id: '2',
-    code: 'CPE 321',
-    name: 'Computer Networks & Security',
-    instructor: 'Hilda Santos',
-    averageGrade: '92%',
-    isOwner: true,
-    joinCode: 'NET555',
-    gradient: [Colors.indigo.shade700, Colors.indigo.shade400],
-    enrolledStudents: [
-      Student(id: 's1', name: 'John Doe', avatar: 'JD'),
-    ],
-  ),
-];
+// Empty global state for production use
+List<Course> globalDummyCourses = [];

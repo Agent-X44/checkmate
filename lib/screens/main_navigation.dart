@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/course.dart';
+import '../services/supabase_service.dart';
 import 'dashboard_screen.dart';
 import 'scanner_screen.dart';
 import 'settings_screen.dart';
 import 'course_dashboard_screen.dart';
-import '../main.dart'; // To access globalCameras and CheckmateApp (for logout)
+import '../main.dart'; // To access globalCameras
 
 class MainNavigation extends StatefulWidget {
   final ThemeMode themeMode;
@@ -49,28 +51,12 @@ class _MainNavigationState extends State<MainNavigation>
 
     if (newState) {
       debugPrint("DEBUG: Requesting Notification Permission...");
-      
-      // 1. Check current status
       var status = await Permission.notification.status;
-      debugPrint("DEBUG: Initial status: $status");
-
-      // 2. Small delay to ensure UI focus is stable (Helps on MIUI)
       await Future.delayed(const Duration(milliseconds: 200));
-      
-      // 3. Request it
       status = await Permission.notification.request();
-      debugPrint("DEBUG: Status after request: $status");
 
-      // 4. Handle results
-      if (status.isPermanentlyDenied) {
-        debugPrint("DEBUG: Permanently Denied. Showing Settings Dialog.");
+      if (status.isPermanentlyDenied || status.isDenied) {
         if (mounted) _showPermissionSettingsDialog();
-        return;
-      } else if (status.isDenied) {
-        // Fallback for MIUI/Android 13+ where request might be silently ignored
-        if (mounted) {
-          _showPermissionSettingsDialog();
-        }
         return;
       }
     }
@@ -191,27 +177,25 @@ class _MainNavigationState extends State<MainNavigation>
               onPressed: () => Navigator.pop(context),
               child: const Text('CANCEL')),
           ElevatedButton(
-            onPressed: () {
+            onPressed: () async {
               if (codeCtrl.text.isEmpty || nameCtrl.text.isEmpty) return;
-              setState(() {
-                globalDummyCourses.insert(
-                    0,
-                    Course(
-                      id: DateTime.now().toString(),
-                      code: codeCtrl.text,
-                      name: nameCtrl.text,
-                      instructor: 'Hannah Grace Narte',
-                      averageGrade: 'N/A',
-                      isOwner: true,
-                      joinCode: generateJoinCode(),
-                      gradient: [
-                        Colors.orange.shade700,
-                        Colors.orange.shade400
-                      ],
-                    ));
-              });
-              Navigator.pop(context);
-              _toggleFab();
+              
+              try {
+                await SupabaseService.createClass(
+                  name: nameCtrl.text,
+                  code: codeCtrl.text,
+                );
+                if (mounted) {
+                  Navigator.pop(context);
+                  _toggleFab();
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Failed to create course: $e')),
+                  );
+                }
+              }
             },
             child: const Text('CREATE'),
           ),
@@ -235,21 +219,21 @@ class _MainNavigationState extends State<MainNavigation>
               onPressed: () => Navigator.pop(context),
               child: const Text('CANCEL')),
           ElevatedButton(
-            onPressed: () {
-              setState(() {
-                globalDummyCourses.add(Course(
-                  id: DateTime.now().toString(),
-                  code: 'JOINED',
-                  name: 'Course Code: ${joinCtrl.text}',
-                  instructor: 'External Instructor',
-                  averageGrade: 'N/A',
-                  isOwner: false,
-                  joinCode: joinCtrl.text,
-                  gradient: [Colors.purple.shade700, Colors.purple.shade400],
-                ));
-              });
-              Navigator.pop(context);
-              _toggleFab();
+            onPressed: () async {
+              if (joinCtrl.text.isEmpty) return;
+              try {
+                await SupabaseService.joinClass(joinCtrl.text);
+                if (mounted) {
+                  Navigator.pop(context);
+                  _toggleFab();
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Failed to join course: $e')),
+                  );
+                }
+              }
             },
             child: const Text('JOIN'),
           ),
@@ -260,6 +244,10 @@ class _MainNavigationState extends State<MainNavigation>
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final accentColor = isDark ? theme.colorScheme.secondary : theme.colorScheme.primary;
+
     final List<Widget> screens = [
       const DashboardScreen(),
       ScannerScreen(cameras: globalCameras, isActive: _selectedIndex == 1),
@@ -274,9 +262,11 @@ class _MainNavigationState extends State<MainNavigation>
       key: _scaffoldKey,
       appBar: AppBar(
         title: const Text('Checkmate'),
-        leading: IconButton(
-          icon: const Icon(Icons.menu),
-          onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+        leading: Builder(
+          builder: (context) => IconButton(
+            icon: const Icon(Icons.menu),
+            onPressed: () => Scaffold.of(context).openDrawer(),
+          ),
         ),
         actions: [
           IconButton(
@@ -309,39 +299,61 @@ class _MainNavigationState extends State<MainNavigation>
       drawer: Drawer(
         child: Column(
           children: [
-            UserAccountsDrawerHeader(
-              decoration:
-                  BoxDecoration(color: Theme.of(context).colorScheme.primary),
-              currentAccountPicture: const CircleAvatar(
-                backgroundColor: Colors.white24,
-                child: Icon(Icons.person, color: Colors.white, size: 40),
-              ),
-              accountName: const Text('Hannah Grace Narte'),
-              accountEmail: const Text('Academic Profile'),
+            Builder(
+              builder: (context) {
+                final user = Supabase.instance.client.auth.currentUser;
+                final name = user?.userMetadata?['name'] ?? 'User';
+                final email = user?.email ?? 'Academic Profile';
+                
+                return UserAccountsDrawerHeader(
+                  decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary),
+                  currentAccountPicture: const CircleAvatar(
+                    backgroundColor: Colors.white24,
+                    child: Icon(Icons.person, color: Colors.white, size: 40),
+                  ),
+                  accountName: Text(name),
+                  accountEmail: Text(email),
+                );
+              },
             ),
             Expanded(
-              child: ListView.builder(
-                padding: EdgeInsets.zero,
-                itemCount: globalDummyCourses.length,
-                itemBuilder: (context, index) {
-                  final course = globalDummyCourses[index];
-                  return ListTile(
-                    leading: CircleAvatar(
-                        backgroundColor: course.gradient[0], radius: 12),
-                    title: Text(course.code),
-                    subtitle: Text(course.name, maxLines: 1),
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => CourseDashboardScreen(
-                            course: course,
-                            onCourseDeleted: () => setState(() =>
-                                globalDummyCourses
-                                    .removeWhere((c) => c.id == course.id)),
-                          ),
-                        ),
+              child: StreamBuilder<List<Map<String, dynamic>>>(
+                stream: SupabaseService.streamCreatedCourses(),
+                builder: (context, createdSnapshot) {
+                  return StreamBuilder<List<Map<String, dynamic>>>(
+                    stream: SupabaseService.streamEnrolledCourses(),
+                    builder: (context, enrolledSnapshot) {
+                      final allRaw = [...(createdSnapshot.data ?? []), ...(enrolledSnapshot.data ?? [])];
+                      final courses = allRaw.map((m) => Course.fromMap(m, isOwner: m['instructor_id'] == Supabase.instance.client.auth.currentUser?.id)).toList();
+
+                      if (courses.isEmpty) {
+                        return const Center(child: Text("No courses", style: TextStyle(color: Colors.grey)));
+                      }
+
+                      return ListView.builder(
+                        padding: EdgeInsets.zero,
+                        itemCount: courses.length,
+                        itemBuilder: (context, index) {
+                          final course = courses[index];
+                          return ListTile(
+                            leading: CircleAvatar(
+                                backgroundColor: course.gradient[0], radius: 12),
+                            title: Text(course.code),
+                            subtitle: Text(course.name, maxLines: 1),
+                            onTap: () {
+                              Navigator.pop(context);
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => CourseDashboardScreen(
+                                    course: course,
+                                    onCourseDeleted: () {}, // Handled by stream
+                                  ),
+                                ),
+                              );
+                            },
+                          );
+                        },
                       );
                     },
                   );
@@ -407,17 +419,17 @@ class _MainNavigationState extends State<MainNavigation>
                         height: 56,
                         width: 170,
                         decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.secondary,
+                          color: accentColor,
                           borderRadius: BorderRadius.circular(16),
                         ),
-                        child: const Row(
+                        child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Icon(Icons.group_add, color: Colors.black),
-                            SizedBox(width: 8),
+                            Icon(Icons.group_add, color: isDark ? Colors.black : Colors.white),
+                            const SizedBox(width: 8),
                             Text('Join Course',
                                 style: TextStyle(
-                                    color: Colors.black,
+                                    color: isDark ? Colors.black : Colors.white,
                                     fontWeight: FontWeight.bold)),
                           ],
                         ),
@@ -435,7 +447,7 @@ class _MainNavigationState extends State<MainNavigation>
                 height: 56,
                 width: _isFabExpanded ? 170 : 56,
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.secondary,
+                  color: accentColor,
                   borderRadius: BorderRadius.circular(_isFabExpanded ? 16 : 28),
                 ),
                 child: InkWell(
@@ -444,12 +456,12 @@ class _MainNavigationState extends State<MainNavigation>
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(_isFabExpanded ? Icons.add_box : Icons.add,
-                          color: Colors.black),
+                          color: isDark ? Colors.black : Colors.white),
                       if (_isFabExpanded) ...[
                         const SizedBox(width: 8),
-                        const Text('Create Course',
+                        Text('Create Course',
                             style: TextStyle(
-                                color: Colors.black,
+                                color: isDark ? Colors.black : Colors.white,
                                 fontWeight: FontWeight.bold)),
                       ],
                     ],

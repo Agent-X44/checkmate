@@ -146,28 +146,50 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
   /// BR-05 Enforcement: Resolve Sheet ID via backend before grading.
   Future<void> _handleProcessedSheet(ProcessedSheet sheet) async {
-    final identifier = sheet.qrData?.sheetIdentifier ?? "UNKNOWN";
+    final qrData = sheet.qrData;
+    
+    // 1. Validate QR detection
+    if (qrData == null || qrData.sheetIdentifier.isEmpty) {
+      _showErrorSnackBar("Invalid Sheet: QR code could not be decoded.");
+      setState(() => _isProcessing = false);
+      return;
+    }
 
-    if (_processedSheetIds.contains(identifier) && identifier != "UNKNOWN") {
-      _showErrorSnackBar("Duplicate sheet detected. Skipping.");
+    final identifier = qrData.sheetIdentifier;
+
+    // 2. Prevent duplicates in same session
+    if (_processedSheetIds.contains(identifier)) {
+      _showErrorSnackBar("Duplicate: This sheet was already scanned.");
       setState(() => _isProcessing = false);
       return;
     }
 
     try {
-      // Resolve metadata from Supabase via FastAPI
+      // 3. Resolve metadata from Supabase
+      // This verifies if the sheet actually belongs to this exam/student
       final metadata = await ApiService.resolveSheet(identifier);
       
-      setState(() {
-        _scannedResults.add(sheet);
-        _processedSheetIds.add(identifier);
-        _isProcessing = false;
-      });
-
-      _showSuccessSnackBar("Scanned: ${metadata['student_name']}");
+      if (mounted) {
+        setState(() {
+          _scannedResults.add(sheet);
+          _processedSheetIds.add(identifier);
+          _isProcessing = false;
+        });
+        _showSuccessSnackBar("Verified: ${metadata['student_name']}");
+      }
     } catch (e) {
-      _showErrorSnackBar("Identification failed: $e");
-      setState(() => _isProcessing = false);
+      if (mounted) {
+        // Detailed error messages based on API response
+        String errorMsg = "Verification Failed: $e";
+        if (e.toString().contains("404")) {
+          errorMsg = "Unknown Sheet: ID '$identifier' not found in database.";
+        } else if (e.toString().contains("403")) {
+          errorMsg = "Unauthorized: Assessment is not approved yet.";
+        }
+        
+        _showErrorSnackBar(errorMsg);
+        setState(() => _isProcessing = false);
+      }
     }
   }
 
@@ -240,10 +262,13 @@ class _ScannerScreenState extends State<ScannerScreen> {
     if (!_isInitialized || _controller == null) {
       return const Scaffold(
           backgroundColor: Colors.black,
-          body: Center(child: CircularProgressIndicator(color: Colors.yellowAccent)));
+          body: Center(child: CircularProgressIndicator(color: Colors.blueAccent)));
     }
     final size = MediaQuery.of(context).size;
     final cameraValue = _controller!.value;
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final accentColor = isDark ? Colors.yellowAccent : Colors.blueAccent;
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -273,14 +298,15 @@ class _ScannerScreenState extends State<ScannerScreen> {
                               width: 60,
                               height: 60,
                               decoration: BoxDecoration(
-                                  border: Border.all(color: Colors.yellowAccent, width: 1.5)))),
+                                  border: Border.all(color: accentColor, width: 1.5)))),
                     if (_detectedCorners != null)
                       Positioned.fill(
                           child: IgnorePointer(
                               child: CustomPaint(
                                   painter: EdgePainter(
                                       corners: _detectedCorners!,
-                                      isDetected: _paperDetected)))),
+                                      isDetected: _paperDetected,
+                                      color: accentColor)))),
                   ]);
                 }),
               ),
@@ -290,13 +316,13 @@ class _ScannerScreenState extends State<ScannerScreen> {
           if (_isProcessing)
             Container(
               color: Colors.black54,
-              child: const Center(
+              child: Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    CircularProgressIndicator(color: Colors.yellowAccent),
-                    SizedBox(height: 16),
-                    Text("IDENTIFYING STUDENT...", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
+                    CircularProgressIndicator(color: accentColor),
+                    const SizedBox(height: 16),
+                    const Text("IDENTIFYING STUDENT...", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
                   ],
                 ),
               ),
@@ -311,11 +337,28 @@ class _ScannerScreenState extends State<ScannerScreen> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(20)),
-                  child: Text("SCANNED: ${_scannedResults.length}", style: const TextStyle(color: Colors.yellowAccent, fontWeight: FontWeight.bold)),
+                  child: Text("SCANNED: ${_scannedResults.length}", style: TextStyle(color: accentColor, fontWeight: FontWeight.bold)),
                 ),
                 const Spacer(),
                 IconButton(icon: const Icon(Icons.close, color: Colors.white), onPressed: () => Navigator.pop(context)),
               ],
+            ),
+          ),
+
+          // Flash button on top left
+          Positioned(
+            top: 100,
+            left: 20,
+            child: FloatingActionButton.small(
+              heroTag: 'flash',
+              onPressed: () async {
+                final nextMode = _isFlashOn ? FlashMode.off : FlashMode.torch;
+                await _controller?.setFlashMode(nextMode);
+                setState(() => _isFlashOn = !_isFlashOn);
+              },
+              backgroundColor: Colors.black45,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              child: Icon(_isFlashOn ? Icons.flash_on : Icons.flash_off, color: Colors.white),
             ),
           ),
 
@@ -330,39 +373,35 @@ class _ScannerScreenState extends State<ScannerScreen> {
                     padding: const EdgeInsets.only(bottom: 20.0),
                     child: Container(
                       padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10.0),
-                      decoration: BoxDecoration(color: Colors.yellowAccent, borderRadius: BorderRadius.circular(30)),
-                      child: const Text("PAPER DETECTED", style: TextStyle(fontWeight: FontWeight.bold)),
+                      decoration: BoxDecoration(color: accentColor, borderRadius: BorderRadius.circular(30)),
+                      child: const Text("PAPER DETECTED", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
                     ),
                   ),
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    FloatingActionButton(
-                      heroTag: 'flash',
-                      onPressed: () async {
-                        final nextMode = _isFlashOn ? FlashMode.off : FlashMode.torch;
-                        await _controller?.setFlashMode(nextMode);
-                        setState(() => _isFlashOn = !_isFlashOn);
-                      },
-                      backgroundColor: Colors.white10,
-                      child: Icon(_isFlashOn ? Icons.flash_on : Icons.flash_off, color: Colors.white),
-                    ),
-                    
-                    FloatingActionButton.large(
-                      heroTag: 'capture',
-                      onPressed: (_paperDetected && !_isProcessing) ? _captureAndProcess : null,
-                      backgroundColor: _paperDetected ? Colors.yellowAccent : Colors.white10,
-                      child: Icon(Icons.qr_code_scanner, color: _paperDetected ? Colors.black : Colors.white24, size: 40),
-                    ),
-
-                    FloatingActionButton(
-                      heroTag: 'finish',
-                      onPressed: _scannedResults.isNotEmpty ? _finishSession : null,
-                      backgroundColor: _scannedResults.isNotEmpty ? Colors.green : Colors.white10,
-                      child: const Icon(Icons.check, color: Colors.white),
+                    SizedBox(
+                      width: 80,
+                      height: 80,
+                      child: FloatingActionButton(
+                        heroTag: 'capture',
+                        onPressed: (_paperDetected && !_isProcessing) ? _captureAndProcess : null,
+                        backgroundColor: _paperDetected ? accentColor : Colors.white10,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(40)),
+                        child: Icon(Icons.qr_code_scanner, color: _paperDetected ? Colors.black : Colors.white24, size: 40),
+                      ),
                     ),
                   ],
                 ),
+                if (_scannedResults.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 20),
+                    child: TextButton(
+                      onPressed: _finishSession,
+                      child: Text("FINISH SESSION (${_scannedResults.length})", 
+                        style: TextStyle(color: accentColor, fontWeight: FontWeight.bold, fontSize: 16)),
+                    ),
+                  ),
               ],
             ),
           ),
@@ -408,12 +447,13 @@ class _ScannerScreenState extends State<ScannerScreen> {
 class EdgePainter extends CustomPainter {
   final List<Offset> corners;
   final bool isDetected;
-  EdgePainter({required this.corners, this.isDetected = false});
+  final Color color;
+  EdgePainter({required this.corners, this.isDetected = false, required this.color});
   @override
   void paint(Canvas canvas, Size size) {
     if (corners.isEmpty) return;
     final paint = Paint()
-      ..color = isDetected ? Colors.yellowAccent.withValues(alpha: 0.5) : Colors.white24
+      ..color = isDetected ? color.withValues(alpha: 0.5) : Colors.white24
       ..strokeWidth = isDetected ? 3 : 1
       ..style = PaintingStyle.stroke;
 
