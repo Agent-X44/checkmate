@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
@@ -6,21 +7,18 @@ class SupabaseService {
 
   // --- AUTHENTICATION ---
 
-  /// Sign up with email and password (BR-01)
   static Future<AuthResponse> signUp({
     required String email,
     required String password,
     required String name,
   }) async {
-    final response = await _client.auth.signUp(
+    return await _client.auth.signUp(
       email: email,
       password: password,
       data: {'name': name},
     );
-    return response;
   }
 
-  /// Sign in with email and password
   static Future<AuthResponse> signIn({
     required String email,
     required String password,
@@ -31,32 +29,47 @@ class SupabaseService {
     );
   }
 
-  /// Google Sign-In Implementation
+  /// Google Sign-In Implementation (Android Optimized)
   static Future<AuthResponse?> signInWithGoogle() async {
-    // Web Client ID is required for the backend 'handshake'
-    const webClientId = '521288904900-cjt4oidq41d7er31gev8tddsfsc30s5q.apps.googleusercontent.com';
+    try {
+      debugPrint("GOOGLE_AUTH: Starting flow...");
+      
+      // The Web Client ID (serverClientId) is the ONLY one needed for the handshake.
+      const webClientId = '521288904900-cjt4oidq41d7er31gev8tddsfsc30s5q.apps.googleusercontent.com';
 
-    final GoogleSignIn googleSignIn = GoogleSignIn(
-      serverClientId: webClientId,
-    );
-    
-    final googleUser = await googleSignIn.signIn();
-    final googleAuth = await googleUser?.authentication;
-    final idToken = googleAuth?.idToken;
-    final accessToken = googleAuth?.accessToken;
+      final GoogleSignIn googleSignIn = GoogleSignIn(
+        serverClientId: webClientId,
+      );
+      
+      // Sign out first to ensure the account picker always appears
+      await googleSignIn.signOut();
+      
+      final googleUser = await googleSignIn.signIn();
+      if (googleUser == null) {
+        debugPrint("GOOGLE_AUTH: Cancelled.");
+        return null;
+      }
 
-    if (idToken == null || accessToken == null) {
-      return null;
+      debugPrint("GOOGLE_AUTH: User picked account: ${googleUser.email}");
+      final googleAuth = await googleUser.authentication;
+      final idToken = googleAuth.idToken;
+
+      if (idToken == null) {
+        debugPrint("GOOGLE_AUTH: ERROR - idToken is null. Check Web Client ID configuration.");
+        return null;
+      }
+
+      debugPrint("GOOGLE_AUTH: Synchronizing with Supabase...");
+      return await _client.auth.signInWithIdToken(
+        provider: OAuthProvider.google,
+        idToken: idToken,
+      );
+    } catch (e) {
+      debugPrint("GOOGLE_AUTH: CRITICAL FAIL - $e");
+      rethrow;
     }
-
-    return await _client.auth.signInWithIdToken(
-      provider: OAuthProvider.google,
-      idToken: idToken,
-      accessToken: accessToken,
-    );
   }
 
-  /// Sign out
   static Future<void> signOut() async {
     await _client.auth.signOut();
   }
@@ -69,7 +82,6 @@ class SupabaseService {
 
   // --- DATABASE: COURSES (BR-01) ---
 
-  /// Create a new class as an instructor
   static Future<void> createClass({
     required String name,
     required String code,
@@ -84,21 +96,13 @@ class SupabaseService {
     });
   }
 
-  /// Join an existing class as a student
   static Future<void> joinClass(String classCode) async {
     final user = currentUser;
     if (user == null) throw Exception("Not authenticated");
 
-    // 1. Find the class by code
-    final classData = await _client
-        .from('classes')
-        .select('id')
-        .eq('code', classCode)
-        .single();
-
+    final classData = await _client.from('classes').select('id').eq('code', classCode).single();
     final classId = classData['id'];
 
-    // 2. Create enrollment
     await _client.from('enrollments').insert({
       'user_id': user.id,
       'class_id': classId,
@@ -106,114 +110,51 @@ class SupabaseService {
     });
   }
 
-  /// Stream of courses where the user is an instructor
   static Stream<List<Map<String, dynamic>>> streamCreatedCourses() {
     final user = currentUser;
     if (user == null) return Stream.value([]);
-    
-    return _client
-        .from('classes')
-        .stream(primaryKey: ['id'])
-        .eq('instructor_id', user.id)
-        .order('created_at');
+    return _client.from('classes').stream(primaryKey: ['id']).eq('instructor_id', user.id).order('created_at');
   }
 
-  /// Stream of courses where the user is enrolled as a student
   static Stream<List<Map<String, dynamic>>> streamEnrolledCourses() {
     final user = currentUser;
     if (user == null) return Stream.value([]);
-
-    // This requires a join or a complex stream. 
-    // For the demo, we can fetch once or use a simpler approach if RLS is set.
-    return _client
-        .from('enrollments')
-        .stream(primaryKey: ['id'])
-        .eq('user_id', user.id)
-        .order('created_at');
+    return _client.from('enrollments').stream(primaryKey: ['id']).eq('user_id', user.id).order('created_at');
   }
 
   // --- DATABASE: EXAMS (BR-02, BR-03) ---
 
-  /// Stream of exams for a specific class
   static Stream<List<Map<String, dynamic>>> streamExams(String classId) {
-    return _client
-        .from('exams')
-        .stream(primaryKey: ['id'])
-        .eq('class_id', classId)
-        .order('created_at', ascending: false);
+    return _client.from('exams').stream(primaryKey: ['id']).eq('class_id', classId).order('created_at', ascending: false);
   }
 
-  /// Stream of enrolled students for a class
-  static Stream<List<Map<String, dynamic>>> streamClassStudents(String classId) {
-    // In production, we'd use a view or a complex query. 
-    // For the demo stream, we'll fetch once or use a simpler approach.
-    return _client
-        .from('enrollments')
-        .stream(primaryKey: ['id'])
-        .eq('class_id', classId);
-  }
-
-  /// Approve an exam to unlock sheet generation (BR-03)
   static Future<void> approveExam(String examId) async {
-    await _client
-        .from('exams')
-        .update({'is_approved': true, 'status': 'Ready'})
-        .eq('id', examId);
+    await _client.from('exams').update({'is_approved': true, 'status': 'Ready'}).eq('id', examId);
   }
 
-  /// Fetch enrolled students for an exam's class (BR-04)
   static Future<List<Map<String, dynamic>>> getEnrolledStudents(String classId) async {
-    final response = await _client
-        .from('enrollments')
-        .select('profiles(id, name)')
-        .eq('class_id', classId);
-    
+    final response = await _client.from('enrollments').select('profiles(id, name)').eq('class_id', classId);
     return List<Map<String, dynamic>>.from(response);
   }
 
   // --- DATABASE: INSIGHTS & GRADES (BR-10, BR-12) ---
 
-  /// Fetch my grade and AI insight for a specific exam
   static Future<Map<String, dynamic>?> getMyResult(String examId) async {
     final user = currentUser;
     if (user == null) return null;
 
-    final response = await _client
-        .from('grades')
-        .select('*, answer_sheets!inner(exam_id, student_id)')
-        .eq('answer_sheets.exam_id', examId)
-        .eq('answer_sheets.student_id', user.id)
-        .maybeSingle();
-
+    final response = await _client.from('grades').select('*, answer_sheets!inner(exam_id, student_id)').eq('answer_sheets.exam_id', examId).eq('answer_sheets.student_id', user.id).maybeSingle();
     if (response == null) return null;
 
-    // Fetch AI Insight if available
-    final insight = await _client
-        .from('ai_insights')
-        .select()
-        .eq('exam_id', examId)
-        .eq('student_id', user.id)
-        .maybeSingle();
+    final insight = await _client.from('ai_insights').select().eq('exam_id', examId).eq('student_id', user.id).maybeSingle();
 
-    return {
-      'grade': response,
-      'insight': insight,
-    };
+    return {'grade': response, 'insight': insight};
   }
 
-  /// Fetch aggregated analytics for a class
   static Future<Map<String, dynamic>> getClassAnalytics(String classId) async {
-    final grades = await _client
-        .from('grades')
-        .select('percentage, answer_sheets!inner(exam_id)')
-        .eq('answer_sheets.exam_id', classId); // Simplified for demo
-    
+    final grades = await _client.from('grades').select('percentage, answer_sheets!inner(exam_id)').eq('answer_sheets.exam_id', classId);
     if (grades.isEmpty) return {'avg': 0.0, 'count': 0};
-
     final total = grades.fold<double>(0, (sum, item) => sum + (item['percentage'] ?? 0.0));
-    return {
-      'avg': total / grades.length,
-      'count': grades.length,
-    };
+    return {'avg': total / grades.length, 'count': grades.length};
   }
 }

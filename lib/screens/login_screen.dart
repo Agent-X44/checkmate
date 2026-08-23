@@ -145,8 +145,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                     child: Image.asset(
                       'assets/checkmate.png',
                       height: 100,
-                      color: accentColor,
-                      colorBlendMode: BlendMode.srcIn,
+                      // Removed color mapping to ensure image renders its natural colors
                       errorBuilder: (context, error, stackTrace) => 
                          Icon(Icons.check_circle_outline, size: 80, color: accentColor),
                     ),
@@ -236,11 +235,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                     height: 55,
                     child: OutlinedButton.icon(
                       onPressed: _isLoading ? null : _handleGoogleSignIn,
-                      icon: Image.network(
-                        'https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg',
-                        height: 20,
-                        errorBuilder: (context, error, stackTrace) => Icon(Icons.login, size: 20, color: accentColor),
-                      ),
+                      icon: Icon(Icons.login, size: 20, color: accentColor),
                       label: Text("Continue with Google", 
                         style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontWeight: FontWeight.w600)),
                       style: OutlinedButton.styleFrom(
