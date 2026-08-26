@@ -1,7 +1,12 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../utils/ui_utils.dart';
 
+/// Displays class-wide AI pedagogical insights and teaching recommendations.
+/// Enforces:
+/// - BR-09: Class-wide pedagogical insights (AI)
+/// - BR-11: Controlled release to students
 class SessionInsightsScreen extends StatefulWidget {
   final String examId;
   const SessionInsightsScreen({super.key, required this.examId});
@@ -159,7 +164,7 @@ class _SessionInsightsScreenState extends State<SessionInsightsScreen> {
         );
       }
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Release failed: $e")));
+      if (mounted) CheckMateUi.showTopPrompt(context, "Release failed: $e");
     } finally {
       if (mounted) setState(() => _isReleasing = false);
     }

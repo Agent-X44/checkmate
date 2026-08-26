@@ -74,6 +74,10 @@ class ScanResponse {
   ScanResponse({required this.foundPaper, this.corners, this.debugImage});
 }
 
+/// Core Computer Vision engine for OMR processing.
+/// 
+/// Enforces:
+/// - BR-06: Local Edge OMR processing (OpenCV on device)
 class ImageProcessor {
   static String getOpenCVVersion() {
     try {

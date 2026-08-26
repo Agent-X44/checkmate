@@ -2,6 +2,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../services/supabase_service.dart';
 
+/// Provides detailed OMR results and personalized AI recommendations for a specific student.
+/// Enforces:
+/// - BR-10: Personalized student recommendations (AI)
+/// - BR-12: Secure data access via RLS
 class StudentInsightDetailScreen extends StatefulWidget {
   final String examId;
   final String examTitle;

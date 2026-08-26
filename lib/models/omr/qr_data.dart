@@ -32,7 +32,7 @@ class QrData {
       return QrData(
         studentName: 'Resolving Student...',
         examCode: raw.trim(),
-        course: 'Checkmate LMS',
+        course: 'CheckMate LMS',
         examTitle: 'Assessment: $raw',
         sheetIdentifier: raw.trim(),
         templateName: "Standard 50 Questions",

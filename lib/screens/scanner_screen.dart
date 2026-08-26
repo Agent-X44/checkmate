@@ -7,10 +7,13 @@ import '../services/image_processor.dart';
 import '../services/api_service.dart';
 import '../models/omr/processed_sheet.dart';
 import '../models/omr/templates/standard_50_questions.dart';
+import '../utils/ui_utils.dart';
 import 'ai_analysis_screen.dart';
 
 /// Screen responsible for live camera feed and document edge detection.
-/// Enforces BR-06: Local Edge OMR Processing (Isolate-based).
+/// Enforces:
+/// - BR-06: Local Edge OMR Processing (Isolate-based).
+/// - BR-04: Student ID recognition.
 class ScannerScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
   final bool isActive;
@@ -194,13 +197,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
   }
 
   void _showErrorSnackBar(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(msg), backgroundColor: Colors.redAccent));
+    CheckMateUi.showTopPrompt(context, msg);
   }
 
   void _showSuccessSnackBar(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(msg), backgroundColor: Colors.green, duration: const Duration(seconds: 1)));
+    CheckMateUi.showTopPrompt(context, msg, isError: false);
   }
 
   Future<void> _initializeCamera() async {

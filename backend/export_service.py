@@ -1,5 +1,5 @@
 """
-Export Service for Checkmate LMS.
+Export Service for CheckMate LMS.
 Handles the generation of professionally formatted Word documents.
 """
 from docx import Document

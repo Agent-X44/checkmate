@@ -4,12 +4,16 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/course.dart';
 import '../services/supabase_service.dart';
+import '../utils/ui_utils.dart';
 import 'dashboard_screen.dart';
 import 'scanner_screen.dart';
 import 'settings_screen.dart';
 import 'course_dashboard_screen.dart';
 import '../main.dart'; // To access globalCameras
 
+/// Main navigation shell for authenticated users.
+/// Manages the BottomNavigationBar (Dashboard, Scanner, Settings) and Drawer (Course List).
+/// Enforces BR-01: Course management entry points.
 class MainNavigation extends StatefulWidget {
   final ThemeMode themeMode;
   final ValueChanged<bool> onThemeChanged;
@@ -30,7 +34,7 @@ class _MainNavigationState extends State<MainNavigation>
     with SingleTickerProviderStateMixin {
   int _selectedIndex = 0;
   bool _isFabExpanded = false;
-  bool _notificationsOn = true;
+  bool _notificationsOn = false;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   late AnimationController _animationController;
@@ -41,7 +45,7 @@ class _MainNavigationState extends State<MainNavigation>
     try {
       final prefs = await SharedPreferences.getInstance();
       setState(() {
-        _notificationsOn = prefs.getBool('notificationsEnabled') ?? true;
+        _notificationsOn = prefs.getBool('notificationsEnabled') ?? false;
       });
     } catch (_) {}
   }
@@ -70,14 +74,10 @@ class _MainNavigationState extends State<MainNavigation>
       await prefs.setBool('notificationsEnabled', newState);
       
       if (mounted) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(newState ? 'Notifications Enabled' : 'Notifications Muted'),
-            duration: const Duration(seconds: 2),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: Theme.of(context).colorScheme.primary,
-          ),
+        CheckMateUi.showTopPrompt(
+          context, 
+          newState ? 'Notifications Enabled' : 'Notifications Muted',
+          isError: false,
         );
       }
     } catch (_) {}
@@ -154,6 +154,11 @@ class _MainNavigationState extends State<MainNavigation>
   }
 
   void _showCreateDialog() {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final accentColor = isDark ? theme.colorScheme.secondary : theme.colorScheme.primary;
+    final buttonTextColor = isDark ? Colors.black : Colors.white;
+
     final codeCtrl = TextEditingController();
     final nameCtrl = TextEditingController();
 
@@ -166,16 +171,31 @@ class _MainNavigationState extends State<MainNavigation>
           children: [
             TextField(
                 controller: codeCtrl,
-                decoration: const InputDecoration(labelText: 'Course Code')),
+                maxLength: 8,
+                textCapitalization: TextCapitalization.characters,
+                style: TextStyle(color: isDark ? Colors.white : Colors.black),
+                cursorColor: accentColor,
+                decoration: InputDecoration(
+                  labelText: 'Course Code',
+                  labelStyle: TextStyle(color: isDark ? Colors.white70 : Colors.grey),
+                  counterText: "",
+                  focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: accentColor)),
+                )),
             TextField(
                 controller: nameCtrl,
-                decoration: const InputDecoration(labelText: 'Course Name')),
+                style: TextStyle(color: isDark ? Colors.white : Colors.black),
+                cursorColor: accentColor,
+                decoration: InputDecoration(
+                  labelText: 'Course Name',
+                  labelStyle: TextStyle(color: isDark ? Colors.white70 : Colors.grey),
+                  focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: accentColor)),
+                )),
           ],
         ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('CANCEL')),
+              child: Text('CANCEL', style: TextStyle(color: isDark ? Colors.white70 : Colors.grey))),
           ElevatedButton(
             onPressed: () async {
               if (codeCtrl.text.isEmpty || nameCtrl.text.isEmpty) return;
@@ -188,15 +208,18 @@ class _MainNavigationState extends State<MainNavigation>
                 if (mounted) {
                   Navigator.pop(context);
                   _toggleFab();
+                  CheckMateUi.showTopPrompt(context, 'Course created successfully!', isError: false);
                 }
               } catch (e) {
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Failed to create course: $e')),
-                  );
+                  CheckMateUi.showTopPrompt(context, 'Failed to create course: $e');
                 }
               }
             },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: accentColor,
+              foregroundColor: buttonTextColor,
+            ),
             child: const Text('CREATE'),
           ),
         ],
@@ -205,6 +228,11 @@ class _MainNavigationState extends State<MainNavigation>
   }
 
   void _showJoinDialog() {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final accentColor = isDark ? theme.colorScheme.secondary : theme.colorScheme.primary;
+    final buttonTextColor = isDark ? Colors.black : Colors.white;
+
     final joinCtrl = TextEditingController();
     showDialog(
       context: context,
@@ -212,12 +240,21 @@ class _MainNavigationState extends State<MainNavigation>
         title: const Text('Join a Course'),
         content: TextField(
           controller: joinCtrl,
-          decoration: const InputDecoration(labelText: 'Course Code'),
+          maxLength: 8,
+          textCapitalization: TextCapitalization.characters,
+          style: TextStyle(color: isDark ? Colors.white : Colors.black),
+          cursorColor: accentColor,
+          decoration: InputDecoration(
+            labelText: 'Course Code',
+            labelStyle: TextStyle(color: isDark ? Colors.white70 : Colors.grey),
+            counterText: "",
+            focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: accentColor)),
+          ),
         ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(context),
-              child: const Text('CANCEL')),
+              child: Text('CANCEL', style: TextStyle(color: isDark ? Colors.white70 : Colors.grey))),
           ElevatedButton(
             onPressed: () async {
               if (joinCtrl.text.isEmpty) return;
@@ -226,15 +263,22 @@ class _MainNavigationState extends State<MainNavigation>
                 if (mounted) {
                   Navigator.pop(context);
                   _toggleFab();
+                  CheckMateUi.showTopPrompt(context, 'Joined course successfully!', isError: false);
                 }
               } catch (e) {
                 if (mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Failed to join course: $e')),
-                  );
+                  // Explicitly check for class not found to give a better message
+                  final msg = e.toString().contains('single') || e.toString().contains('JSON object') 
+                    ? 'Course code invalid. Please check and try again.' 
+                    : 'Failed to join: $e';
+                  CheckMateUi.showTopPrompt(context, msg);
                 }
               }
             },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: accentColor,
+              foregroundColor: buttonTextColor,
+            ),
             child: const Text('JOIN'),
           ),
         ],
@@ -261,7 +305,7 @@ class _MainNavigationState extends State<MainNavigation>
     return Scaffold(
       key: _scaffoldKey,
       appBar: AppBar(
-        title: const Text('Checkmate'),
+        title: const Text('CheckMate'),
         leading: Builder(
           builder: (context) => IconButton(
             icon: const Icon(Icons.menu),
@@ -317,39 +361,46 @@ class _MainNavigationState extends State<MainNavigation>
               },
             ),
             Expanded(
-              child: StreamBuilder<List<Map<String, dynamic>>>(
+              child: StreamBuilder(
                 stream: SupabaseService.streamCreatedCourses(),
-                builder: (context, createdSnapshot) {
-                  return StreamBuilder<List<Map<String, dynamic>>>(
+                builder: (context, _) {
+                  return StreamBuilder(
                     stream: SupabaseService.streamEnrolledCourses(),
-                    builder: (context, enrolledSnapshot) {
-                      final allRaw = [...(createdSnapshot.data ?? []), ...(enrolledSnapshot.data ?? [])];
-                      final courses = allRaw.map((m) => Course.fromMap(m, isOwner: m['instructor_id'] == Supabase.instance.client.auth.currentUser?.id)).toList();
+                    builder: (context, _) {
+                      return FutureBuilder<List<Course>>(
+                        future: Future.wait([
+                          SupabaseService.getCreatedCoursesDetails(),
+                          SupabaseService.getEnrolledCoursesDetails(),
+                        ]).then((results) => [...results[0], ...results[1]]),
+                        builder: (context, snapshot) {
+                          final courses = snapshot.data ?? [];
 
-                      if (courses.isEmpty) {
-                        return const Center(child: Text("No courses", style: TextStyle(color: Colors.grey)));
-                      }
+                          if (courses.isEmpty) {
+                            return const Center(child: Text("No courses", style: TextStyle(color: Colors.grey)));
+                          }
 
-                      return ListView.builder(
-                        padding: EdgeInsets.zero,
-                        itemCount: courses.length,
-                        itemBuilder: (context, index) {
-                          final course = courses[index];
-                          return ListTile(
-                            leading: CircleAvatar(
-                                backgroundColor: course.gradient[0], radius: 12),
-                            title: Text(course.code),
-                            subtitle: Text(course.name, maxLines: 1),
-                            onTap: () {
-                              Navigator.pop(context);
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => CourseDashboardScreen(
-                                    course: course,
-                                    onCourseDeleted: () {}, // Handled by stream
-                                  ),
-                                ),
+                          return ListView.builder(
+                            padding: EdgeInsets.zero,
+                            itemCount: courses.length,
+                            itemBuilder: (context, index) {
+                              final course = courses[index];
+                              return ListTile(
+                                leading: CircleAvatar(
+                                    backgroundColor: course.gradient[0], radius: 12),
+                                title: Text(course.code),
+                                subtitle: Text(course.name, maxLines: 1),
+                                onTap: () {
+                                  Navigator.pop(context);
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) => CourseDashboardScreen(
+                                        course: course,
+                                        onCourseDeleted: () {}, // Handled by stream
+                                      ),
+                                    ),
+                                  );
+                                },
                               );
                             },
                           );

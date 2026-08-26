@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/course.dart';
+import '../utils/ui_utils.dart';
 
 class CourseSettingsScreen extends StatelessWidget {
   final Course course;
@@ -136,8 +137,7 @@ class CourseSettingsScreen extends StatelessWidget {
       children: [
         IconButton(
           onPressed: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('$label feature coming soon!')));
+            CheckMateUi.showTopPrompt(context, '$label feature coming soon!', isError: false);
           },
           icon: Icon(icon, color: color),
         ),

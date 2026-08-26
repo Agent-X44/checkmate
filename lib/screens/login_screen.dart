@@ -1,7 +1,10 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import '../services/supabase_service.dart';
+import '../utils/ui_utils.dart';
 
+/// Entry screen for Authentication (Email/Password and Google Sign-In).
+/// Features: Adaptive theming, shake animations for validation, and Hero transitions.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -86,8 +89,10 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
           name: _nameController.text.trim(),
         );
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Please check your email for confirmation!')),
+          CheckMateUi.showTopPrompt(
+            context,
+            'Please check your email for confirmation!',
+            isError: false,
           );
           setState(() => _isLoginMode = true);
         }
@@ -99,9 +104,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
           _emailError = true;
           _passwordError = true;
         });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Authentication failed. Check your credentials.'), backgroundColor: Colors.red),
-        );
+        CheckMateUi.showTopPrompt(context, 'Authentication failed. Check your credentials.');
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -114,9 +117,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
       await SupabaseService.signInWithGoogle();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Google Sign-In failed: $e'), backgroundColor: Colors.red),
-        );
+        CheckMateUi.showTopPrompt(context, 'Google Sign-In failed: $e');
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -129,6 +130,9 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
     final isDark = theme.brightness == Brightness.dark;
     final accentColor = isDark ? theme.colorScheme.secondary : theme.colorScheme.primary;
     final buttonTextColor = isDark ? Colors.black : Colors.white;
+    
+    // Explicitly use yellow in dark mode for logo if theme mismatch occurs
+    final logoColor = isDark ? const Color(0xFFFFEB3B) : theme.colorScheme.primary;
 
     return Scaffold(
       body: Stack(
@@ -145,13 +149,14 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
                     child: Image.asset(
                       'assets/checkmate.png',
                       height: 100,
-                      // Removed color mapping to ensure image renders its natural colors
+                      color: logoColor,
+                      colorBlendMode: BlendMode.srcIn,
                       errorBuilder: (context, error, stackTrace) => 
                          Icon(Icons.check_circle_outline, size: 80, color: accentColor),
                     ),
                   ),
                   const SizedBox(height: 16),
-                  Text('Checkmate', 
+                  Text('CheckMate', 
                     style: theme.textTheme.headlineLarge?.copyWith(
                       color: isDark ? Colors.white : theme.colorScheme.primary,
                       fontWeight: FontWeight.w900,
@@ -278,7 +283,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
           // Global Loading Overlay (Semi-transparent)
           if (_isLoading)
             Container(
-              color: Colors.black.withValues(alpha: 0.05),
+              color: Colors.black.withOpacity(0.05),
               child: const Center(child: null),
             ),
         ],
@@ -324,7 +329,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
           prefixIcon: Icon(icon, color: hasError ? Colors.red : null, size: 22),
           suffixIcon: suffixIcon,
           filled: true,
-          fillColor: hasError ? Colors.red.withValues(alpha: 0.05) : Colors.transparent,
+          fillColor: hasError ? Colors.red.withOpacity(0.05) : Colors.transparent,
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(16),
             borderSide: BorderSide(color: hasError ? Colors.red : Colors.grey.shade300),

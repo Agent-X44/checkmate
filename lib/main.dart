@@ -7,6 +7,11 @@ import 'screens/root_auth_wrapper.dart';
 
 List<CameraDescription> globalCameras = [];
 
+/// CheckMate: Secure AI Learning Management System
+/// 
+/// Official name: CheckMate
+/// Branding: Blue (Light Mode) / Yellow (Dark Mode)
+/// Standard Corners: 16px
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -22,18 +27,18 @@ void main() async {
     debugPrint("App initialization error: $e");
   }
 
-  runApp(const CheckmateApp());
+  runApp(const CheckMateApp());
 }
 
-class CheckmateApp extends StatefulWidget {
-  const CheckmateApp({super.key});
+class CheckMateApp extends StatefulWidget {
+  const CheckMateApp({super.key});
 
   @override
-  State<CheckmateApp> createState() => _CheckmateAppState();
+  State<CheckMateApp> createState() => _CheckMateAppState();
 }
 
-class _CheckmateAppState extends State<CheckmateApp> {
-  ThemeMode _themeMode = ThemeMode.light;
+class _CheckMateAppState extends State<CheckMateApp> {
+  ThemeMode _themeMode = ThemeMode.system;
 
   @override
   void initState() {
@@ -44,10 +49,16 @@ class _CheckmateAppState extends State<CheckmateApp> {
   Future<void> _loadTheme() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      final isDarkMode = prefs.getBool('isDarkMode') ?? false;
+      // Use bool for simple binary toggle, but default to system if not set
+      final bool? isDarkMode = prefs.getBool('isDarkMode');
+      
       if (mounted) {
         setState(() {
-          _themeMode = isDarkMode ? ThemeMode.dark : ThemeMode.light;
+          if (isDarkMode == null) {
+            _themeMode = ThemeMode.system;
+          } else {
+            _themeMode = isDarkMode ? ThemeMode.dark : ThemeMode.light;
+          }
         });
       }
     } catch (e) {
@@ -73,7 +84,7 @@ class _CheckmateAppState extends State<CheckmateApp> {
     const Color accentYellow = Color(0xFFFFEB3B);
 
     return MaterialApp(
-      title: 'Checkmate',
+      title: 'CheckMate',
       debugShowCheckedModeBanner: false,
       themeMode: _themeMode,
       theme: ThemeData(
@@ -95,6 +106,10 @@ class _CheckmateAppState extends State<CheckmateApp> {
           bodyLarge: TextStyle(color: Colors.black),
           bodyMedium: TextStyle(color: Colors.black),
           bodySmall: TextStyle(color: Colors.black54),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          labelStyle: const TextStyle(color: Colors.grey),
+          focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: primaryBlue)),
         ),
         appBarTheme: const AppBarTheme(
           backgroundColor: primaryBlue,
@@ -121,6 +136,10 @@ class _CheckmateAppState extends State<CheckmateApp> {
           bodyLarge: TextStyle(color: Colors.white),
           bodyMedium: TextStyle(color: Colors.white),
           bodySmall: TextStyle(color: Colors.white70),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          labelStyle: const TextStyle(color: Colors.white70),
+          focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: accentYellow)),
         ),
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFF121212),

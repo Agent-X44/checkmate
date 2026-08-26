@@ -2,9 +2,15 @@ import 'package:flutter/material.dart';
 import '../services/supabase_service.dart';
 import '../services/pdf_generator.dart';
 import '../models/omr/bubble_sheet_template.dart';
+import '../utils/ui_utils.dart';
 import 'ai_questionnaire_screen.dart';
 import 'student_insight_detail_screen.dart';
 
+/// Manages the list of quizzes and exams within a course.
+/// Enforces:
+/// - BR-02: MCQ/TF support
+/// - BR-03: Approval logic for instructors
+/// - BR-11: Controlled release to students
 class QuizzesExamsScreen extends StatefulWidget {
   final bool isOwner;
   final String courseId;
@@ -33,11 +39,11 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
     try {
       await SupabaseService.approveExam(examId);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Exam approved successfully!")));
+        CheckMateUi.showTopPrompt(context, "Exam approved successfully!", isError: false);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Approval failed: $e")));
+        CheckMateUi.showTopPrompt(context, "Approval failed: $e");
       }
     }
   }
@@ -52,7 +58,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
 
       if (names.isEmpty) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No students enrolled in this course yet.")));
+          CheckMateUi.showTopPrompt(context, "No students enrolled in this course yet.");
         }
         return;
       }
@@ -64,7 +70,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("PDF Generation failed: $e")));
+        CheckMateUi.showTopPrompt(context, "PDF Generation failed: $e");
       }
     }
   }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/course.dart';
 import '../services/supabase_service.dart';
+import '../utils/ui_utils.dart';
 
 class StudentsListScreen extends StatefulWidget {
   final Course course;
@@ -54,9 +55,7 @@ class _StudentsListScreenState extends State<StudentsListScreen> {
                   onTap: widget.course.isOwner
                       ? () {
                           // Messaging logic (mocked for demo)
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text("Messaging system coming soon!"))
-                          );
+                          CheckMateUi.showTopPrompt(context, "Messaging system coming soon!", isError: false);
                         }
                       : null,
                 ),

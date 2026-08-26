@@ -1,13 +1,12 @@
 {
-    "name": "checkmate",
-    "short_name": "checkmate",
+    "name": "CheckMate",
+    "short_name": "CheckMate",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
     "theme_color": "#0175C2",
     "description": "A new Flutter project.",
-    "orientation": "portrait-primary",
-    "prefer_related_applications": false,
+    "orientation": "portrait",
     "icons": [
         {
             "src": "icons/Icon-192.png",

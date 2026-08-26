@@ -4,6 +4,18 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import '../models/omr/processed_sheet.dart';
 
+/// Service for interacting with the FastAPI Backend for AI and OMR metadata.
+/// 
+/// Enforces:
+/// - BR-02: MCQ/TF Quiz support
+/// - BR-03: Instructor validation/approval of exams
+/// - BR-05: Sheet resolution (Metadata to Student ID)
+/// - BR-07: Batch sync to backend
+/// - BR-08: Persistence before analysis
+/// - BR-09: Class-wide pedagogical insights (AI)
+/// - BR-10: Personalized student recommendations (AI)
+/// - BR-11: Controlled release of results
+/// - BR-13: Export formats (DOCX/PDF)
 class ApiService {
   static final Dio _dio = Dio(
     BaseOptions(

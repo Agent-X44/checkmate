@@ -39,11 +39,11 @@ logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - [%(levelname)s] - %(message)s'
 )
-logger = logging.getLogger("CheckmateBackend")
+logger = logging.getLogger("CheckMateBackend")
 
 load_dotenv()
 
-app = FastAPI(title="Checkmate Compliance API")
+app = FastAPI(title="CheckMate Compliance API")
 
 # --- DATABASE ---
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")

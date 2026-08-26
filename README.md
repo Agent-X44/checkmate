@@ -1,7 +1,7 @@
 ![Alt Text](assets/checkmate.png)
 # CheckMate 
 ## I. What is it?
-Checkmate is a mobile application that uses Optical Mark Recognition (OMR) and smartphone 
+CheckMate is a mobile application that uses Optical Mark Recognition (OMR) and smartphone 
 computer vision to grade standardized bubble-type exam sheets, backed by an AI component 
 that generates detailed performance reports. But it goes beyond just scanning —the app works 
 more like Google Classroom, letting students enroll in specific courses through a clean, 

@@ -1,4 +1,4 @@
-# Project Context: Checkmate LMS (Business Rule Compliant)
+# Project Context: CheckMate LMS (Business Rule Compliant)
 
 ## Business Rules (BR-01 to BR-13)
 The system strictly enforces the following business rules as its core functional requirements.

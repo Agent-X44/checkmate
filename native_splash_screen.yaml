@@ -1,0 +1,24 @@
+flutter_native_splash:
+  android: true
+  ios: true
+  web: false
+
+  # --- LIGHT MODE CONFIG ---
+  color: "#ffffff"
+  image: assets/splash_light.png
+  branding: assets/brand_light.png
+
+  # --- DARK MODE CONFIG ---
+  color_dark: "#141318"
+  image_dark: assets/splash_dark.png
+  branding_dark: assets/brand_dark.png
+
+  # --- ANDROID 12+ SPECIFIC ---
+  android_12:
+    color: "#ffffff"
+    color_dark: "#141318"
+    image: assets/splash_light.png
+    image_dark: assets/splash_dark.png
+    branding: assets/brand_light.png
+    branding_dark: assets/brand_dark.png
+

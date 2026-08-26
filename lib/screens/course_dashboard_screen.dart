@@ -9,6 +9,8 @@ import 'course_settings_screen.dart';
 import 'scanner_screen.dart';
 import '../main.dart';
 
+/// Central hub for a specific course. 
+/// Provides access to quizzes/exams, enrolled students, and course-specific settings.
 class CourseDashboardScreen extends StatefulWidget {
   final Course course;
   final VoidCallback? onCourseDeleted;

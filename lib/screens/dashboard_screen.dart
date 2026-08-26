@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/course.dart';
 import '../services/supabase_service.dart';
+import '../utils/ui_utils.dart';
 import 'course_dashboard_screen.dart';
 import 'answer_sheet_design_screen.dart';
 
@@ -15,6 +16,32 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   bool _createdExpanded = true;
   bool _enrolledExpanded = true;
+  
+  List<Course> _myCourses = [];
+  List<Course> _enrolledCourses = [];
+  bool _isInitialLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshAll();
+  }
+
+  Future<void> _refreshAll() async {
+    try {
+      final my = await SupabaseService.getCreatedCoursesDetails();
+      final enrolled = await SupabaseService.getEnrolledCoursesDetails();
+      if (mounted) {
+        setState(() {
+          _myCourses = my;
+          _enrolledCourses = enrolled;
+          _isInitialLoading = false;
+        });
+      }
+    } catch (e) {
+      debugPrint("Dashboard refresh error: $e");
+    }
+  }
 
   void _deleteCourse(Course course) async {
     final confirmed = await showDialog<bool>(
@@ -39,7 +66,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         await Supabase.instance.client.from('classes').delete().eq('id', course.id);
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Delete failed: $e')));
+          CheckMateUi.showTopPrompt(context, 'Delete failed: $e');
         }
       }
     }
@@ -296,71 +323,68 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: StreamBuilder<List<Map<String, dynamic>>>(
+      body: StreamBuilder(
         stream: SupabaseService.streamCreatedCourses(),
-        builder: (context, createdSnapshot) {
-          return StreamBuilder<List<Map<String, dynamic>>>(
+        builder: (context, _) {
+          return StreamBuilder(
             stream: SupabaseService.streamEnrolledCourses(),
-            builder: (context, enrolledSnapshot) {
-              if (createdSnapshot.connectionState == ConnectionState.waiting ||
-                  enrolledSnapshot.connectionState == ConnectionState.waiting) {
+            builder: (context, _) {
+              // Whenever either stream emits, we trigger a full data fetch to get relationships
+              _refreshAll();
+
+              if (_isInitialLoading) {
                 return const Center(child: CircularProgressIndicator());
               }
 
-              final myCourses = (createdSnapshot.data ?? [])
-                  .map((m) => Course.fromMap(m, isOwner: true))
-                  .toList();
-              
-              final enrolledCourses = (enrolledSnapshot.data ?? [])
-                  .map((m) => Course.fromMap(m, isOwner: false)) 
-                  .toList();
-
-              return CustomScrollView(
-                slivers: [
-                  SliverToBoxAdapter(
-                    child: _buildCombinedSummary(context, myCourses.length + enrolledCourses.length),
-                  ),
-
-                  if (myCourses.isNotEmpty) ...[
-                    _buildCollapsibleHeader(
-                      context,
-                      'Created Courses',
-                      _createdExpanded,
-                      () => setState(() => _createdExpanded = !_createdExpanded),
+              return RefreshIndicator(
+                onRefresh: _refreshAll,
+                child: CustomScrollView(
+                  slivers: [
+                    SliverToBoxAdapter(
+                      child: _buildCombinedSummary(context, _myCourses.length + _enrolledCourses.length),
                     ),
-                    if (_createdExpanded)
-                      SliverPadding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                        sliver: _buildCourseGrid(context, myCourses),
+
+                    if (_myCourses.isNotEmpty) ...[
+                      _buildCollapsibleHeader(
+                        context,
+                        'Created Courses',
+                        _createdExpanded,
+                        () => setState(() => _createdExpanded = !_createdExpanded),
                       ),
+                      if (_createdExpanded)
+                        SliverPadding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                          sliver: _buildCourseGrid(context, _myCourses),
+                        ),
+                    ],
+
+                    if (_enrolledCourses.isNotEmpty) ...[
+                      const SliverToBoxAdapter(child: SizedBox(height: 8)),
+                      _buildCollapsibleHeader(
+                        context,
+                        'Enrolled Courses',
+                        _enrolledExpanded,
+                        () => setState(() => _enrolledExpanded = !_enrolledExpanded),
+                      ),
+                      if (_enrolledExpanded)
+                        SliverPadding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                          sliver: _buildCourseGrid(context, _enrolledCourses),
+                        ),
+                    ],
+
+                    if (_myCourses.isEmpty && _enrolledCourses.isEmpty)
+                      const SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: Center(
+                          child: Text("No courses yet. Create or Join one!", 
+                            style: TextStyle(color: Colors.grey)),
+                        ),
+                      ),
+
+                    const SliverToBoxAdapter(child: SizedBox(height: 100)),
                   ],
-
-                  if (enrolledCourses.isNotEmpty) ...[
-                    const SliverToBoxAdapter(child: SizedBox(height: 8)),
-                    _buildCollapsibleHeader(
-                      context,
-                      'Enrolled Courses',
-                      _enrolledExpanded,
-                      () => setState(() => _enrolledExpanded = !_enrolledExpanded),
-                    ),
-                    if (_enrolledExpanded)
-                      SliverPadding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                        sliver: _buildCourseGrid(context, enrolledCourses),
-                      ),
-                  ],
-
-                  if (myCourses.isEmpty && enrolledCourses.isEmpty)
-                    const SliverFillRemaining(
-                      hasScrollBody: false,
-                      child: Center(
-                        child: Text("No courses yet. Create or Join one!", 
-                          style: TextStyle(color: Colors.grey)),
-                      ),
-                    ),
-
-                  const SliverToBoxAdapter(child: SizedBox(height: 100)),
-                ],
+                ),
               );
             },
           );

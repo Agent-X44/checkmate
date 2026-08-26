@@ -1,5 +1,5 @@
 """
-Checkmate AI Workflow Instructions - Optimized for Llama 3.2:3b (Small Model).
+CheckMate AI Workflow Instructions - Optimized for Llama 3.2:3b (Small Model).
 """
 
 L3_SYSTEM_START = "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n"

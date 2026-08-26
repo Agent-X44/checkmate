@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import '../services/api_service.dart';
+import '../utils/ui_utils.dart';
 import '../models/omr/processed_sheet.dart';
 import 'session_insights_screen.dart';
 
 /// Screen summarizing the current OMR scanning session.
-/// Enforces BR-07: Instructor review before cloud synchronization.
+/// Enforces:
+/// - BR-07: Instructor review before cloud synchronization.
+/// - BR-08: Batch synchronization.
 class AIAnalysisScreen extends StatefulWidget {
   final List<ProcessedSheet> sheets;
   const AIAnalysisScreen({super.key, required this.sheets});
@@ -123,9 +126,7 @@ class _AIAnalysisScreenState extends State<AIAnalysisScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Sync failed: $e"), backgroundColor: Colors.redAccent)
-        );
+        CheckMateUi.showTopPrompt(context, "Sync failed: $e");
       }
     } finally {
       if (mounted) setState(() => _isSyncing = false);

@@ -1,5 +1,5 @@
 """
-Demo Seeding Script for Checkmate LMS.
+Demo Seeding Script for CheckMate LMS.
 Populates the database with 15 dummy students.
 """
 import os

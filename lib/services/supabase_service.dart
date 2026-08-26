@@ -1,7 +1,13 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import '../models/course.dart';
 
+/// Service responsible for Supabase Authentication and Database interactions.
+/// 
+/// Enforces:
+/// - BR-01: Course/Class Management (Create/Join)
+/// - BR-12: Security & Row Level Security (Privacy)
 class SupabaseService {
   static final SupabaseClient _client = Supabase.instance.client;
 
@@ -89,6 +95,18 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) throw Exception("Not authenticated");
 
+    // Self-healing: Ensure profile exists before creating class (BR-01)
+    try {
+      await _client.from('profiles').upsert({
+        'id': user.id,
+        'name': user.userMetadata?['name'] ?? user.email?.split('@')[0] ?? 'User',
+        'email': user.email ?? '',
+        'role': 'Instructor',
+      });
+    } catch (e) {
+      debugPrint("Profile synchronization error: $e");
+    }
+
     await _client.from('classes').insert({
       'name': name,
       'code': code,
@@ -100,8 +118,18 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) throw Exception("Not authenticated");
 
-    final classData = await _client.from('classes').select('id').eq('code', classCode).single();
+    final classData = await _client
+        .from('classes')
+        .select('id, instructor_id')
+        .eq('code', classCode)
+        .single();
+    
     final classId = classData['id'];
+    final instructorId = classData['instructor_id'];
+
+    if (user.id == instructorId) {
+      throw Exception("You are the instructor of this course and cannot join as a student.");
+    }
 
     await _client.from('enrollments').insert({
       'user_id': user.id,
@@ -119,7 +147,35 @@ class SupabaseService {
   static Stream<List<Map<String, dynamic>>> streamEnrolledCourses() {
     final user = currentUser;
     if (user == null) return Stream.value([]);
-    return _client.from('enrollments').stream(primaryKey: ['id']).eq('user_id', user.id).order('created_at');
+    // Listen to enrollments for this user
+    return _client.from('enrollments').stream(primaryKey: ['id']).eq('user_id', user.id);
+  }
+
+  static Future<List<Course>> getEnrolledCoursesDetails() async {
+    final user = currentUser;
+    if (user == null) return [];
+    
+    final response = await _client
+        .from('enrollments')
+        .select('*, classes(*, profiles(*))')
+        .eq('user_id', user.id);
+    
+    return (response as List).map((m) {
+      final classData = m['classes'];
+      return Course.fromMap(classData, isOwner: false);
+    }).toList();
+  }
+
+  static Future<List<Course>> getCreatedCoursesDetails() async {
+    final user = currentUser;
+    if (user == null) return [];
+    
+    final response = await _client
+        .from('classes')
+        .select('*, profiles(*)')
+        .eq('instructor_id', user.id);
+    
+    return (response as List).map((m) => Course.fromMap(m, isOwner: true)).toList();
   }
 
   // --- DATABASE: EXAMS (BR-02, BR-03) ---

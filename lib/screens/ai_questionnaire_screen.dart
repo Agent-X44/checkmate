@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../services/api_service.dart';
+import '../utils/ui_utils.dart';
 
 class AIQuestionnaireScreen extends StatefulWidget {
   final String type;
@@ -101,7 +102,7 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
     } catch (e) {
       if (mounted) {
         debugPrint("[CRITICAL] UI Generation Failure: $e");
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Generation Failed: $e')));
+        CheckMateUi.showTopPrompt(context, 'Generation Failed: $e');
         setState(() => _currentStep = 0);
       }
     }
@@ -229,7 +230,7 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
       );
       
       final dir = await getTemporaryDirectory(); // Use temp for sharing
-      final fileName = "Checkmate_Assessment_${DateTime.now().millisecondsSinceEpoch}.docx";
+      final fileName = "CheckMate_Assessment_${DateTime.now().millisecondsSinceEpoch}.docx";
       final file = File('${dir.path}/$fileName');
       await file.writeAsBytes(bytes);
       
@@ -237,12 +238,12 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
         // Trigger Android Share Sheet (Allows "Save to device", "Send to Drive", etc.)
         await Share.shareXFiles(
           [XFile(file.path)],
-          text: 'Exported Assessment from Checkmate AI',
+          text: 'Exported Assessment from CheckMate AI',
         );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Export failed: $e")));
+        CheckMateUi.showTopPrompt(context, "Export failed: $e");
       }
     }
   }

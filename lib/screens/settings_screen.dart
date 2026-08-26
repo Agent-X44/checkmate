@@ -14,7 +14,8 @@ class SettingsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bool isDarkMode = themeMode == ThemeMode.dark;
+    // Check if the current theme is actually dark (works for system, light, or dark modes)
+    final bool isDarkMode = Theme.of(context).brightness == Brightness.dark;
 
     return Scaffold(
       appBar: AppBar(
