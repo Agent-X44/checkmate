@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../utils/ui_utils.dart';
 
 class ChatMessage {
   final String sender;
@@ -64,19 +65,11 @@ class Course {
         privateChats = privateChats ?? {};
 
   factory Course.fromMap(Map<String, dynamic> map, {required bool isOwner}) {
-    // Generate a consistent gradient based on the ID string
-    final idHash = map['id'].toString().hashCode;
-    final List<List<Color>> presets = [
-      [Colors.blue.shade700, Colors.blue.shade400],
-      [Colors.indigo.shade700, Colors.indigo.shade400],
-      [Colors.teal.shade700, Colors.teal.shade400],
-      [Colors.orange.shade700, Colors.orange.shade400],
-      [Colors.purple.shade700, Colors.purple.shade400],
-    ];
-    final gradient = presets[idHash % presets.length];
+    final String courseId = map['id']?.toString() ?? '';
+    final gradient = CheckMateUi.generateGradient(courseId);
 
     return Course(
-      id: map['id'],
+      id: courseId,
       code: map['code'] ?? 'N/A',
       name: map['name'] ?? 'Untitled Course',
       instructor: map['profiles']?['name'] ?? 'Instructor',
@@ -85,6 +78,14 @@ class Course {
       joinCode: map['code'] ?? '', // Using code as join code for simplicity
       isOwner: isOwner,
     );
+  }
+
+  /// Returns theme-adaptive gradient colors:
+  /// Light mode -> Deep, pigmented tones
+  /// Dark mode -> Lighter, high-exposure luminous tones
+  List<Color> adaptiveGradient(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return CheckMateUi.generateGradient(id, isDark: isDark);
   }
 }
 

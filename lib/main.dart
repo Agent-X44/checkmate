@@ -1,32 +1,100 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:camera/camera.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'services/image_processor.dart';
 import 'screens/root_auth_wrapper.dart';
 
 List<CameraDescription> globalCameras = [];
+
+final ThemeData _lightTheme = ThemeData(
+  useMaterial3: true,
+  colorScheme: ColorScheme.fromSeed(
+    seedColor: const Color(0xFF1A237E),
+    primary: const Color(0xFF1A237E),
+    onPrimary: Colors.white,
+    secondary: const Color(0xFFFFEB3B),
+    onSecondary: Colors.black,
+    brightness: Brightness.light,
+    onSurface: Colors.black,
+    onSurfaceVariant: Colors.black54,
+  ),
+  textTheme: const TextTheme(
+    headlineLarge: TextStyle(color: Color(0xFF1A237E), fontWeight: FontWeight.bold),
+    headlineMedium: TextStyle(color: Color(0xFF1A237E), fontWeight: FontWeight.bold),
+    titleLarge: TextStyle(color: Color(0xFF1A237E), fontWeight: FontWeight.bold),
+    bodyLarge: TextStyle(color: Colors.black),
+    bodyMedium: TextStyle(color: Colors.black),
+    bodySmall: TextStyle(color: Colors.black54),
+  ),
+  inputDecorationTheme: const InputDecorationTheme(
+    labelStyle: TextStyle(color: Colors.grey),
+    focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF1A237E))),
+  ),
+  appBarTheme: const AppBarTheme(
+    backgroundColor: Color(0xFF1A237E),
+    foregroundColor: Colors.white,
+    elevation: 0,
+  ),
+);
+
+final ThemeData _darkTheme = ThemeData(
+  useMaterial3: true,
+  colorScheme: ColorScheme.fromSeed(
+    seedColor: const Color(0xFF1A237E),
+    primary: const Color(0xFF1A237E),
+    onPrimary: Colors.white,
+    secondary: const Color(0xFFFFEB3B),
+    onSecondary: Colors.black,
+    brightness: Brightness.dark,
+    onSurface: Colors.white,
+    onSurfaceVariant: Colors.white70,
+  ),
+  textTheme: const TextTheme(
+    headlineLarge: TextStyle(color: Color(0xFFFFEB3B), fontWeight: FontWeight.bold),
+    headlineMedium: TextStyle(color: Color(0xFFFFEB3B), fontWeight: FontWeight.bold),
+    titleLarge: TextStyle(color: Color(0xFFFFEB3B), fontWeight: FontWeight.bold),
+    bodyLarge: TextStyle(color: Colors.white),
+    bodyMedium: TextStyle(color: Colors.white),
+    bodySmall: TextStyle(color: Colors.white70),
+  ),
+  inputDecorationTheme: const InputDecorationTheme(
+    labelStyle: TextStyle(color: Colors.white70),
+    focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFFFFEB3B))),
+  ),
+  appBarTheme: const AppBarTheme(
+    backgroundColor: Color(0xFF121212),
+    foregroundColor: Colors.white,
+    elevation: 0,
+  ),
+);
 
 /// CheckMate: Secure AI Learning Management System
 /// 
 /// Official name: CheckMate
 /// Branding: Blue (Light Mode) / Yellow (Dark Mode)
 /// Standard Corners: 16px
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
+/// Architecture: Enforces BR-01 through BR-13
+void main() {
+  final widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
+  FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
-  await Supabase.initialize(
-    url: 'https://ssfzrtenhiaiumxmuabq.supabase.co',
-    anonKey: 'sb_publishable_RySftOBho4GUXi4k1i4V6g_rhAjVBha',
-  );
+  // 1. Unblocked Startup: Load camera hardware & OpenCV asynchronously in background
+  availableCameras().then((cams) {
+    globalCameras = cams;
+  }).catchError((e) {
+    debugPrint("Background camera init notice: $e");
+  });
 
-  try {
-    globalCameras = await availableCameras();
-    debugPrint("OpenCV Status: ${ImageProcessor.getOpenCVVersion()}");
-  } catch (e) {
-    debugPrint("App initialization error: $e");
-  }
+  Future.microtask(() {
+    try {
+      debugPrint("OpenCV Engine: ${ImageProcessor.getOpenCVVersion()}");
+    } catch (e) {
+      debugPrint("OpenCV init notice: $e");
+    }
+  });
 
+  // 2. Launch UI immediately (0ms delay before runApp)
   runApp(const CheckMateApp());
 }
 
@@ -49,7 +117,6 @@ class _CheckMateAppState extends State<CheckMateApp> {
   Future<void> _loadTheme() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      // Use bool for simple binary toggle, but default to system if not set
       final bool? isDarkMode = prefs.getBool('isDarkMode');
       
       if (mounted) {
@@ -80,73 +147,12 @@ class _CheckMateAppState extends State<CheckMateApp> {
 
   @override
   Widget build(BuildContext context) {
-    const Color primaryBlue = Color(0xFF1A237E);
-    const Color accentYellow = Color(0xFFFFEB3B);
-
     return MaterialApp(
       title: 'CheckMate',
       debugShowCheckedModeBanner: false,
       themeMode: _themeMode,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: primaryBlue,
-          primary: primaryBlue,
-          onPrimary: Colors.white,
-          secondary: accentYellow,
-          onSecondary: Colors.black,
-          brightness: Brightness.light,
-          onSurface: Colors.black,
-          onSurfaceVariant: Colors.black54,
-        ),
-        textTheme: const TextTheme(
-          headlineLarge: TextStyle(color: primaryBlue, fontWeight: FontWeight.bold),
-          headlineMedium: TextStyle(color: primaryBlue, fontWeight: FontWeight.bold),
-          titleLarge: TextStyle(color: primaryBlue, fontWeight: FontWeight.bold),
-          bodyLarge: TextStyle(color: Colors.black),
-          bodyMedium: TextStyle(color: Colors.black),
-          bodySmall: TextStyle(color: Colors.black54),
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          labelStyle: const TextStyle(color: Colors.grey),
-          focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: primaryBlue)),
-        ),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: primaryBlue,
-          foregroundColor: Colors.white,
-          elevation: 0,
-        ),
-      ),
-      darkTheme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: primaryBlue,
-          primary: primaryBlue,
-          onPrimary: Colors.white,
-          secondary: accentYellow,
-          onSecondary: Colors.black,
-          brightness: Brightness.dark,
-          onSurface: Colors.white,
-          onSurfaceVariant: Colors.white70,
-        ),
-        textTheme: const TextTheme(
-          headlineLarge: TextStyle(color: accentYellow, fontWeight: FontWeight.bold),
-          headlineMedium: TextStyle(color: accentYellow, fontWeight: FontWeight.bold),
-          titleLarge: TextStyle(color: accentYellow, fontWeight: FontWeight.bold),
-          bodyLarge: TextStyle(color: Colors.white),
-          bodyMedium: TextStyle(color: Colors.white),
-          bodySmall: TextStyle(color: Colors.white70),
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          labelStyle: const TextStyle(color: Colors.white70),
-          focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: accentYellow)),
-        ),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF121212),
-          foregroundColor: Colors.white,
-          elevation: 0,
-        ),
-      ),
+      theme: _lightTheme,
+      darkTheme: _darkTheme,
       home: RootAuthWrapper(
         themeMode: _themeMode,
         onThemeChanged: _toggleTheme,

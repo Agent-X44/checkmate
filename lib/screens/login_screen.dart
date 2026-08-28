@@ -283,7 +283,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
           // Global Loading Overlay (Semi-transparent)
           if (_isLoading)
             Container(
-              color: Colors.black.withOpacity(0.05),
+              color: Colors.black.withValues(alpha: 0.05),
               child: const Center(child: null),
             ),
         ],
@@ -329,7 +329,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
           prefixIcon: Icon(icon, color: hasError ? Colors.red : null, size: 22),
           suffixIcon: suffixIcon,
           filled: true,
-          fillColor: hasError ? Colors.red.withOpacity(0.05) : Colors.transparent,
+          fillColor: hasError ? Colors.red.withValues(alpha: 0.05) : Colors.transparent,
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(16),
             borderSide: BorderSide(color: hasError ? Colors.red : Colors.grey.shade300),

@@ -46,15 +46,16 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void _deleteCourse(Course course) async {
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Delete Course'),
-        content: Text('Are you sure you want to delete ${course.code}?'),
+        content: Text('Are you sure you want to delete ${course.name}?'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('CANCEL')),
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('CANCEL', style: TextStyle(color: Colors.grey)),
+          ),
           TextButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(dialogContext, true),
             child: const Text('DELETE', style: TextStyle(color: Colors.red)),
           ),
         ],
@@ -63,10 +64,105 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     if (confirmed == true) {
       try {
-        await Supabase.instance.client.from('classes').delete().eq('id', course.id);
+        await SupabaseService.deleteClass(course.id);
+        if (mounted) {
+          CheckMateUi.showTopPrompt(context, 'Course deleted successfully', isError: false);
+          _refreshAll();
+        }
       } catch (e) {
         if (mounted) {
           CheckMateUi.showTopPrompt(context, 'Delete failed: $e');
+        }
+      }
+    }
+  }
+
+  void _renameCourse(Course course) {
+    final controller = TextEditingController(text: course.name);
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Rename Course'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Course Name',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('CANCEL', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              final newName = controller.text.trim();
+              if (newName.isEmpty) return;
+              Navigator.pop(dialogContext);
+              try {
+                await SupabaseService.renameClass(course.id, newName);
+                if (mounted) {
+                  CheckMateUi.showTopPrompt(context, 'Course renamed successfully!', isError: false);
+                  _refreshAll();
+                }
+              } catch (e) {
+                if (mounted) {
+                  CheckMateUi.showTopPrompt(context, 'Rename failed: $e');
+                }
+              }
+            },
+            child: const Text('SAVE'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _resetCourseCode(Course course) async {
+    try {
+      final newCode = await SupabaseService.resetCourseCode(course.id);
+      if (mounted) {
+        CheckMateUi.showTopPrompt(context, 'Join code reset to: $newCode', isError: false);
+        _refreshAll();
+      }
+    } catch (e) {
+      if (mounted) {
+        CheckMateUi.showTopPrompt(context, 'Reset code failed: $e');
+      }
+    }
+  }
+
+  void _unenrollCourse(Course course) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Leave Course'),
+        content: Text('Are you sure you want to leave ${course.name}?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('CANCEL', style: TextStyle(color: Colors.grey)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('LEAVE', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        await SupabaseService.unenrollClass(course.id);
+        if (mounted) {
+          CheckMateUi.showTopPrompt(context, 'Left course successfully', isError: false);
+          _refreshAll();
+        }
+      } catch (e) {
+        if (mounted) {
+          CheckMateUi.showTopPrompt(context, 'Leave failed: $e');
         }
       }
     }
@@ -205,119 +301,244 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildCourseCard(BuildContext context, Course course) {
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      elevation: 2,
-      child: InkWell(
-        onLongPress: course.isOwner ? () => _deleteCourse(course) : null,
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => CourseDashboardScreen(
-                course: course,
-                onCourseDeleted: () {
-                  // Handled by stream
-                },
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final gradient = course.adaptiveGradient(context);
+    // Dark Mode -> Dark text & icons matching scaffold background (#141318) for high contrast on soft pastel cards
+    // Light Mode -> Crisp White text & icons for contrast on vibrant saturated cards
+    final contentColor = isDark ? const Color(0xFF141318) : Colors.white;
+    final iconBgColor = isDark
+        ? Colors.black.withValues(alpha: 0.12)
+        : Colors.white.withValues(alpha: 0.25);
+
+    if (course.isOwner) {
+      // Created Courses: Course name is centered vertically in the card
+      return Card(
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        elevation: 2,
+        child: InkWell(
+          onLongPress: () => _deleteCourse(course),
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => CourseDashboardScreen(
+                  course: course,
+                  onCourseDeleted: () {},
+                ),
+              ),
+            );
+          },
+          child: Container(
+            height: 108,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: gradient,
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
               ),
             ),
-          );
-        },
-        child: Container(
-          height: 140,
-          width: double.infinity,
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: course.gradient,
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+            child: Stack(
+              children: [
+                // Vertically Centered Course Name
+                Positioned.fill(
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 16.0, right: 52.0, top: 12.0, bottom: 12.0),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        course.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: contentColor,
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+
+                // Top Right Options Icon with PopupMenu
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: PopupMenuButton<String>(
+                    icon: Icon(Icons.more_vert, color: contentColor),
+                    onSelected: (value) {
+                      if (value == 'rename') {
+                        _renameCourse(course);
+                      } else if (value == 'reset_code') {
+                        _resetCourseCode(course);
+                      } else if (value == 'delete') {
+                        _deleteCourse(course);
+                      }
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(
+                        value: 'rename',
+                        child: Row(
+                          children: [
+                            Icon(Icons.edit, size: 20),
+                            SizedBox(width: 8),
+                            Text('Rename Course'),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'reset_code',
+                        child: Row(
+                          children: [
+                            Icon(Icons.refresh, size: 20),
+                            SizedBox(width: 8),
+                            Text('Reset Join Code'),
+                          ],
+                        ),
+                      ),
+                      PopupMenuDivider(),
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete_forever, color: Colors.red, size: 20),
+                            SizedBox(width: 8),
+                            Text('Delete Course', style: TextStyle(color: Colors.red)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Bottom Right Print Action Button
+                Positioned(
+                  bottom: 12,
+                  right: 12,
+                  child: InkWell(
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const AnswerSheetDesignScreen(),
+                        ),
+                      );
+                    },
+                    borderRadius: BorderRadius.circular(16),
+                    child: CircleAvatar(
+                      radius: 16,
+                      backgroundColor: iconBgColor,
+                      child: Icon(Icons.print, size: 16, color: contentColor),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          course.code,
-                          style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold),
-                        ),
-                        Text(
-                          course.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                              color: Colors.white, fontSize: 18),
+        ),
+      );
+    } else {
+      // Enrolled Courses: Top course title + bottom instructor line
+      return Card(
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        elevation: 2,
+        child: InkWell(
+          onTap: () {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => CourseDashboardScreen(
+                  course: course,
+                  onCourseDeleted: () {},
+                ),
+              ),
+            );
+          },
+          child: Container(
+            height: 138,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: gradient,
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+            ),
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        course.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                            color: contentColor,
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    PopupMenuButton<String>(
+                      icon: Icon(Icons.more_vert, color: contentColor),
+                      onSelected: (value) {
+                        if (value == 'leave') {
+                          _unenrollCourse(course);
+                        }
+                      },
+                      itemBuilder: (context) => const [
+                        PopupMenuItem(
+                          value: 'leave',
+                          child: Row(
+                            children: [
+                              Icon(Icons.exit_to_app, color: Colors.red, size: 20),
+                              SizedBox(width: 8),
+                              Text('Leave Course', style: TextStyle(color: Colors.red)),
+                            ],
+                          ),
                         ),
                       ],
                     ),
-                  ),
-                  const Icon(Icons.more_vert, color: Colors.white),
-                ],
-              ),
-              const Spacer(),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  if (!course.isOwner)
+                  ],
+                ),
+                const Spacer(),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
                     Expanded(
                       child: Text(
-                        course.instructor,
+                        'Instructor: ${course.instructor}',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                            color: Colors.white70, fontSize: 14),
+                        style: TextStyle(
+                            color: contentColor.withValues(alpha: 0.85),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600),
                       ),
-                    )
-                  else
-                    const Spacer(),
-                  if (!course.isOwner)
+                    ),
                     Text(
                       'Avg Grade: ${course.averageGrade}',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
+                      style: TextStyle(
+                        color: contentColor,
+                        fontSize: 16,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                  if (course.isOwner)
-                    InkWell(
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                const AnswerSheetDesignScreen(),
-                          ),
-                        );
-                      },
-                      borderRadius: BorderRadius.circular(18),
-                      child: CircleAvatar(
-                        radius: 18,
-                        backgroundColor: Colors.white.withAlpha(51),
-                        child: const Icon(Icons.print,
-                            size: 18, color: Colors.white),
-                      ),
-                    ),
-                ],
-              ),
-            ],
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
-      ),
-    );
+      );
+    }
   }
 
   @override
@@ -325,20 +546,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Scaffold(
       body: StreamBuilder(
         stream: SupabaseService.streamCreatedCourses(),
-        builder: (context, _) {
+        builder: (context, snapshotCreated) {
           return StreamBuilder(
             stream: SupabaseService.streamEnrolledCourses(),
-            builder: (context, _) {
-              // Whenever either stream emits, we trigger a full data fetch to get relationships
-              _refreshAll();
+            builder: (context, snapshotEnrolled) {
+              
+              // Trigger detailed refresh in next frame to avoid setState-during-build error
+              if (snapshotCreated.hasData || snapshotEnrolled.hasData) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  _refreshAll();
+                });
+              }
 
-              if (_isInitialLoading) {
+              if (_isInitialLoading && _myCourses.isEmpty && _enrolledCourses.isEmpty) {
                 return const Center(child: CircularProgressIndicator());
               }
 
               return RefreshIndicator(
                 onRefresh: _refreshAll,
                 child: CustomScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
                   slivers: [
                     SliverToBoxAdapter(
                       child: _buildCombinedSummary(context, _myCourses.length + _enrolledCourses.length),

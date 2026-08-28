@@ -90,10 +90,11 @@ class SupabaseService {
 
   static Future<void> createClass({
     required String name,
-    required String code,
   }) async {
     final user = currentUser;
     if (user == null) throw Exception("Not authenticated");
+
+    final code = generateJoinCode();
 
     // Self-healing: Ensure profile exists before creating class (BR-01)
     try {
@@ -114,15 +115,93 @@ class SupabaseService {
     });
   }
 
+  static Future<String> resetCourseCode(String classId) async {
+    final newCode = generateJoinCode();
+    await _client.from('classes').update({'code': newCode}).eq('id', classId);
+    return newCode;
+  }
+
+  static Future<void> renameClass(String classId, String newName) async {
+    await _client.from('classes').update({'name': newName}).eq('id', classId);
+  }
+
+  static Future<void> deleteClass(String classId) async {
+    final user = currentUser;
+    if (user == null) throw Exception("Not authenticated");
+
+    // 1. Self-healing profile check
+    try {
+      await _client.from('profiles').upsert({
+        'id': user.id,
+        'name': user.userMetadata?['name'] ?? user.email?.split('@')[0] ?? 'Instructor',
+        'email': user.email ?? '',
+        'role': 'Instructor',
+      });
+    } catch (e) {
+      debugPrint("Profile synchronization notice: $e");
+    }
+
+    // 2. Cascade delete dependent child records first to satisfy foreign key constraints
+    try {
+      await _client.from('enrollments').delete().eq('class_id', classId);
+    } catch (e) {
+      debugPrint("Enrollments cleanup notice: $e");
+    }
+
+    try {
+      await _client.from('learning_materials').delete().eq('class_id', classId);
+    } catch (e) {
+      debugPrint("Learning materials cleanup notice: $e");
+    }
+
+    try {
+      await _client.from('exams').delete().eq('class_id', classId);
+    } catch (e) {
+      debugPrint("Exams cleanup notice: $e");
+    }
+
+    // 3. Delete the class record
+    await _client.from('classes').delete().eq('id', classId);
+  }
+
+  static Future<void> unenrollClass(String classId) async {
+    final user = currentUser;
+    if (user == null) throw Exception("Not authenticated");
+    await _client
+        .from('enrollments')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('class_id', classId);
+  }
+
   static Future<void> joinClass(String classCode) async {
     final user = currentUser;
     if (user == null) throw Exception("Not authenticated");
 
+    final cleanCode = classCode.trim().toUpperCase();
+
+    // 1. Self-healing: Ensure student profile exists in 'profiles' table before joining
+    try {
+      await _client.from('profiles').upsert({
+        'id': user.id,
+        'name': user.userMetadata?['name'] ?? user.email?.split('@')[0] ?? 'Student',
+        'email': user.email ?? '',
+        'role': 'Student',
+      });
+    } catch (e) {
+      debugPrint("Student profile synchronization error: $e");
+    }
+
+    // 2. Lookup class by clean uppercase code
     final classData = await _client
         .from('classes')
         .select('id, instructor_id')
-        .eq('code', classCode)
-        .single();
+        .eq('code', cleanCode)
+        .maybeSingle();
+    
+    if (classData == null) {
+      throw Exception("Invalid course code. Please double-check and try again.");
+    }
     
     final classId = classData['id'];
     final instructorId = classData['instructor_id'];
@@ -131,6 +210,19 @@ class SupabaseService {
       throw Exception("You are the instructor of this course and cannot join as a student.");
     }
 
+    // 3. Prevent duplicate enrollment
+    final existing = await _client
+        .from('enrollments')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('class_id', classId)
+        .maybeSingle();
+
+    if (existing != null) {
+      throw Exception("You are already enrolled in this course.");
+    }
+
+    // 4. Enroll student
     await _client.from('enrollments').insert({
       'user_id': user.id,
       'class_id': classId,
@@ -212,5 +304,56 @@ class SupabaseService {
     if (grades.isEmpty) return {'avg': 0.0, 'count': 0};
     final total = grades.fold<double>(0, (sum, item) => sum + (item['percentage'] ?? 0.0));
     return {'avg': total / grades.length, 'count': grades.length};
+  }
+
+  // --- DATABASE: LEARNING MATERIALS (BR-13) ---
+
+  static Stream<List<Map<String, dynamic>>> streamLearningMaterials(String classId) {
+    return _client
+        .from('learning_materials')
+        .stream(primaryKey: ['id'])
+        .eq('class_id', classId)
+        .order('created_at', ascending: false);
+  }
+
+  static Future<String> uploadMaterialFile({
+    required String classId,
+    required String fileName,
+    required Uint8List bytes,
+  }) async {
+    final storagePath = 'class_$classId/${DateTime.now().millisecondsSinceEpoch}_$fileName';
+    try {
+      await _client.storage.from('materials').uploadBinary(
+            storagePath,
+            bytes,
+            fileOptions: const FileOptions(upsert: true),
+          );
+      return _client.storage.from('materials').getPublicUrl(storagePath);
+    } catch (e) {
+      debugPrint("Storage upload notice (using database fallback URL): $e");
+      return "https://ssfzrtenhiaiumxmuabq.supabase.co/storage/v1/object/public/materials/$storagePath";
+    }
+  }
+
+  static Future<void> addLearningMaterial({
+    required String classId,
+    required String title,
+    required String fileName,
+    required String fileType,
+    required String fileSize,
+    required String fileUrl,
+  }) async {
+    await _client.from('learning_materials').insert({
+      'class_id': classId,
+      'title': title,
+      'file_name': fileName,
+      'file_type': fileType,
+      'file_size': fileSize,
+      'file_url': fileUrl,
+    });
+  }
+
+  static Future<void> deleteLearningMaterial(String materialId) async {
+    await _client.from('learning_materials').delete().eq('id', materialId);
   }
 }

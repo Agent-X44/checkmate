@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/course.dart';
 import '../services/supabase_service.dart';
 import 'chat_screen.dart';
-import 'assignments_screen.dart';
+import 'learning_materials_screen.dart';
 import 'quizzes_exams_screen.dart';
 import 'students_list_screen.dart';
 import 'course_settings_screen.dart';
@@ -52,11 +52,31 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     final bool isTeacherView = widget.course.isOwner;
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final gradient = widget.course.adaptiveGradient(context);
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.course.code),
-        backgroundColor: widget.course.gradient[0],
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                widget.course.name,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+              ),
+            ),
+            if (!isTeacherView)
+              Text(
+                'Instructor: ${widget.course.instructor}',
+                style: const TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+          ],
+        ),
+        backgroundColor: gradient[0],
         foregroundColor: Colors.white,
         actions: [
           IconButton(
@@ -96,37 +116,6 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(24),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: widget.course.gradient,
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.course.name,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    if (!isTeacherView)
-                      Text(
-                        'Instructor: ${widget.course.instructor}',
-                        style:
-                            const TextStyle(color: Colors.white70, fontSize: 16),
-                      ),
-                  ],
-                ),
-              ),
               Padding(
                 padding: const EdgeInsets.all(16.0),
                 child: Column(
@@ -137,7 +126,10 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
                       style: Theme.of(context)
                           .textTheme
                           .titleLarge
-                          ?.copyWith(fontWeight: FontWeight.bold),
+                          ?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: isDark ? Colors.white : Colors.black,
+                          ),
                     ),
                     const SizedBox(height: 12),
                     _loadingAnalytics 
@@ -151,22 +143,25 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
                       style: Theme.of(context)
                           .textTheme
                           .titleLarge
-                          ?.copyWith(fontWeight: FontWeight.bold),
+                          ?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: isDark ? Colors.white : Colors.black,
+                          ),
                     ),
                     const SizedBox(height: 12),
                     _buildSectionCard(
                       context,
-                      'Assignments',
+                      'Learning Materials',
                       isTeacherView
-                          ? 'View and create assignments'
-                          : 'Check your progress',
-                      Icons.assignment,
-                      Colors.orange,
+                          ? 'Upload PPTX, DOCX, and PDF'
+                          : 'View course materials',
+                      Icons.folder_shared,
+                      Colors.blue,
                       () => Navigator.push(
                           context,
                           MaterialPageRoute(
                               builder: (context) =>
-                                  AssignmentsScreen(
+                                  LearningMaterialsScreen(
                                     isOwner: isTeacherView,
                                     courseId: widget.course.id,
                                   ))),
@@ -219,7 +214,7 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
                             icon: const Icon(Icons.add_a_photo),
                             label: const Text('SCAN NEW ANSWER SHEET'),
                             style: ElevatedButton.styleFrom(
-                              backgroundColor: widget.course.gradient[0],
+                              backgroundColor: gradient[0],
                               foregroundColor: Colors.white,
                               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                             ),

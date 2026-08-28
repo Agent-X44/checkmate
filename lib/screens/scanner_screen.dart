@@ -205,10 +205,18 @@ class _ScannerScreenState extends State<ScannerScreen> {
   }
 
   Future<void> _initializeCamera() async {
-    if (widget.cameras.isEmpty) return;
+    List<CameraDescription> cams = widget.cameras;
+    if (cams.isEmpty) {
+      try {
+        cams = await availableCameras();
+      } catch (e) {
+        debugPrint("Camera fallback fetch error: $e");
+      }
+    }
+    if (cams.isEmpty) return;
 
     _controller = CameraController(
-      widget.cameras[0],
+      cams[0],
       ResolutionPreset.high,
       enableAudio: false,
       imageFormatGroup: ImageFormatGroup.yuv420,

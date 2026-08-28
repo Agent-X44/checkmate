@@ -93,18 +93,54 @@ CREATE TABLE ai_insights (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 9. Learning Materials (Enforces BR-13)
+CREATE TABLE learning_materials (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    class_id UUID REFERENCES classes(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    file_type TEXT NOT NULL,
+    file_size TEXT NOT NULL,
+    file_url TEXT NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- --- ROW LEVEL SECURITY (RLS) ---
 
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE classes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE exams ENABLE ROW LEVEL SECURITY;
 ALTER TABLE grades ENABLE ROW LEVEL SECURITY;
+ALTER TABLE learning_materials ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "View learning materials" ON learning_materials FOR SELECT
+USING (
+  class_id IN (SELECT id FROM classes WHERE instructor_id = auth.uid()) OR
+  class_id IN (SELECT class_id FROM enrollments WHERE user_id = auth.uid())
+);
+
+CREATE POLICY "Instructors manage materials" ON learning_materials FOR ALL
+USING (
+  class_id IN (SELECT id FROM classes WHERE instructor_id = auth.uid())
+);
 
 -- Students can only see profiles of people in their classes (simplified here for brevity)
 CREATE POLICY "Public profiles are viewable by everyone" ON profiles FOR SELECT USING (true);
 
--- Classes: Instructors can manage their own, students can see enrolled
-CREATE POLICY "Instructors manage own classes" ON classes FOR ALL USING (auth.uid() = instructor_id);
+-- Classes RLS Policies
+CREATE POLICY "Instructors manage own classes" ON classes FOR ALL TO authenticated
+USING (auth.uid() = instructor_id)
+WITH CHECK (auth.uid() = instructor_id);
+
+CREATE POLICY "Users can view classes to join or if enrolled" ON classes FOR SELECT TO authenticated
+USING (true);
+
+-- Enrollments RLS Policies
+ALTER TABLE enrollments ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Users manage own enrollments" ON enrollments FOR ALL TO authenticated
+USING (auth.uid() = user_id OR class_id IN (SELECT id FROM classes WHERE instructor_id = auth.uid()))
+WITH CHECK (auth.uid() = user_id);
 
 -- Exams: Students can only see approved exams in their classes
 CREATE POLICY "Students see approved exams" ON exams FOR SELECT

@@ -72,6 +72,61 @@ class CheckMateUi {
     // Default: Clean up technical prefixes if any
     return technical.replaceAll(RegExp(r'^Exception: '), '').replaceAll(RegExp(r'^Error: '), '');
   }
+
+  /// Generates a consistent gradient based on a unique ID (e.g. user ID or course ID).
+  /// - Light Mode: Bright, rich, highly saturated vibrant tones that pop with energetic chroma.
+  /// - Dark Mode: Lighter, soft, desaturated luminous tones that provide eye comfort on dark backgrounds.
+  /// Guarantees that the base color family for a given ID stays IDENTICAL across both Light Mode and Dark Mode.
+  static List<Color> generateGradient(String id, {bool isDark = false}) {
+    final int hash = id.hashCode.abs();
+    // High-entropy Murmur-inspired bit mixer to spread out similar UUIDs across the 16 presets
+    final int mixedHash = ((hash ^ (hash >> 16)) * 0x45d9f3b) & 0x7FFFFFFF;
+    final int index = mixedHash % 16;
+
+    if (isDark) {
+      // Dark Mode: Lighter, soft, desaturated, soothing luminous tones
+      final List<List<Color>> darkDesaturated = [
+        [const Color(0xFF90CAF9), const Color(0xFF80DEEA)], // 0. Soft Periwinkle -> Ice Cyan
+        [const Color(0xFF80CBC4), const Color(0xFFA5D6A7)], // 1. Muted Teal -> Soft Sage
+        [const Color(0xFFB39DDB), const Color(0xFFE1BEE7)], // 2. Desaturated Lilac -> Pastel Lavender
+        [const Color(0xFFCE93D8), const Color(0xFFF48FB1)], // 3. Soft Orchid -> Soft Pink
+        [const Color(0xFFFF8A65), const Color(0xFFFFD180)], // 4. Soft Coral -> Muted Peach
+        [const Color(0xFFFFCC80), const Color(0xFFFFF59D)], // 5. Soft Warm Gold -> Pastel Yellow
+        [const Color(0xFF81C784), const Color(0xFFDCE775)], // 6. Soft Emerald -> Muted Lime
+        [const Color(0xFF80DEEA), const Color(0xFF80D8FF)], // 7. Soft Aqua -> Light Sky
+        [const Color(0xFFB2DFDB), const Color(0xFFC8E6C9)], // 8. Soft Foam -> Muted Mint
+        [const Color(0xFFFFAB91), const Color(0xFFFFCC80)], // 9. Muted Apricot -> Soft Gold
+        [const Color(0xFFB0BEC5), const Color(0xFFCFD8DC)], // 10. Soft Slate -> Light Steel
+        [const Color(0xFF9FA8DA), const Color(0xFFB39DDB)], // 11. Soft Indigo -> Desaturated Violet
+        [const Color(0xFFC5CAE9), const Color(0xFFE0F7FA)], // 12. Pastel Periwinkle -> Ice Cyan
+        [const Color(0xFFFF80AB), const Color(0xFFFF8A65)], // 13. Soft Rose -> Muted Coral
+        [const Color(0xFFAED581), const Color(0xFFFFF176)], // 14. Soft Lime -> Soft Yellow
+        [const Color(0xFFB3E5FC), const Color(0xFFC8E6C9)], // 15. Light Powder Blue -> Soft Mint
+      ];
+      return darkDesaturated[index];
+    } else {
+      // Light Mode: Bright, punchy, rich, highly saturated vibrant tones
+      final List<List<Color>> lightSaturated = [
+        [const Color(0xFF1976D2), const Color(0xFF00ACC1)], // 0. Vibrant Royal Blue -> Bright Cyan
+        [const Color(0xFF00897B), const Color(0xFF43A047)], // 1. Rich Emerald Teal -> Bright Green
+        [const Color(0xFF5E35B1), const Color(0xFF8E24AA)], // 2. Vivid Violet -> Rich Purple
+        [const Color(0xFFD81B60), const Color(0xFFE91E63)], // 3. Punchy Crimson -> Bright Magenta
+        [const Color(0xFFF4511E), const Color(0xFFFB8C00)], // 4. Vibrant Coral -> Energetic Orange
+        [const Color(0xFFFF8F00), const Color(0xFFFFC107)], // 5. Rich Amber -> Vibrant Gold
+        [const Color(0xFF2E7D32), const Color(0xFF7CB342)], // 6. Vibrant Forest -> Bright Lime Green
+        [const Color(0xFF0288D1), const Color(0xFF00BFA5)], // 7. Vivid Cerulean -> Bright Teal
+        [const Color(0xFF00838F), const Color(0xFF00E676)], // 8. Rich Cyan -> Electric Green
+        [const Color(0xFFE64A19), const Color(0xFFFF6D00)], // 9. Punchy Terracotta -> Bright Amber
+        [const Color(0xFF4527A0), const Color(0xFF7B1FA2)], // 10. Deep Royal Purple -> Vivid Orchid
+        [const Color(0xFFC2185B), const Color(0xFFFF4081)], // 11. Vivid Rose -> Bright Pink
+        [const Color(0xFF1565C0), const Color(0xFF0288D1)], // 12. Rich Sapphire -> Vibrant Blue
+        [const Color(0xFFD84315), const Color(0xFFFF9100)], // 13. Vibrant Rust -> Bright Orange
+        [const Color(0xFF283593), const Color(0xFF00897B)], // 14. Deep Indigo -> Rich Teal
+        [const Color(0xFF33691E), const Color(0xFF64DD17)], // 15. Deep Leaf -> Bright Neon Lime
+      ];
+      return lightSaturated[index];
+    }
+  }
 }
 
 class _TopPromptWidget extends StatefulWidget {
@@ -147,13 +202,13 @@ class _TopPromptWidgetState extends State<_TopPromptWidget> with SingleTickerPro
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
                   decoration: BoxDecoration(
-                    color: widget.backgroundColor.withOpacity(0.85), // Reverted to withOpacity for stability
+                    color: widget.backgroundColor.withValues(alpha: 0.7), // Increased transparency for subtlety
                     borderRadius: BorderRadius.circular(16),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withOpacity(0.15),
-                        blurRadius: 10,
-                        offset: const Offset(0, 4),
+                        color: Colors.black.withValues(alpha: 0.08),
+                        blurRadius: 12,
+                        offset: const Offset(0, 6),
                       ),
                     ],
                   ),
