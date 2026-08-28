@@ -6,7 +6,7 @@ import FlutterMacOS
 import Foundation
 
 import app_links
-import file_picker_darwin
+import file_picker
 import google_sign_in_ios
 import printing
 import share_plus

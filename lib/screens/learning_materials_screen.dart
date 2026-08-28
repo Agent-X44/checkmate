@@ -78,14 +78,14 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
       final result = await FilePicker.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['pdf', 'docx', 'pptx', 'doc', 'ppt'],
+        withData: true,
       );
 
-      if (result.isNotEmpty) {
-        final file = result.first;
-        final extension = file.name.contains('.') ? file.name.split('.').last.toLowerCase() : 'pdf';
-        final fileLength = await file.length();
-        final sizeInMb = (fileLength / (1024 * 1024)).toStringAsFixed(1);
-        final sizeStr = fileLength > 1024 * 1024 ? '$sizeInMb MB' : '${(fileLength / 1024).toStringAsFixed(0)} KB';
+      if (result != null && result.files.isNotEmpty) {
+        final file = result.files.first;
+        final extension = (file.extension ?? 'pdf').toLowerCase();
+        final sizeInMb = (file.size / (1024 * 1024)).toStringAsFixed(1);
+        final sizeStr = file.size > 1024 * 1024 ? '$sizeInMb MB' : '${(file.size / 1024).toStringAsFixed(0)} KB';
         final title = file.name.split('.').first.replaceAll('_', ' ');
 
         // 1. Optimistic UI: Create pending item with active card progress bar
@@ -106,7 +106,7 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
           _isUploading = true;
         });
 
-        final bytes = await file.readAsBytes();
+        final bytes = file.bytes ?? await File(file.path!).readAsBytes();
 
         // 2. Upload file to Supabase Storage
         final publicUrl = await SupabaseService.uploadMaterialFile(

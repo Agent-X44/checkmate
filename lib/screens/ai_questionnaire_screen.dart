@@ -236,11 +236,9 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
       
       if (mounted) {
         // Trigger Android Share Sheet (Allows "Save to device", "Send to Drive", etc.)
-        await SharePlus.instance.share(
-          ShareParams(
-            files: [XFile(file.path)],
-            text: 'Exported Assessment from CheckMate AI',
-          ),
+        await Share.shareXFiles(
+          [XFile(file.path)],
+          text: 'Exported Assessment from CheckMate AI',
         );
       }
     } catch (e) {
