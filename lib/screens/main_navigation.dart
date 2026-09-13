@@ -266,22 +266,23 @@ class _MainNavigationState extends State<MainNavigation>
               child: Text('CANCEL', style: TextStyle(color: isDark ? Colors.white70 : Colors.grey))),
           ElevatedButton(
             onPressed: () async {
-              if (joinCtrl.text.isEmpty) return;
+              String input = joinCtrl.text.trim();
+              if (input.isEmpty) return;
+              if (input.contains('code=')) {
+                input = Uri.tryParse(input)?.queryParameters['code'] ?? input;
+              }
               final nav = Navigator.of(dialogContext);
               try {
-                await SupabaseService.joinClass(joinCtrl.text);
+                final course = await SupabaseService.joinClass(input);
                 nav.pop();
                 if (!mounted) return;
                 _toggleFab();
                 _refreshDrawerCourses();
-                CheckMateUi.showTopPrompt(context, 'Joined course successfully!', isError: false);
+                CheckMateUi.showTopPrompt(context, 'Joined course: ${course.name}!', isError: false);
               } catch (e) {
                 if (!mounted) return;
-                // Explicitly check for class not found to give a better message
-                final msg = e.toString().contains('single') || e.toString().contains('JSON object') 
-                  ? 'Course code invalid. Please check and try again.' 
-                  : 'Failed to join: $e';
-                CheckMateUi.showTopPrompt(context, msg);
+                final msg = e.toString().replaceAll('Exception: ', '');
+                CheckMateUi.showTopPrompt(context, msg, isError: !msg.contains('already enrolled'));
               }
             },
             style: ElevatedButton.styleFrom(

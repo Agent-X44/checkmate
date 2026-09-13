@@ -174,7 +174,16 @@ class SupabaseService {
         .eq('class_id', classId);
   }
 
-  static Future<void> joinClass(String classCode) async {
+  static Future<Map<String, dynamic>?> getCourseDataByCode(String classCode) async {
+    final cleanCode = classCode.trim().toUpperCase();
+    return await _client
+        .from('classes')
+        .select('id, name, code, instructor_id')
+        .eq('code', cleanCode)
+        .maybeSingle();
+  }
+
+  static Future<Course> joinClass(String classCode) async {
     final user = currentUser;
     if (user == null) throw Exception("Not authenticated");
 
@@ -195,19 +204,20 @@ class SupabaseService {
     // 2. Lookup class by clean uppercase code
     final classData = await _client
         .from('classes')
-        .select('id, instructor_id')
+        .select('id, name, code, instructor_id')
         .eq('code', cleanCode)
         .maybeSingle();
     
     if (classData == null) {
-      throw Exception("Invalid course code. Please double-check and try again.");
+      throw Exception("Invalid course code ($cleanCode). Please double-check and try again.");
     }
     
     final classId = classData['id'];
     final instructorId = classData['instructor_id'];
+    final course = Course.fromMap(classData, isOwner: false);
 
     if (user.id == instructorId) {
-      throw Exception("You are the instructor of this course and cannot join as a student.");
+      throw Exception("You can't join the course you've created.");
     }
 
     // 3. Prevent duplicate enrollment
@@ -219,7 +229,7 @@ class SupabaseService {
         .maybeSingle();
 
     if (existing != null) {
-      throw Exception("You are already enrolled in this course.");
+      return course;
     }
 
     // 4. Enroll student
@@ -228,6 +238,8 @@ class SupabaseService {
       'class_id': classId,
       'role': 'Student',
     });
+
+    return course;
   }
 
   static Stream<List<Map<String, dynamic>>> streamCreatedCourses() {

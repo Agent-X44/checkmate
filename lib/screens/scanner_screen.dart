@@ -5,7 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import '../services/image_processor.dart';
 import '../services/api_service.dart';
+import '../services/cv/qr_classification_service.dart';
+import '../services/supabase_service.dart';
+import '../services/deep_link_service.dart';
 import '../models/omr/processed_sheet.dart';
+import '../models/omr/qr_data.dart';
 import '../models/omr/templates/standard_50_questions.dart';
 import '../utils/ui_utils.dart';
 import 'ai_analysis_screen.dart';
@@ -26,14 +30,32 @@ class ScannerScreen extends StatefulWidget {
 class _ScannerScreenState extends State<ScannerScreen> {
   CameraController? _controller;
   bool _isInitialized = false;
-  bool _isProcessing = false;
+  bool _isOmrProcessing = false;
   bool _paperDetected = false;
   bool _isFlashOn = false;
   int _detectionCounter = 0;
   static const int _detectionPersistenceThreshold = 2;
 
+  // Course Invitation Confirmation Card State
+  bool _isConfirmationCardOpen = false;
+  String? _lastScannedInviteCode;
+  DateTime? _lastInvitePromptTime;
+
+  // Pipeline control flags
+  //  - _qrFirstMode: Initial short window where QR detection is prioritized (invitation QR must be handled first)
+  //  - _edgesDetectedOnce: Becomes true once paper edges were confidently detected; only then allow answer-sheet QR handling
+  bool _qrFirstMode = true;
+  bool _edgesDetectedOnce = false;
+
+  bool get _isProcessing => _isOmrProcessing || _isConfirmationCardOpen;
+
+  // Isolate state
+  bool _isIsolateWorking = false;
+
   List<Offset>? _detectedCorners;
   List<double>? _rawCorners;
+  List<Offset>? _detectedQrCorners;
+  QrData? _detectedLiveQr;
   Offset? _focusPoint;
   DateTime _lastUIUpdate = DateTime.now();
 
@@ -85,6 +107,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
         _isInitialized = false;
         _paperDetected = false;
         _isFlashOn = false;
+        _isOmrProcessing = false;
+        _isConfirmationCardOpen = false;
       });
     }
   }
@@ -120,7 +144,72 @@ class _ScannerScreenState extends State<ScannerScreen> {
   }
 
   void _handleLiveResponse(ScanResponse message) {
-    if (message.foundPaper) {
+    _isIsolateWorking = false;
+
+    // 1. Detect whether the current frame contains a Course Invitation QR
+    final inviteCode = message.detectedQr == null
+        ? null
+        : QrClassificationService.extractInvitationCodeFromQr(message.detectedQr!);
+
+    final isCourseInvite = inviteCode != null;
+
+    if (isCourseInvite) {
+      // SUPPRESS PAPER DETECTION: This is a Course Invitation QR, NOT an OMR Answer Sheet!
+      _detectionCounter = 0;
+      _rawCorners = null;
+
+      // Render Google Lens-style yellow bounding box overlay around the Course QR code
+      if (message.qrCorners != null && message.qrCorners!.length >= 8) {
+        _detectedQrCorners = List.generate(
+          4,
+          (i) => Offset(message.qrCorners![i * 2], message.qrCorners![i * 2 + 1]),
+        );
+        _detectedLiveQr = message.detectedQr;
+      } else {
+        _detectedQrCorners = null;
+        _detectedLiveQr = null;
+      }
+
+      // Update UI to ensure "PAPER DETECTED" is strictly hidden while scanning Course QR
+      if (DateTime.now().difference(_lastUIUpdate).inMilliseconds > 100) {
+        if (mounted) {
+          setState(() {
+            _paperDetected = false;
+            _detectedCorners = null;
+          });
+          _lastUIUpdate = DateTime.now();
+        }
+      }
+
+      // IMMEDIATELY prompt the "Join Course" confirmation card
+      if (!_isConfirmationCardOpen && !_isProcessing) {
+        _triggerCourseJoinPrompt(inviteCode);
+      }
+
+      return; // Do NOT proceed to OMR paper edge detection
+    }
+
+    // --- Standard OMR Answer Sheet Detection Path ---
+
+    // 1. Live Google Lens-style QR Bounding Overlay Coordinates for OMR sheets
+    if (message.qrCorners != null && message.qrCorners!.length >= 8) {
+      if (_edgesDetectedOnce) {
+        _detectedQrCorners = List.generate(
+          4,
+          (i) => Offset(message.qrCorners![i * 2], message.qrCorners![i * 2 + 1]),
+        );
+        _detectedLiveQr = message.detectedQr;
+      } else {
+        _detectedQrCorners = null;
+        _detectedLiveQr = null;
+      }
+    } else {
+      _detectedQrCorners = null;
+      _detectedLiveQr = null;
+    }
+
+    // 2. Paper edge detection for OMR answer sheets
+    if (message.foundPaper && !_qrFirstMode) {
       _detectionCounter = _detectionPersistenceThreshold;
       _rawCorners = message.corners;
     } else if (_detectionCounter > 0) {
@@ -133,6 +222,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
       if (mounted) {
         setState(() {
           _paperDetected = detected;
+          if (detected) _edgesDetectedOnce = true;
+
           if (message.corners != null) {
             _detectedCorners = List.generate(
                 message.corners!.length ~/ 2,
@@ -147,51 +238,513 @@ class _ScannerScreenState extends State<ScannerScreen> {
     }
   }
 
+  Future<void> _triggerCourseJoinPrompt(String inviteCode) async {
+    if (_isConfirmationCardOpen || !mounted) return;
+
+    // Debounce duplicate scans of same code within 3 seconds
+    if (_lastScannedInviteCode == inviteCode &&
+        _lastInvitePromptTime != null &&
+        DateTime.now().difference(_lastInvitePromptTime!).inMilliseconds < 1000) {
+      return;
+    }
+
+    // Synchronously lock state immediately to prevent live camera stream race conditions
+    _isConfirmationCardOpen = true;
+    _lastScannedInviteCode = inviteCode;
+    _lastInvitePromptTime = DateTime.now();
+
+    // 1. Verify if this QR code is a valid course in database & check creator status
+    Map<String, dynamic>? courseData;
+    try {
+      courseData = await SupabaseService.getCourseDataByCode(inviteCode).timeout(const Duration(seconds: 2));
+    } catch (e) {
+      debugPrint("Course lookup error: $e");
+    }
+
+    if (!mounted) return;
+
+    // If this code is not yet found in the database, still surface the join prompt when it
+    // looks like an invitation code so the user can take action immediately.
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final accentColor = isDark ? theme.colorScheme.secondary : theme.colorScheme.primary;
+
+    if (courseData == null) {
+      await showModalBottomSheet(
+        context: context,
+        isDismissible: false,
+        enableDrag: false,
+        backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        ),
+        builder: (bottomSheetContext) {
+          return Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 48,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                ),
+                const SizedBox(height: 20),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: accentColor.withValues(alpha: 0.15),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(Icons.school_rounded, color: accentColor, size: 40),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Course Invitation Detected',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: isDark ? Colors.white : Colors.black87,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  'Course Code: $inviteCode',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: accentColor,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'Would you like to join this course?',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 14,
+                    color: isDark ? Colors.white70 : Colors.black54,
+                  ),
+                ),
+                const SizedBox(height: 28),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(bottomSheetContext),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          side: BorderSide(
+                            color: isDark ? Colors.white30 : Colors.grey.shade400,
+                          ),
+                        ),
+                        child: Text(
+                          'CANCEL',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: isDark ? Colors.white70 : Colors.black87,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () async {
+                          Navigator.pop(bottomSheetContext);
+                          await DeepLinkService().processJoinCode(inviteCode);
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: accentColor,
+                          foregroundColor: isDark ? Colors.black : Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          elevation: 2,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: const Text(
+                          'JOIN COURSE',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+              ],
+            ),
+          );
+        },
+      );
+      if (mounted) {
+        _isConfirmationCardOpen = false;
+      }
+      return;
+    }
+
+    // 2. Check if current user is the course creator
+    final currentUser = SupabaseService.currentUser;
+    final instructorId = courseData['instructor_id']?.toString().trim();
+    final currentUserId = currentUser?.id.trim();
+
+    if (instructorId != null && currentUserId != null && instructorId == currentUserId) {
+      await _showCreatorNoticeCard(inviteCode, courseData['name'] ?? '');
+      if (mounted) {
+        _isConfirmationCardOpen = false;
+      }
+      return;
+    }
+
+    // 3. Valid course & user is student: Open Course Join Confirmation Card
+
+    await showModalBottomSheet(
+      context: context,
+      isDismissible: false,
+      enableDrag: false,
+      backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (bottomSheetContext) {
+        return Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 48,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Colors.grey.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: accentColor.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.school_rounded, color: accentColor, size: 40),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Course Invitation Detected',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white : Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Course Code: $inviteCode',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: accentColor,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'Would you like to enroll in this course directly?',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 14,
+                  color: isDark ? Colors.white70 : Colors.black54,
+                ),
+              ),
+              const SizedBox(height: 28),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () {
+                        Navigator.pop(bottomSheetContext);
+                      },
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        side: BorderSide(
+                          color: isDark ? Colors.white30 : Colors.grey.shade400,
+                        ),
+                      ),
+                      child: Text(
+                        'CANCEL',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: isDark ? Colors.white70 : Colors.black87,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () async {
+                        Navigator.pop(bottomSheetContext);
+                        await DeepLinkService().processJoinCode(inviteCode);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: accentColor,
+                        foregroundColor: isDark ? Colors.black : Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        elevation: 2,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        'JOIN COURSE',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (mounted) {
+      _isConfirmationCardOpen = false;
+    }
+  }
+
+  Future<void> _showCreatorNoticeCard(String inviteCode, String courseName) async {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    await showModalBottomSheet(
+      context: context,
+      isDismissible: true,
+      enableDrag: true,
+      backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (bottomSheetContext) {
+        return Padding(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 48,
+                height: 5,
+                decoration: BoxDecoration(
+                  color: Colors.grey.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+              ),
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.amber.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.info_outline_rounded, color: Colors.amber, size: 40),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Course Creator Notice',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white : Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 8),
+              if (courseName.isNotEmpty)
+                Text(
+                  courseName,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.amber,
+                  ),
+                ),
+              Text(
+                'Code: $inviteCode',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.grey,
+                  letterSpacing: 1.1,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                "You can't join the course you've created.",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w500,
+                  color: isDark ? Colors.white70 : Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 28),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () => Navigator.pop(bottomSheetContext),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.amber,
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    elevation: 2,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  child: const Text(
+                    'UNDERSTOOD',
+                    style: TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 15,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  String? _extractInviteCode(String raw) {
+    final clean = raw.trim();
+    if (clean.isEmpty) return null;
+
+    // 1. URL with ?code= or ?joinCode=
+    if (clean.contains('code=')) {
+      final uri = Uri.tryParse(clean);
+      if (uri != null) {
+        final codeParam = uri.queryParameters['code'] ?? uri.queryParameters['joinCode'];
+        if (codeParam != null && codeParam.trim().isNotEmpty) {
+          return codeParam.trim().toUpperCase();
+        }
+      }
+    }
+
+    // 2. Extract from URL (Any domain, looking for code param or short alphanumeric path segment)
+    final uri = Uri.tryParse(clean);
+    if (uri != null && uri.scheme.isNotEmpty) {
+      final codeParam = uri.queryParameters['code'] ?? uri.queryParameters['joinCode'];
+      if (codeParam != null && codeParam.trim().isNotEmpty) {
+        return codeParam.trim().toUpperCase();
+      }
+      if (uri.pathSegments.isNotEmpty) {
+        // Check if any of the last path segments is a valid 5-8 char code (e.g. /course/EDJNRU)
+        final segments = uri.pathSegments.where((s) => s.trim().isNotEmpty).toList();
+        if (segments.isNotEmpty) {
+          final lastSegment = segments.last.trim().toUpperCase();
+          if (RegExp(r'^[A-Z0-9]{5,8}$').hasMatch(lastSegment) && 
+              !lastSegment.startsWith("SHEET") && 
+              !lastSegment.contains("UNKNOWN")) {
+            return lastSegment;
+          }
+        }
+      }
+    }
+
+    // 3. Format: "Code: EDJNRU" or "Code EDJNRU" or "JOIN: EDJNRU"
+    if (clean.toUpperCase().contains("CODE") || clean.toUpperCase().contains("JOIN")) {
+      final match = RegExp(r'[A-Z0-9]{5,8}').firstMatch(
+        clean.toUpperCase().replaceAll("CODE", "").replaceAll("JOIN", "").replaceAll(":", "").trim(),
+      );
+      if (match != null) {
+        return match.group(0);
+      }
+    }
+
+    // 4. Raw Join Code: 5 to 8 uppercase alphanumeric characters (e.g. EDJNRU)
+    final isAlphanumericCode = RegExp(r'^[A-Z0-9]{5,8}$').hasMatch(clean.toUpperCase());
+    if (isAlphanumericCode && 
+        !clean.toLowerCase().startsWith("sheet") && 
+        !clean.contains("-AUTO") && 
+        !clean.toLowerCase().contains("unknown") &&
+        !clean.toLowerCase().contains("cm50") &&
+        !clean.toLowerCase().contains("py5")) {
+      return clean.toUpperCase();
+    }
+
+    return null;
+  }
+
   /// BR-05 Enforcement: Resolve Sheet ID via backend before grading.
   Future<void> _handleProcessedSheet(ProcessedSheet sheet) async {
-    final qrData = sheet.qrData;
-    
-    // 1. Validate QR detection
-    if (qrData == null || qrData.sheetIdentifier.isEmpty) {
-      _showErrorSnackBar("Invalid Sheet: QR code could not be decoded.");
-      setState(() => _isProcessing = false);
-      return;
-    }
-
-    final identifier = qrData.sheetIdentifier;
-
-    // 2. Prevent duplicates in same session
-    if (_processedSheetIds.contains(identifier)) {
-      _showErrorSnackBar("Duplicate: This sheet was already scanned.");
-      setState(() => _isProcessing = false);
-      return;
-    }
-
     try {
-      // 3. Resolve metadata from Supabase
+      final qrData = sheet.qrData;
+      final rawIdentifier = qrData?.sheetIdentifier ?? '';
+
+      // 1. FIRST: Detect whether this QR is actually a Course Invitation.
+      final inviteCode = qrData == null ? null : QrClassificationService.extractInvitationCodeFromQr(qrData);
+      if (inviteCode != null) {
+        await _triggerCourseJoinPrompt(inviteCode);
+        return;
+      }
+
+      // 2. SECOND: Validate if this is a valid OMR Answer Sheet QR.
+      if (qrData == null || 
+          rawIdentifier.isEmpty || 
+          rawIdentifier == "UNKNOWN") {
+        _showErrorSnackBar("Invalid paper, please try again.");
+        return;
+      }
+
+      // 3. Prevent duplicates in same session
+      if (_processedSheetIds.contains(rawIdentifier)) {
+        _showErrorSnackBar("Duplicate: This sheet was already scanned.");
+        return;
+      }
+
+      // 4. Resolve metadata from Supabase
       // This verifies if the sheet actually belongs to this exam/student
-      final metadata = await ApiService.resolveSheet(identifier);
+      final metadata = await ApiService.resolveSheet(rawIdentifier);
       
       if (mounted) {
-        setState(() {
-          _scannedResults.add(sheet);
-          _processedSheetIds.add(identifier);
-          _isProcessing = false;
-        });
+        _scannedResults.add(sheet);
+        _processedSheetIds.add(rawIdentifier);
         _showSuccessSnackBar("Verified: ${metadata['student_name']}");
       }
     } catch (e) {
       if (mounted) {
-        // Detailed error messages based on API response
-        String errorMsg = "Verification Failed: $e";
+        String errorMsg = "Invalid paper, please try again.";
         if (e.toString().contains("404")) {
-          errorMsg = "Unknown Sheet: ID '$identifier' not found in database.";
+          errorMsg = "Invalid paper: Sheet ID not found. Please try again.";
         } else if (e.toString().contains("403")) {
           errorMsg = "Unauthorized: Assessment is not approved yet.";
         }
         
         _showErrorSnackBar(errorMsg);
-        setState(() => _isProcessing = false);
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isOmrProcessing = false);
       }
     }
   }
@@ -225,7 +778,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
     try {
       await _controller!.initialize();
       _controller!.startImageStream((image) {
-        if (_isProcessing || _isolateSendPort == null) return;
+        if (_isProcessing || _isolateSendPort == null || _isIsolateWorking) return;
+        
+        _isIsolateWorking = true;
         _isolateSendPort!.send(ScanRequest(
           bytes: image.planes[0].bytes,
           width: image.width,
@@ -238,6 +793,18 @@ class _ScannerScreenState extends State<ScannerScreen> {
         setState(() {
           _isInitialized = true;
           _isFlashOn = false;
+          // Start in QR-first mode to prioritize course invitation detection
+          _qrFirstMode = true;
+          _edgesDetectedOnce = false;
+        });
+
+        // After a short QR-first window, enable edge detection. If a course invite QR appears in
+        // that window it will be handled immediately; otherwise the camera will begin looking for edges.
+        Future.delayed(const Duration(milliseconds: 800), () {
+          if (!mounted) return;
+          setState(() {
+            _qrFirstMode = false;
+          });
         });
       }
     } catch (e) {
@@ -316,13 +883,25 @@ class _ScannerScreenState extends State<ScannerScreen> {
                                       corners: _detectedCorners!,
                                       isDetected: _paperDetected,
                                       color: accentColor)))),
+                    if (_detectedQrCorners != null && _detectedLiveQr != null)
+                      Positioned.fill(
+                          child: IgnorePointer(
+                              child: CustomPaint(
+                                  painter: QrBoundingBoxPainter(
+                                      corners: _detectedQrCorners!,
+                                      label: _extractInviteCode(_detectedLiveQr!.sheetIdentifier) != null
+                                          ? "Course Code: ${_extractInviteCode(_detectedLiveQr!.sheetIdentifier)}"
+                                          : "Answer Sheet QR",
+                                      color: _extractInviteCode(_detectedLiveQr!.sheetIdentifier) != null
+                                          ? (isDark ? Colors.yellowAccent : Colors.amber)
+                                          : Colors.greenAccent)))),
                   ]);
                 }),
               ),
             ),
           ),
           
-          if (_isProcessing)
+          if (_isOmrProcessing)
             Container(
               color: Colors.black54,
               child: Center(
@@ -394,10 +973,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
                       height: 80,
                       child: FloatingActionButton(
                         heroTag: 'capture',
-                        onPressed: (_paperDetected && !_isProcessing) ? _captureAndProcess : null,
-                        backgroundColor: _paperDetected ? accentColor : Colors.white10,
+                        onPressed: !_isProcessing ? _captureAndProcess : null,
+                        backgroundColor: _paperDetected ? accentColor : Colors.white24,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(40)),
-                        child: Icon(Icons.qr_code_scanner, color: _paperDetected ? Colors.black : Colors.white24, size: 40),
+                        child: const Icon(Icons.qr_code_scanner, color: Colors.black, size: 40),
                       ),
                     ),
                   ],
@@ -419,25 +998,48 @@ class _ScannerScreenState extends State<ScannerScreen> {
     );
   }
 
-  Future<void> _captureAndProcess() async {
-    if (_isolateSendPort == null || _rawCorners == null) return;
-    
-    final corners = List<double>.from(_rawCorners!);
-    setState(() => _isProcessing = true);
+Future<void> _captureAndProcess() async {
+    // If the live feed already detected a Course Invitation, handle it instantly without taking a picture
+    if (_detectedLiveQr != null) {
+      final inviteCode = QrClassificationService.extractInvitationCodeFromQr(_detectedLiveQr!);
+      if (inviteCode != null) {
+        _isConfirmationCardOpen = false; // Reset just in case
+        await _triggerCourseJoinPrompt(inviteCode);
+        return;
+      }
+    }
+
+    final corners = _rawCorners != null ? List<double>.from(_rawCorners!) : <double>[];
+    setState(() => _isOmrProcessing = true);
 
     try {
       final XFile photo = await _controller!.takePicture();
       final Uint8List bytes = await photo.readAsBytes();
-      
-      _isolateSendPort!.send(OmrRequest(
+
+      // [LABEL: Architecture - Isolation & Parallelism]
+      // Spawn a dedicated, short-lived isolate for the heavy OMR processing.
+      // This prevents the live camera feed (edgeDetectionWorker) from dropping frames 
+      // or blocking the UI thread while the user waits for the processing.
+      final request = OmrRequest(
         bytes: bytes,
         corners: corners,
         template: Standard50QuestionsTemplate(),
-        replyPort: _mainReceivePort.sendPort,
-      ));
+        expectedQr: _detectedLiveQr,
+      );
+      
+      final processedSheet = await ImageProcessor.processOmr(request);
+
+      if (mounted) {
+        if (processedSheet != null) {
+          await _handleProcessedSheet(processedSheet);
+        } else {
+          _showErrorSnackBar("Could not process sheet. Please try again.");
+          setState(() => _isOmrProcessing = false);
+        }
+      }
     } catch (e) {
       _showErrorSnackBar("Capture failed: $e");
-      setState(() => _isProcessing = false);
+      if (mounted) setState(() => _isOmrProcessing = false);
     }
   }
 
@@ -450,6 +1052,106 @@ class _ScannerScreenState extends State<ScannerScreen> {
         ),
       ),
     );
+  }
+}
+
+class QrBoundingBoxPainter extends CustomPainter {
+  final List<Offset> corners;
+  final String label;
+  final Color color;
+
+  QrBoundingBoxPainter({
+    required this.corners,
+    required this.label,
+    required this.color,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (corners.length < 4) return;
+
+    final mappedCorners = corners.map((p) => Offset(p.dx * size.width, p.dy * size.height)).toList();
+
+    // 1. Soft Fill
+    final path = Path()
+      ..moveTo(mappedCorners[0].dx, mappedCorners[0].dy)
+      ..lineTo(mappedCorners[1].dx, mappedCorners[1].dy)
+      ..lineTo(mappedCorners[2].dx, mappedCorners[2].dy)
+      ..lineTo(mappedCorners[3].dx, mappedCorners[3].dy)
+      ..close();
+
+    final fillPaint = Paint()
+      ..color = color.withValues(alpha: 0.18)
+      ..style = PaintingStyle.fill;
+    canvas.drawPath(path, fillPaint);
+
+    // 2. Google Lens-style Corner L-Brackets
+    final bracketPaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 4.5
+      ..strokeCap = StrokeCap.round;
+
+    const double armLength = 18.0;
+    for (int i = 0; i < 4; i++) {
+      final pCurr = mappedCorners[i];
+      final pNext = mappedCorners[(i + 1) % 4];
+      final pPrev = mappedCorners[(i + 3) % 4];
+
+      final dirNext = (pNext - pCurr);
+      final lenNext = dirNext.distance;
+      if (lenNext > 0) {
+        final armNext = pCurr + (dirNext / lenNext) * armLength.clamp(0, lenNext / 2);
+        canvas.drawLine(pCurr, armNext, bracketPaint);
+      }
+
+      final dirPrev = (pPrev - pCurr);
+      final lenPrev = dirPrev.distance;
+      if (lenPrev > 0) {
+        final armPrev = pCurr + (dirPrev / lenPrev) * armLength.clamp(0, lenPrev / 2);
+        canvas.drawLine(pCurr, armPrev, bracketPaint);
+      }
+    }
+
+    // 3. Floating Tag / Chip Label above top edge
+    if (label.isNotEmpty) {
+      final topMid = Offset(
+        (mappedCorners[0].dx + mappedCorners[1].dx) / 2,
+        math.min(mappedCorners[0].dy, mappedCorners[1].dy) - 14,
+      );
+
+      final textSpan = TextSpan(
+        text: label,
+        style: const TextStyle(
+          color: Colors.black,
+          fontSize: 12,
+          fontWeight: FontWeight.bold,
+        ),
+      );
+      final textPainter = TextPainter(
+        text: textSpan,
+        textDirection: TextDirection.ltr,
+      )..layout();
+
+      final bgWidth = textPainter.width + 18;
+      final bgHeight = textPainter.height + 8;
+      final bgRect = RRect.fromRectAndRadius(
+        Rect.fromCenter(center: Offset(topMid.dx, topMid.dy - bgHeight / 2), width: bgWidth, height: bgHeight),
+        const Radius.circular(12),
+      );
+
+      final chipPaint = Paint()..color = color;
+      canvas.drawRRect(bgRect, chipPaint);
+      textPainter.paint(
+        canvas,
+        Offset(topMid.dx - textPainter.width / 2, topMid.dy - bgHeight / 2 + 4),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant QrBoundingBoxPainter oldDelegate) {
+    return oldDelegate.corners != corners || oldDelegate.label != label;
   }
 }
 

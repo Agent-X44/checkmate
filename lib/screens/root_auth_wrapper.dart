@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/supabase_service.dart';
+import '../services/deep_link_service.dart';
 import 'login_screen.dart';
 import 'main_navigation.dart';
 
@@ -43,6 +44,9 @@ class _RootAuthWrapperState extends State<RootAuthWrapper> {
         _user = Supabase.instance.client.auth.currentUser;
         _isInitDone = true;
       });
+      if (_user != null) {
+        Future.microtask(() => DeepLinkService().checkPendingJoinOnLogin());
+      }
       _setupAuthListener();
     }
   }
@@ -58,9 +62,13 @@ class _RootAuthWrapperState extends State<RootAuthWrapper> {
   void _setupAuthListener() {
     Supabase.instance.client.auth.onAuthStateChange.listen((data) {
       if (mounted) {
+        final newUser = data.session?.user;
         setState(() {
-          _user = data.session?.user;
+          _user = newUser;
         });
+        if (newUser != null) {
+          Future.microtask(() => DeepLinkService().checkPendingJoinOnLogin());
+        }
       }
     });
   }

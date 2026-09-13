@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'services/image_processor.dart';
+import 'services/deep_link_service.dart';
 import 'screens/root_auth_wrapper.dart';
 
 List<CameraDescription> globalCameras = [];
@@ -112,6 +113,7 @@ class _CheckMateAppState extends State<CheckMateApp> {
   void initState() {
     super.initState();
     _loadTheme();
+    DeepLinkService().initialize();
   }
 
   Future<void> _loadTheme() async {
@@ -149,6 +151,7 @@ class _CheckMateAppState extends State<CheckMateApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'CheckMate',
+      navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
       themeMode: _themeMode,
       theme: _lightTheme,

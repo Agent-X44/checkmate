@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../models/course.dart';
 import '../services/supabase_service.dart';
+import '../services/deep_link_service.dart';
 import '../utils/ui_utils.dart';
 
 /// Screen for course-specific configuration, invitation codes, QR sharing, and deletion.
@@ -32,15 +32,38 @@ class _CourseSettingsScreenState extends State<CourseSettingsScreen> {
   }
 
   void _copyLink() {
-    final link = "https://checkmate.app/join?code=$_currentJoinCode";
+    // Web invitation link feature commented out until web host is deployed
+    /*
+    final link = DeepLinkService.buildInviteLink(_currentJoinCode);
     Clipboard.setData(ClipboardData(text: link));
     CheckMateUi.showTopPrompt(context, 'Invitation link copied to clipboard!', isError: false);
+    */
+    CheckMateUi.showTopPrompt(
+      context, 
+      'Invitation links coming soon! Share Course Code: $_currentJoinCode', 
+      isError: false,
+    );
+  }
+
+  void _shareInviteLink() {
+    // Web invitation link feature commented out until web host is deployed
+    /*
+    final link = DeepLinkService.buildInviteLink(_currentJoinCode);
+    final text = 'Join my course "${widget.course.name}" on CheckMate!\n\nLink: $link\nCourse Code: $_currentJoinCode';
+    Share.shareXFiles([], text: text);
+    */
+    CheckMateUi.showTopPrompt(
+      context, 
+      'Invitation links coming soon! Share Course Code: $_currentJoinCode', 
+      isError: false,
+    );
   }
 
   void _showQrDialog() {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final accentColor = isDark ? theme.colorScheme.secondary : theme.colorScheme.primary;
+    final qrData = DeepLinkService.buildCustomSchemeLink(_currentJoinCode);
 
     showDialog(
       context: context,
@@ -59,7 +82,7 @@ class _CourseSettingsScreenState extends State<CourseSettingsScreen> {
                 width: 200,
                 height: 200,
                 child: QrImageView(
-                  data: _currentJoinCode,
+                  data: qrData,
                   version: QrVersions.auto,
                   eyeStyle: const QrEyeStyle(
                     eyeShape: QrEyeShape.square,
@@ -83,6 +106,16 @@ class _CourseSettingsScreenState extends State<CourseSettingsScreen> {
           ],
         ),
         actions: [
+          TextButton(
+            onPressed: () {
+              CheckMateUi.showTopPrompt(
+                context, 
+                'Invitation links coming soon! Use Course Code: $_currentJoinCode', 
+                isError: false,
+              );
+            },
+            child: Text('COPY LINK', style: TextStyle(color: accentColor)),
+          ),
           TextButton(
             onPressed: () => Navigator.pop(context), 
             child: Text('CLOSE', style: TextStyle(color: accentColor, fontWeight: FontWeight.bold))
@@ -211,11 +244,13 @@ class _CourseSettingsScreenState extends State<CourseSettingsScreen> {
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
                       _buildInviteAction(
+                          context, Icons.share, 'Share', contentColor, _shareInviteLink),
+                      _buildInviteAction(
                           context, Icons.link, 'Copy Link', contentColor, _copyLink),
                       _buildInviteAction(
                           context, Icons.qr_code_2, 'Show QR', contentColor, _showQrDialog),
                       _buildInviteAction(
-                          context, Icons.refresh, 'Reset Code', contentColor, _resetCode),
+                          context, Icons.refresh, 'Reset', contentColor, _resetCode),
                     ],
                   ),
                 ],

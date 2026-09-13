@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -26,20 +27,57 @@ class PdfAlignment {
   });
 }
 
+class PdfGeneratorData {
+  final Uint8List imageBytes;
+  final String templateName;
+  final PdfAlignment alignment;
+  final List<String> studentNames;
+
+  PdfGeneratorData({
+    required this.imageBytes,
+    required this.templateName,
+    required this.alignment,
+    required this.studentNames,
+  });
+}
+
 class PdfGenerator {
+  /// [LABEL: Future Architecture Model - Parallel PDF Generation]
+  /// Spawns an isolate to process heavy PDF document creation, preventing UI stuttering
+  /// when batch generating for hundreds of students.
   static Future<void> generateAndPrint(
     BubbleSheetTemplate template, {
     PdfAlignment alignment = const PdfAlignment(),
     required List<String> studentNames,
   }) async {
-    final pdf = pw.Document();
-
+    // 1. Load assets on Main Thread (rootBundle is not isolate-safe)
     final ByteData bytes = await rootBundle.load('assets/50_questions.png');
-    final Uint8List list = bytes.buffer.asUint8List();
-    final pw.MemoryImage image = pw.MemoryImage(list);
+    final Uint8List imageBytes = bytes.buffer.asUint8List();
 
-    for (int i = 0; i < studentNames.length; i++) {
-      final String studentName = studentNames[i];
+    // 2. Prepare request data
+    final request = PdfGeneratorData(
+      imageBytes: imageBytes,
+      templateName: template.name,
+      alignment: alignment,
+      studentNames: studentNames,
+    );
+
+    // 3. Heavy Compute offloaded to Background Isolate
+    final pdfBytes = await compute(_generatePdfInternal, request);
+
+    // 4. Print using Main Thread
+    await Printing.layoutPdf(
+      onLayout: (PdfPageFormat format) async => pdfBytes,
+      name: '${template.name}_Batch.pdf',
+    );
+  }
+
+  static Future<Uint8List> _generatePdfInternal(PdfGeneratorData data) async {
+    final pdf = pw.Document();
+    final pw.MemoryImage image = pw.MemoryImage(data.imageBytes);
+
+    for (int i = 0; i < data.studentNames.length; i++) {
+      final String studentName = data.studentNames[i];
       final String sheetId = "CM50-A-${(i + 1).toString().padLeft(4, '0')}";
 
       pdf.addPage(
@@ -54,10 +92,10 @@ class PdfGenerator {
 
                 // Overlay: Name and Labels
                 pw.Positioned(
-                  top: alignment.nameTop - 20,
-                  left: alignment.nameLeft - 85,
+                  top: data.alignment.nameTop - 20,
+                  left: data.alignment.nameLeft - 85,
                   child: pw.Transform.scale(
-                    scale: alignment.nameScale,
+                    scale: data.alignment.nameScale,
                     alignment: pw.Alignment.topLeft,
                     child: pw.Column(
                       crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -108,14 +146,14 @@ class PdfGenerator {
 
                 // Overlay: QR Code and Sheet ID (Centered)
                 pw.Positioned(
-                  top: alignment.qrTop,
-                  right: alignment.qrRight,
+                  top: data.alignment.qrTop,
+                  right: data.alignment.qrRight,
                   child: pw.Column(
                     crossAxisAlignment: pw.CrossAxisAlignment.center,
                     children: [
                       pw.Container(
-                        width: alignment.qrSize,
-                        height: alignment.qrSize,
+                        width: data.alignment.qrSize,
+                        height: data.alignment.qrSize,
                         child: pw.BarcodeWidget(
                           barcode: pw.Barcode.qrCode(),
                           data: sheetId,
@@ -141,10 +179,7 @@ class PdfGenerator {
       );
     }
 
-    await Printing.layoutPdf(
-      onLayout: (PdfPageFormat format) async => pdf.save(),
-      name: '${template.name}_Batch.pdf',
-    );
+    return await pdf.save();
   }
 
   static pw.Widget _checkbox(String label, {bool isChecked = false}) {

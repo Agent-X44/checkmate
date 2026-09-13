@@ -1,0 +1,1 @@
+import 'dart:core'; void main() { final uri = Uri.tryParse('checkmate://join?code=ZV269C'); print(uri?.queryParameters['code']); }
