@@ -112,15 +112,22 @@ class DeepLinkService {
 
   /// Process joining a course using join code
   Future<void> processJoinCode(String code) async {
+    final normalizedCode = code.trim().toUpperCase();
     final context = navigatorKey.currentContext;
+
+    debugPrint('DEEP LINK JOIN DEBUG: start joinCode=$normalizedCode user=${SupabaseService.currentUser?.id ?? 'null'}');
 
     try {
       if (context != null && context.mounted) {
-        CheckMateUi.showTopPrompt(context, 'Joining course ($code)...', isError: false);
+        CheckMateUi.showTopPrompt(context, 'Joining course ($normalizedCode)...', isError: false);
       }
 
-      final course = await SupabaseService.joinClass(code);
+      final course = await SupabaseService.joinClass(normalizedCode).timeout(
+        const Duration(seconds: 8),
+        onTimeout: () => throw Exception('Course join timed out. Please check your network and try again.'),
+      );
 
+      debugPrint('DEEP LINK JOIN DEBUG: success for $normalizedCode -> ${course.name}');
       _pendingJoinCode = null;
       try {
         final prefs = await SharedPreferences.getInstance();
@@ -136,6 +143,7 @@ class DeepLinkService {
         );
       }
     } catch (e) {
+      debugPrint('DEEP LINK JOIN DEBUG: failed for $normalizedCode :: $e');
       final errorMsg = e.toString().replaceAll('Exception: ', '');
       final currentCtx = navigatorKey.currentContext;
       if (currentCtx != null && currentCtx.mounted) {

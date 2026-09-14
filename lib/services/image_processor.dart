@@ -270,15 +270,38 @@ class ImageProcessor {
       // [LABEL: Feature Extraction] Real-time QR detection on the full live frame and the
       // high-resolution fallback. This is crucial when a QR occupies a large portion of a monitor
       // and the fiber of the phone camera sees glare, scanlines, or partial tilt.
-      final qrResult = QrDetectionService.detectWithCorners(processedMat, fastMode: false);
+      QrDetectionResult? qrResult = QrDetectionService.detectWithCorners(processedMat, fastMode: false);
+      if (qrResult == null) {
+        qrResult = _scanQrRegion(processedMat);
+      }
+      if (qrResult == null) {
+        qrResult = QrDetectionService.detectWithCorners(smallMat, fastMode: true);
+      }
+      if (qrResult == null) {
+        qrResult = _scanQrRegion(mat);
+      }
+      if (qrResult == null) {
+        qrResult = QrDetectionService.detectWithCorners(mat, fastMode: true);
+      }
       final rawFrameQr = qrResult == null ? QrDetectionService.detectEntireImage(mat) : null;
+      final detectedQr = qrResult?.data ?? rawFrameQr;
+      final qrCorners = qrResult?.corners ??
+          (detectedQr != null && detectedQr.sheetIdentifier.isNotEmpty && detectedQr.sheetIdentifier != 'UNKNOWN'
+              ? const [0.20, 0.20, 0.80, 0.20, 0.80, 0.80, 0.20, 0.80]
+              : null);
+
+      if (detectedQr == null) {
+        debugPrint('LIVE QR: no QR detected in full frame or explicit ROI scan');
+      } else {
+        debugPrint('LIVE QR: ${detectedQr.sheetIdentifier}');
+      }
 
       message.replyPort.send(ScanResponse(
         foundPaper: foundPaper,
         corners: paperCorners,
         debugImage: debugBytes,
-        detectedQr: qrResult?.data ?? rawFrameQr,
-        qrCorners: qrResult?.corners,
+        detectedQr: detectedQr,
+        qrCorners: qrCorners,
       ));
 
     } catch (e, stack) {
@@ -288,6 +311,73 @@ class ImageProcessor {
       // [LABEL: Cleanup] Prevent FFI Memory Leaks
       pool.disposeAll();
     }
+  }
+
+  static QrDetectionResult? _scanQrRegion(cv.Mat source) {
+    final pool = CvPool();
+    try {
+      final int w = source.width;
+      final int h = source.height;
+      final List<cv.Rect> regions = [
+        cv.Rect((w * 0.55).toInt(), (h * 0.02).toInt(), (w * 0.40).toInt(), (h * 0.28).toInt()),
+        cv.Rect((w * 0.15).toInt(), (h * 0.02).toInt(), (w * 0.70).toInt(), (h * 0.32).toInt()),
+        cv.Rect(0, 0, w, h),
+      ];
+
+      for (final region in regions) {
+        final crop = pool.add(source.region(region));
+        final detector = pool.add(cv.QRCodeDetector.empty());
+        final (text, points, _) = detector.detectAndDecode(crop);
+        if (text.isNotEmpty) {
+          final corners = points.isNotEmpty
+              ? [
+                  points[0].x.toDouble() / crop.width,
+                  points[0].y.toDouble() / crop.height,
+                  points[1].x.toDouble() / crop.width,
+                  points[1].y.toDouble() / crop.height,
+                  points[2].x.toDouble() / crop.width,
+                  points[2].y.toDouble() / crop.height,
+                  points[3].x.toDouble() / crop.width,
+                  points[3].y.toDouble() / crop.height,
+                ]
+              : null;
+          final normalized = corners == null ? null : <double>[
+            ((region.x + points[0].x.toDouble()) / w).clamp(0.0, 1.0),
+            ((region.y + points[0].y.toDouble()) / h).clamp(0.0, 1.0),
+            ((region.x + points[1].x.toDouble()) / w).clamp(0.0, 1.0),
+            ((region.y + points[1].y.toDouble()) / h).clamp(0.0, 1.0),
+            ((region.x + points[2].x.toDouble()) / w).clamp(0.0, 1.0),
+            ((region.y + points[2].y.toDouble()) / h).clamp(0.0, 1.0),
+            ((region.x + points[3].x.toDouble()) / w).clamp(0.0, 1.0),
+            ((region.y + points[3].y.toDouble()) / h).clamp(0.0, 1.0),
+          ];
+          return QrDetectionResult(data: QrData.fromRaw(text), corners: normalized);
+        }
+
+        final gray = pool.add(crop.channels == 3 ? cv.cvtColor(crop, cv.COLOR_BGR2GRAY) : crop);
+        final (_, binary) = cv.threshold(gray, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+        final detector2 = pool.add(cv.QRCodeDetector.empty());
+        final (text2, points2, _) = detector2.detectAndDecode(binary);
+        if (text2.isNotEmpty) {
+          final normalized = <double>[
+            ((region.x + points2[0].x.toDouble()) / w).clamp(0.0, 1.0),
+            ((region.y + points2[0].y.toDouble()) / h).clamp(0.0, 1.0),
+            ((region.x + points2[1].x.toDouble()) / w).clamp(0.0, 1.0),
+            ((region.y + points2[1].y.toDouble()) / h).clamp(0.0, 1.0),
+            ((region.x + points2[2].x.toDouble()) / w).clamp(0.0, 1.0),
+            ((region.y + points2[2].y.toDouble()) / h).clamp(0.0, 1.0),
+            ((region.x + points2[3].x.toDouble()) / w).clamp(0.0, 1.0),
+            ((region.y + points2[3].y.toDouble()) / h).clamp(0.0, 1.0),
+          ];
+          return QrDetectionResult(data: QrData.fromRaw(text2), corners: normalized);
+        }
+      }
+    } catch (_) {
+      debugPrint('LIVE QR ROI scan failed: $_');
+    } finally {
+      pool.disposeAll();
+    }
+    return null;
   }
 
   /// Production-grade fiducial detection using Centroid analysis.

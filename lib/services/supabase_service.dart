@@ -174,8 +174,15 @@ class SupabaseService {
         .eq('class_id', classId);
   }
 
+  static String normalizeJoinCode(String value) {
+    return value
+        .replaceAll(RegExp(r'[^A-Za-z0-9]'), '')
+        .trim()
+        .toUpperCase();
+  }
+
   static Future<Map<String, dynamic>?> getCourseDataByCode(String classCode) async {
-    final cleanCode = classCode.trim().toUpperCase();
+    final cleanCode = normalizeJoinCode(classCode);
     return await _client
         .from('classes')
         .select('id, name, code, instructor_id')
@@ -184,62 +191,71 @@ class SupabaseService {
   }
 
   static Future<Course> joinClass(String classCode) async {
-    final user = currentUser;
-    if (user == null) throw Exception("Not authenticated");
+    return await (() async {
+      final user = currentUser;
+      if (user == null) throw Exception("Not authenticated");
 
-    final cleanCode = classCode.trim().toUpperCase();
+      final cleanCode = normalizeJoinCode(classCode);
+      debugPrint('SUPABASE JOIN DEBUG: request classCode="$classCode" normalized="$cleanCode" user=${user.id}');
 
-    // 1. Self-healing: Ensure student profile exists in 'profiles' table before joining
-    try {
-      await _client.from('profiles').upsert({
-        'id': user.id,
-        'name': user.userMetadata?['name'] ?? user.email?.split('@')[0] ?? 'Student',
-        'email': user.email ?? '',
+      if (cleanCode.length < 5 || cleanCode.length > 8) {
+        throw Exception("Invalid course code format. Please try again.");
+      }
+
+      try {
+        await _client.from('profiles').upsert({
+          'id': user.id,
+          'name': user.userMetadata?['name'] ?? user.email?.split('@')[0] ?? 'Student',
+          'email': user.email ?? '',
+          'role': 'Student',
+        });
+      } catch (e) {
+        debugPrint("Student profile synchronization error: $e");
+      }
+
+      final classData = await _client
+          .from('classes')
+          .select('id, name, code, instructor_id')
+          .eq('code', cleanCode)
+          .maybeSingle();
+
+      debugPrint('SUPABASE JOIN DEBUG: class lookup for $cleanCode => ${classData == null ? 'NOT_FOUND' : classData['id']}');
+      if (classData == null) {
+        throw Exception("Invalid course code ($cleanCode). Please double-check and try again.");
+      }
+
+      final classId = classData['id'];
+      final instructorId = classData['instructor_id'];
+      final course = Course.fromMap(classData, isOwner: false);
+
+      if (user.id == instructorId) {
+        throw Exception("You can't join the course you've created.");
+      }
+
+      final existing = await _client
+          .from('enrollments')
+          .select('id')
+          .eq('user_id', user.id)
+          .eq('class_id', classId)
+          .maybeSingle();
+
+      if (existing != null) {
+        debugPrint('SUPABASE JOIN DEBUG: already enrolled user=${user.id} class=$classId');
+        return course;
+      }
+
+      await _client.from('enrollments').insert({
+        'user_id': user.id,
+        'class_id': classId,
         'role': 'Student',
       });
-    } catch (e) {
-      debugPrint("Student profile synchronization error: $e");
-    }
 
-    // 2. Lookup class by clean uppercase code
-    final classData = await _client
-        .from('classes')
-        .select('id, name, code, instructor_id')
-        .eq('code', cleanCode)
-        .maybeSingle();
-    
-    if (classData == null) {
-      throw Exception("Invalid course code ($cleanCode). Please double-check and try again.");
-    }
-    
-    final classId = classData['id'];
-    final instructorId = classData['instructor_id'];
-    final course = Course.fromMap(classData, isOwner: false);
-
-    if (user.id == instructorId) {
-      throw Exception("You can't join the course you've created.");
-    }
-
-    // 3. Prevent duplicate enrollment
-    final existing = await _client
-        .from('enrollments')
-        .select('id')
-        .eq('user_id', user.id)
-        .eq('class_id', classId)
-        .maybeSingle();
-
-    if (existing != null) {
+      debugPrint('SUPABASE JOIN DEBUG: enrolled user=${user.id} class=$classId');
       return course;
-    }
-
-    // 4. Enroll student
-    await _client.from('enrollments').insert({
-      'user_id': user.id,
-      'class_id': classId,
-      'role': 'Student',
-    });
-
-    return course;
+    }()).timeout(
+      const Duration(seconds: 8),
+      onTimeout: () => throw Exception('Course join timed out. Please check your network connection and try again.'),
+    );
   }
 
   static Stream<List<Map<String, dynamic>>> streamCreatedCourses() {

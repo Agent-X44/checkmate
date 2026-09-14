@@ -17,13 +17,25 @@ import '../models/omr/processed_sheet.dart';
 /// - BR-11: Controlled release of results
 /// - BR-13: Export formats (DOCX/PDF)
 class ApiService {
+  // Hugging Face Space URL for CheckMate-Backend
+  static const String hfSpaceUrl = 'https://noelpi-checkmate-backend.hf.space';
+  static const String localUrl = 'http://10.0.2.2:8000';
+
   static final Dio _dio = Dio(
     BaseOptions(
-      baseUrl: 'http://10.0.2.2:8000',
+      // Default to HF Space URL, falls back to local emulator if needed
+      baseUrl: hfSpaceUrl,
       connectTimeout: const Duration(minutes: 2),
       receiveTimeout: const Duration(minutes: 2),
     ),
   );
+
+  /// Configures custom backend URL dynamically (e.g. for local testing vs cloud)
+  static void setBaseUrl(String url) {
+    _dio.options.baseUrl = url;
+  }
+
+  static String get baseUrl => _dio.options.baseUrl;
 
   static Future<Map<String, dynamic>> resolveSheet(String identifier) async {
     try {
@@ -71,10 +83,33 @@ class ApiService {
 
   static Future<Map<String, dynamic>> analyzeClass(String examId) async {
     try {
-      final response = await _dio.post('/analyze-class/$examId');
+      final response = await _dio.post('/analyze-class', data: {
+        'exam_id': examId,
+        'class_id': '',
+      });
       return response.data;
     } catch (e) {
       debugPrint("API Error (analyzeClass): $e");
+      rethrow;
+    }
+  }
+
+  static Future<Map<String, dynamic>> getStudentInsight({
+    required String studentName,
+    required int score,
+    required int total,
+    List<dynamic> errors = const [],
+  }) async {
+    try {
+      final response = await _dio.post('/student-insight', data: {
+        'student_name': studentName,
+        'score': score,
+        'total': total,
+        'errors': errors,
+      });
+      return response.data;
+    } catch (e) {
+      debugPrint("API Error (getStudentInsight): $e");
       rethrow;
     }
   }

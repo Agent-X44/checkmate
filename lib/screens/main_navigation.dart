@@ -302,16 +302,6 @@ class _MainNavigationState extends State<MainNavigation>
     final isDark = theme.brightness == Brightness.dark;
     final accentColor = isDark ? theme.colorScheme.secondary : theme.colorScheme.primary;
 
-    final List<Widget> screens = [
-      const DashboardScreen(),
-      ScannerScreen(cameras: globalCameras, isActive: _selectedIndex == 1),
-      SettingsScreen(
-        themeMode: widget.themeMode,
-        onThemeChanged: widget.onThemeChanged,
-        onLogout: widget.onLogout,
-      ),
-    ];
-
     return Scaffold(
       key: _scaffoldKey,
       appBar: AppBar(
@@ -453,9 +443,28 @@ class _MainNavigationState extends State<MainNavigation>
             });
           }
         },
-        child: IndexedStack(
-          index: _selectedIndex,
-          children: screens,
+        child: Builder(
+          builder: (context) {
+            switch (_selectedIndex) {
+              case 0:
+                return const DashboardScreen();
+              case 1:
+                return ScannerScreen(
+                  key: const ValueKey('scanner-tab'),
+                  cameras: globalCameras,
+                  isActive: true,
+                  onClose: () => setState(() => _selectedIndex = 0),
+                );
+              case 2:
+                return SettingsScreen(
+                  themeMode: widget.themeMode,
+                  onThemeChanged: widget.onThemeChanged,
+                  onLogout: widget.onLogout,
+                );
+              default:
+                return const DashboardScreen();
+            }
+          },
         ),
       ),
       bottomNavigationBar: BottomNavigationBar(

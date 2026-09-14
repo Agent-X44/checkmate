@@ -1,5 +1,5 @@
 fastapi
-uvicorn
+uvicorn[standard]
 pydantic
 python-multipart
 requests
@@ -8,3 +8,4 @@ supabase
 httpx
 openai
 python-docx
+huggingface_hub

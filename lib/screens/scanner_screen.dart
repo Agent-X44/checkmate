@@ -1,8 +1,12 @@
+import 'dart:async';
+import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
+import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import '../services/image_processor.dart';
 import '../services/api_service.dart';
 import '../services/cv/qr_classification_service.dart';
@@ -21,7 +25,13 @@ import 'ai_analysis_screen.dart';
 class ScannerScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
   final bool isActive;
-  const ScannerScreen({super.key, required this.cameras, required this.isActive});
+  final VoidCallback? onClose;
+  const ScannerScreen({
+    super.key,
+    required this.cameras,
+    required this.isActive,
+    this.onClose,
+  });
 
   @override
   State<ScannerScreen> createState() => _ScannerScreenState();
@@ -49,6 +59,14 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
   bool get _isProcessing => _isOmrProcessing || _isConfirmationCardOpen;
 
+  bool get _canCapturePaper =>
+      !_isProcessing &&
+      _controller != null &&
+      _controller!.value.isInitialized &&
+      _paperDetected &&
+      _rawCorners != null &&
+      _rawCorners!.length >= 8;
+
   // Isolate state
   bool _isIsolateWorking = false;
 
@@ -56,6 +74,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
   List<double>? _rawCorners;
   List<Offset>? _detectedQrCorners;
   QrData? _detectedLiveQr;
+  String _lastQrDebugText = 'QR: waiting';
   Offset? _focusPoint;
   DateTime _lastUIUpdate = DateTime.now();
 
@@ -66,6 +85,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
   Isolate? _isolate;
   SendPort? _isolateSendPort;
   final ReceivePort _mainReceivePort = ReceivePort();
+  final BarcodeScanner _barcodeScanner = BarcodeScanner(formats: [BarcodeFormat.qrCode]);
+  DateTime? _lastQrScanTime;
 
   @override
   void initState() {
@@ -157,6 +178,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
       // SUPPRESS PAPER DETECTION: This is a Course Invitation QR, NOT an OMR Answer Sheet!
       _detectionCounter = 0;
       _rawCorners = null;
+      _lastQrDebugText = 'QR: course invite ${inviteCode}';
 
       // Render Google Lens-style yellow bounding box overlay around the Course QR code
       if (message.qrCorners != null && message.qrCorners!.length >= 8) {
@@ -191,21 +213,27 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
     // --- Standard OMR Answer Sheet Detection Path ---
 
-    // 1. Live Google Lens-style QR Bounding Overlay Coordinates for OMR sheets
-    if (message.qrCorners != null && message.qrCorners!.length >= 8) {
-      if (_edgesDetectedOnce) {
-        _detectedQrCorners = List.generate(
-          4,
-          (i) => Offset(message.qrCorners![i * 2], message.qrCorners![i * 2 + 1]),
-        );
-        _detectedLiveQr = message.detectedQr;
+    // Keep QR tracking active even before full paper-edge confirmation so valid answer-sheet
+    // QR codes are not suppressed by the edge-detection gate.
+    final candidateQr = message.detectedQr;
+    if (candidateQr != null && candidateQr.sheetIdentifier.isNotEmpty && candidateQr.sheetIdentifier != 'UNKNOWN') {
+      final inviteCode = QrClassificationService.extractInvitationCodeFromQr(candidateQr);
+      if (inviteCode == null) {
+        final coords = message.qrCorners != null && message.qrCorners!.length >= 8
+            ? message.qrCorners!
+            : const [0.20, 0.20, 0.80, 0.20, 0.80, 0.80, 0.20, 0.80];
+        _detectedQrCorners = List.generate(4, (i) => Offset(coords[i * 2], coords[i * 2 + 1]));
+        _detectedLiveQr = candidateQr;
+        _lastQrDebugText = 'QR: ${candidateQr.sheetIdentifier}';
       } else {
         _detectedQrCorners = null;
         _detectedLiveQr = null;
+        _lastQrDebugText = 'QR: invite candidate ${inviteCode}';
       }
     } else {
       _detectedQrCorners = null;
       _detectedLiveQr = null;
+      _lastQrDebugText = 'QR: waiting';
     }
 
     // 2. Paper edge detection for OMR answer sheets
@@ -238,6 +266,85 @@ class _ScannerScreenState extends State<ScannerScreen> {
     }
   }
 
+  String _normalizeJoinCode(String raw) {
+    return raw
+        .replaceAll(RegExp(r'[^A-Za-z0-9]'), '')
+        .trim()
+        .toUpperCase();
+  }
+
+  Future<bool> _validateCourseCodeBeforeJoin(String inviteCode) async {
+    final normalizedCode = _normalizeJoinCode(inviteCode);
+    debugPrint('QR JOIN DEBUG: validating code raw="$inviteCode" normalized="$normalizedCode"');
+
+    try {
+      final courseData = await SupabaseService.getCourseDataByCode(normalizedCode).timeout(
+        const Duration(seconds: 3),
+      );
+      debugPrint('QR JOIN DEBUG: validation result for $normalizedCode => ${courseData != null ? courseData['id'] : 'NOT_FOUND'}');
+      return courseData != null;
+    } catch (e) {
+      debugPrint('QR JOIN DEBUG: validation exception for $normalizedCode :: $e');
+      return false;
+    }
+  }
+
+  Future<void> _joinCourseFromPrompt(String inviteCode, BuildContext bottomSheetContext) async {
+    final normalizedCode = _normalizeJoinCode(inviteCode);
+    debugPrint('JOIN COURSE BUTTON: pressed raw="$inviteCode" normalized="$normalizedCode"');
+
+    final isValidCourse = await _validateCourseCodeBeforeJoin(normalizedCode);
+    if (!isValidCourse) {
+      final fallbackContext = navigatorKey.currentContext ?? context;
+      if (fallbackContext.mounted) {
+        CheckMateUi.showTopPrompt(
+          fallbackContext,
+          'Course code $normalizedCode is not available or lookup failed.',
+          isError: true,
+        );
+      }
+      return;
+    }
+
+    try {
+      debugPrint('JOIN COURSE: starting direct Supabase join for $normalizedCode');
+
+      final targetContext = navigatorKey.currentContext ?? context;
+      if (targetContext.mounted) {
+        CheckMateUi.showTopPrompt(targetContext, 'Joining course ($normalizedCode)...', isError: false);
+      }
+
+      final course = await SupabaseService.joinClass(normalizedCode).timeout(
+        const Duration(seconds: 8),
+        onTimeout: () => throw Exception('Course join timed out. Please check your network and try again.'),
+      );
+
+      if (mounted) {
+        _isConfirmationCardOpen = false;
+      }
+
+      if (Navigator.of(bottomSheetContext, rootNavigator: true).canPop()) {
+        Navigator.of(bottomSheetContext, rootNavigator: true).pop();
+      }
+
+      debugPrint('JOIN COURSE: success for $normalizedCode -> ${course.name}');
+      if (targetContext.mounted) {
+        CheckMateUi.showTopPrompt(
+          targetContext,
+          'Successfully joined course: ${course.name}!',
+          isError: false,
+        );
+      }
+    } catch (e) {
+      debugPrint('JOIN COURSE: failed for $normalizedCode :: $e');
+      final fallbackContext = navigatorKey.currentContext ?? context;
+      if (fallbackContext.mounted) {
+        final msg = e.toString().replaceAll('Exception: ', '');
+        CheckMateUi.showTopPrompt(fallbackContext, msg, isError: true);
+      }
+    }
+  }
+
   Future<void> _triggerCourseJoinPrompt(String inviteCode) async {
     if (_isConfirmationCardOpen || !mounted) return;
 
@@ -254,9 +361,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
     _lastInvitePromptTime = DateTime.now();
 
     // 1. Verify if this QR code is a valid course in database & check creator status
+    final normalizedInviteCode = _normalizeJoinCode(inviteCode);
     Map<String, dynamic>? courseData;
     try {
-      courseData = await SupabaseService.getCourseDataByCode(inviteCode).timeout(const Duration(seconds: 2));
+      courseData = await SupabaseService.getCourseDataByCode(normalizedInviteCode).timeout(const Duration(seconds: 2));
     } catch (e) {
       debugPrint("Course lookup error: $e");
     }
@@ -312,7 +420,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Course Code: $inviteCode',
+                  'Course Code: $normalizedInviteCode',
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.w600,
@@ -334,7 +442,14 @@ class _ScannerScreenState extends State<ScannerScreen> {
                   children: [
                     Expanded(
                       child: OutlinedButton(
-                        onPressed: () => Navigator.pop(bottomSheetContext),
+                        onPressed: () {
+                          if (mounted) {
+                            _isConfirmationCardOpen = false;
+                          }
+                          if (Navigator.of(bottomSheetContext, rootNavigator: true).canPop()) {
+                            Navigator.of(bottomSheetContext, rootNavigator: true).pop();
+                          }
+                        },
                         style: OutlinedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(vertical: 14),
                           shape: RoundedRectangleBorder(
@@ -357,8 +472,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
                     Expanded(
                       child: ElevatedButton(
                         onPressed: () async {
-                          Navigator.pop(bottomSheetContext);
-                          await DeepLinkService().processJoinCode(inviteCode);
+                          await _joinCourseFromPrompt(normalizedInviteCode, bottomSheetContext);
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: accentColor,
@@ -472,7 +586,12 @@ class _ScannerScreenState extends State<ScannerScreen> {
                   Expanded(
                     child: OutlinedButton(
                       onPressed: () {
-                        Navigator.pop(bottomSheetContext);
+                        if (mounted) {
+                          _isConfirmationCardOpen = false;
+                        }
+                        if (Navigator.of(bottomSheetContext, rootNavigator: true).canPop()) {
+                          Navigator.of(bottomSheetContext, rootNavigator: true).pop();
+                        }
                       },
                       style: OutlinedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 14),
@@ -496,8 +615,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
                   Expanded(
                     child: ElevatedButton(
                       onPressed: () async {
-                        Navigator.pop(bottomSheetContext);
-                        await DeepLinkService().processJoinCode(inviteCode);
+                        await _joinCourseFromPrompt(inviteCode, bottomSheetContext);
                       },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: accentColor,
@@ -608,7 +726,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: () => Navigator.pop(bottomSheetContext),
+                  onPressed: () {
+                    if (Navigator.of(bottomSheetContext, rootNavigator: true).canPop()) {
+                      Navigator.of(bottomSheetContext, rootNavigator: true).pop();
+                    }
+                  },
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.amber,
                     foregroundColor: Colors.black,
@@ -772,13 +894,17 @@ class _ScannerScreenState extends State<ScannerScreen> {
       cams[0],
       ResolutionPreset.high,
       enableAudio: false,
-      imageFormatGroup: ImageFormatGroup.yuv420,
+      imageFormatGroup: Platform.isAndroid
+          ? ImageFormatGroup.nv21
+          : ImageFormatGroup.bgra8888,
     );
 
     try {
       await _controller!.initialize();
       _controller!.startImageStream((image) {
         if (_isProcessing || _isolateSendPort == null || _isIsolateWorking) return;
+
+        unawaited(_tryDecodeQrFromCameraFrame(image));
         
         _isIsolateWorking = true;
         _isolateSendPort!.send(ScanRequest(
@@ -826,10 +952,94 @@ class _ScannerScreenState extends State<ScannerScreen> {
     } catch (_) {}
   }
 
+  Future<void> _tryDecodeQrFromCameraFrame(CameraImage image) async {
+    final now = DateTime.now();
+    if (_lastQrScanTime != null && now.difference(_lastQrScanTime!).inMilliseconds < 300) return;
+    _lastQrScanTime = now;
+
+    try {
+      final isAndroid = Platform.isAndroid;
+      final inputFormat = isAndroid ? InputImageFormat.nv21 : InputImageFormat.yuv420;
+      final bytes = isAndroid ? image.planes[0].bytes : _concatenatePlanes(image);
+      final bytesPerRow = image.planes.first.bytesPerRow;
+
+      final inputImage = InputImage.fromBytes(
+        bytes: bytes,
+        metadata: InputImageMetadata(
+          size: Size(image.width.toDouble(), image.height.toDouble()),
+          rotation: InputImageRotation.rotation0deg,
+          format: inputFormat,
+          bytesPerRow: bytesPerRow,
+        ),
+      );
+
+      final barcodes = await _barcodeScanner.processImage(inputImage);
+      if (!mounted || barcodes.isEmpty) return;
+
+      final rawValue = barcodes.first.rawValue ?? '';
+      if (rawValue.trim().isEmpty) return;
+
+      final candidate = QrData.fromRaw(rawValue);
+      if (candidate.sheetIdentifier.isEmpty || candidate.sheetIdentifier == 'UNKNOWN') return;
+
+      final inviteCode = QrClassificationService.extractInvitationCodeFromQr(candidate);
+      final normalizedCorners = barcodes.first.cornerPoints.isNotEmpty
+          ? List.generate(4, (index) {
+              final point = barcodes.first.cornerPoints[index];
+              final x = (point.x.toDouble() / image.width).clamp(0.0, 1.0);
+              final y = (point.y.toDouble() / image.height).clamp(0.0, 1.0);
+              return Offset(x, y);
+            })
+          : const [
+              Offset(0.20, 0.20),
+              Offset(0.80, 0.20),
+              Offset(0.80, 0.80),
+              Offset(0.20, 0.80),
+            ];
+
+      if (inviteCode != null) {
+        _lastQrDebugText = 'QR: invite candidate $inviteCode';
+        if (mounted) {
+          setState(() {
+            _detectedLiveQr = candidate;
+            _detectedQrCorners = normalizedCorners;
+          });
+          await _triggerCourseJoinPrompt(inviteCode);
+        }
+        return;
+      }
+
+      if (mounted) {
+        setState(() {
+          _detectedLiveQr = candidate;
+          _lastQrDebugText = 'QR: ${candidate.sheetIdentifier}';
+          _detectedQrCorners = normalizedCorners;
+        });
+      }
+    } catch (e) {
+      debugPrint('QR decode failed: $e');
+    }
+  }
+
+  Uint8List _concatenatePlanes(CameraImage image) {
+    final allBytes = WriteBuffer();
+    for (final plane in image.planes) {
+      allBytes.putUint8List(plane.bytes);
+    }
+    return allBytes.done().buffer.asUint8List();
+  }
+
+  @override
+  void deactivate() {
+    super.deactivate();
+    _disposeCameraAndRestore();
+  }
+
   @override
   void dispose() {
     _disposeCameraAndRestore();
     _mainReceivePort.close();
+    _barcodeScanner.close();
     super.dispose();
   }
 
@@ -928,7 +1138,27 @@ class _ScannerScreenState extends State<ScannerScreen> {
                   child: Text("SCANNED: ${_scannedResults.length}", style: TextStyle(color: accentColor, fontWeight: FontWeight.bold)),
                 ),
                 const Spacer(),
-                IconButton(icon: const Icon(Icons.close, color: Colors.white), onPressed: () => Navigator.pop(context)),
+                Container(
+                  constraints: const BoxConstraints(maxWidth: 220),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(16)),
+                  child: Text(
+                    _lastQrDebugText,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'monospace'),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white),
+                  onPressed: () {
+                    if (widget.onClose != null) {
+                      widget.onClose!.call();
+                    } else {
+                      Navigator.maybePop(context);
+                    }
+                  },
+                ),
               ],
             ),
           ),
@@ -973,8 +1203,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
                       height: 80,
                       child: FloatingActionButton(
                         heroTag: 'capture',
-                        onPressed: !_isProcessing ? _captureAndProcess : null,
-                        backgroundColor: _paperDetected ? accentColor : Colors.white24,
+                        onPressed: _canCapturePaper ? _captureAndProcess : null,
+                        backgroundColor: _canCapturePaper ? accentColor : Colors.white24,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(40)),
                         child: const Icon(Icons.qr_code_scanner, color: Colors.black, size: 40),
                       ),
@@ -999,18 +1229,21 @@ class _ScannerScreenState extends State<ScannerScreen> {
   }
 
 Future<void> _captureAndProcess() async {
-    // If the live feed already detected a Course Invitation, handle it instantly without taking a picture
-    if (_detectedLiveQr != null) {
-      final inviteCode = QrClassificationService.extractInvitationCodeFromQr(_detectedLiveQr!);
-      if (inviteCode != null) {
-        _isConfirmationCardOpen = false; // Reset just in case
-        await _triggerCourseJoinPrompt(inviteCode);
-        return;
-      }
+  if (!_canCapturePaper) {
+    final inviteCode = _detectedLiveQr == null
+        ? null
+        : QrClassificationService.extractInvitationCodeFromQr(_detectedLiveQr!);
+    if (inviteCode != null) {
+      _isConfirmationCardOpen = false;
+      await _triggerCourseJoinPrompt(inviteCode);
+      return;
     }
+    _showErrorSnackBar('Align the answer sheet and wait until paper detection is active.');
+    return;
+  }
 
-    final corners = _rawCorners != null ? List<double>.from(_rawCorners!) : <double>[];
-    setState(() => _isOmrProcessing = true);
+  final corners = _rawCorners != null ? List<double>.from(_rawCorners!) : <double>[];
+  setState(() => _isOmrProcessing = true);
 
     try {
       final XFile photo = await _controller!.takePicture();
@@ -1066,13 +1299,34 @@ class QrBoundingBoxPainter extends CustomPainter {
     required this.color,
   });
 
+  List<Offset> _sortedCorners() {
+    if (corners.length != 4) return corners;
+
+    final centroid = Offset(
+      corners.fold<double>(0, (sum, p) => sum + p.dx) / 4,
+      corners.fold<double>(0, (sum, p) => sum + p.dy) / 4,
+    );
+
+    final ordered = List<Offset>.from(corners);
+    ordered.sort((a, b) {
+      final angleA = math.atan2(a.dy - centroid.dy, a.dx - centroid.dx);
+      final angleB = math.atan2(b.dy - centroid.dy, b.dx - centroid.dx);
+      return angleA.compareTo(angleB);
+    });
+    return ordered;
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     if (corners.length < 4) return;
 
-    final mappedCorners = corners.map((p) => Offset(p.dx * size.width, p.dy * size.height)).toList();
+    final ordered = _sortedCorners();
+    final mappedCorners = ordered.map((p) {
+      final scaledX = p.dx > 1.0 ? p.dx : p.dx * size.width;
+      final scaledY = p.dy > 1.0 ? p.dy : p.dy * size.height;
+      return Offset(scaledX.clamp(0.0, size.width), scaledY.clamp(0.0, size.height));
+    }).toList();
 
-    // 1. Soft Fill
     final path = Path()
       ..moveTo(mappedCorners[0].dx, mappedCorners[0].dy)
       ..lineTo(mappedCorners[1].dx, mappedCorners[1].dy)
@@ -1085,7 +1339,6 @@ class QrBoundingBoxPainter extends CustomPainter {
       ..style = PaintingStyle.fill;
     canvas.drawPath(path, fillPaint);
 
-    // 2. Google Lens-style Corner L-Brackets
     final bracketPaint = Paint()
       ..color = color
       ..style = PaintingStyle.stroke
@@ -1113,11 +1366,10 @@ class QrBoundingBoxPainter extends CustomPainter {
       }
     }
 
-    // 3. Floating Tag / Chip Label above top edge
     if (label.isNotEmpty) {
       final topMid = Offset(
-        (mappedCorners[0].dx + mappedCorners[1].dx) / 2,
-        math.min(mappedCorners[0].dy, mappedCorners[1].dy) - 14,
+        (mappedCorners[0].dx + mappedCorners[1].dx + mappedCorners[2].dx + mappedCorners[3].dx) / 4,
+        math.min(math.min(mappedCorners[0].dy, mappedCorners[1].dy), math.min(mappedCorners[2].dy, mappedCorners[3].dy)) - 18,
       );
 
       final textSpan = TextSpan(
@@ -1133,10 +1385,14 @@ class QrBoundingBoxPainter extends CustomPainter {
         textDirection: TextDirection.ltr,
       )..layout();
 
-      final bgWidth = textPainter.width + 18;
-      final bgHeight = textPainter.height + 8;
+      final bgWidth = textPainter.width + 20;
+      final bgHeight = textPainter.height + 10;
       final bgRect = RRect.fromRectAndRadius(
-        Rect.fromCenter(center: Offset(topMid.dx, topMid.dy - bgHeight / 2), width: bgWidth, height: bgHeight),
+        Rect.fromCenter(
+          center: Offset(topMid.dx, topMid.dy - bgHeight / 2),
+          width: bgWidth,
+          height: bgHeight,
+        ),
         const Radius.circular(12),
       );
 
@@ -1144,14 +1400,14 @@ class QrBoundingBoxPainter extends CustomPainter {
       canvas.drawRRect(bgRect, chipPaint);
       textPainter.paint(
         canvas,
-        Offset(topMid.dx - textPainter.width / 2, topMid.dy - bgHeight / 2 + 4),
+        Offset(topMid.dx - textPainter.width / 2, topMid.dy - bgHeight / 2 + 5),
       );
     }
   }
 
   @override
   bool shouldRepaint(covariant QrBoundingBoxPainter oldDelegate) {
-    return oldDelegate.corners != corners || oldDelegate.label != label;
+    return oldDelegate.corners != corners || oldDelegate.label != label || oldDelegate.color != color;
   }
 }
 
