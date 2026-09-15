@@ -27,6 +27,16 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
       qrRegion: Rect.fromLTRB(0.68, 0.1, 0.94, 0.22),
     ),
     const BubbleSheetTemplate(
+      name: 'Standard 30 Questions',
+      answerRegions: [Rect.fromLTRB(0.1, 0.25, 0.9, 0.95)],
+      totalQuestions: 30,
+      choicesPerQuestion: 4,
+      columns: 1,
+      showColumnOutlines: true,
+      columnSpacing: 0.08,
+      qrRegion: Rect.fromLTRB(0.68, 0.1, 0.94, 0.22),
+    ),
+    const BubbleSheetTemplate(
       name: 'Compact 100 Questions',
       answerRegions: [Rect.fromLTRB(0.1, 0.05, 0.9, 0.95)],
       totalQuestions: 100,
@@ -115,7 +125,13 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
                               Positioned.fill(
                                   child: Image.asset('assets/50_questions.png',
                                       fit: BoxFit.contain)),
-                              if (_isDebugAlignment) ...[
+                            ] else if (_selectedTemplate.name ==
+                                'Standard 30 Questions') ...[
+                              Positioned.fill(
+                                  child: Image.asset('assets/30_questions.png',
+                                      fit: BoxFit.contain)),
+                            ],
+                            if (_isDebugAlignment) ...[
                                 // Name/Set Overlay Preview
                                 Positioned(
                                   top: (_nameTop - 20) * 0.5,
@@ -289,9 +305,14 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
                                         width: 40,
                                         height: 40,
                                         fit: BoxFit.cover))
-                                : Icon(index == 1
-                                    ? Icons.grid_view
-                                    : Icons.article),
+                                : index == 1 ? ClipRRect(
+                                    borderRadius: BorderRadius.circular(4),
+                                    child: Image.asset(
+                                        'assets/30_questions.png',
+                                        width: 40,
+                                        height: 40,
+                                        fit: BoxFit.cover)) 
+                                : Icon(Icons.article),
                             title: Text(template.name,
                                 style: const TextStyle(
                                     fontWeight: FontWeight.bold)),

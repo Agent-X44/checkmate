@@ -51,7 +51,12 @@ class PdfGenerator {
     required List<String> studentNames,
   }) async {
     // 1. Load assets on Main Thread (rootBundle is not isolate-safe)
-    final ByteData bytes = await rootBundle.load('assets/50_questions.png');
+    ByteData bytes;
+    if (template.name == 'Standard 30 Questions') {
+      bytes = await rootBundle.load('assets/30_questions.png');
+    } else {
+      bytes = await rootBundle.load('assets/50_questions.png');
+    }
     final Uint8List imageBytes = bytes.buffer.asUint8List();
 
     // 2. Prepare request data

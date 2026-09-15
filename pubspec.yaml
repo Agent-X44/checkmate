@@ -83,6 +83,7 @@ flutter:
     - assets/checkmate.png
     - assets/splash.png
     - assets/50_questions.png
+    - assets/30_questions.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images
