@@ -8,4 +8,7 @@ supabase
 httpx
 openai
 python-docx
+PyPDF2
+python-pptx
 huggingface_hub
+tenacity

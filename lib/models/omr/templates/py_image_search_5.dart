@@ -16,12 +16,8 @@ class PyImageSearch5Template extends BubbleSheetTemplate {
           choicesPerQuestion: 5,
           columns: 1,
           targetWidth: 1500,
+          calibratedYOffset: 58,
+          gridStart: 0.08,
+          gridWidth: 0.83,
         );
-
-  /// Final Calibrated vertical offset (9:49 PM)
-  static const int calibratedYOffset = 58;
-
-  /// Final Calibrated grid parameters (9:49 PM)
-  static const double defaultGridStart = 0.08;
-  static const double defaultGridWidth = 0.83;
 }

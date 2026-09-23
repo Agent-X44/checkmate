@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../bubble_sheet_template.dart';
+import '../pdf_alignment.dart';
 
 /// A template definition for a standard 50-question multiple-choice bubble sheet.
 ///
@@ -21,7 +22,10 @@ class Standard50QuestionsTemplate extends BubbleSheetTemplate {
   /// 4 corner markers (Marker-to-Marker reference frame).
   Standard50QuestionsTemplate()
       : super(
+          id: 'standard_50_v1',
           name: 'Standard 50 Questions',
+          assetPath: 'assets/50_questions.png',
+          pdfAlignment: const PdfAlignment.for50Questions(),
           paperAspectRatio: 0.707, // A4
           answerRegions: [
             const Rect.fromLTRB(0.044, 0.350, 0.446, 0.940), // Left Column Box
@@ -36,20 +40,16 @@ class Standard50QuestionsTemplate extends BubbleSheetTemplate {
           totalQuestions: 50,
           choicesPerQuestion: 4,
           columns: 2,
+          mcqCount: 50,
+          tfCount: 0,
           targetWidth: 1500,
+          calibratedYOffset: 0,
+          gridStart: 0.050,
+          gridWidth: 0.920,
         );
-
-  /// Vertical calibration offset used during OMR processing.
-  static const int calibratedYOffset = 0;
 
   /// Horizontal calibration offset used during OMR processing.
   static const int calibratedXOffset = 0;
-
-  /// The normalized starting position for the bubble grid within an answer region.
-  static const double defaultGridStart = 0.050;
-
-  /// The normalized width of the bubble grid relative to the answer region.
-  static const double defaultGridWidth = 0.920;
 
   /// The normalized vertical spacing between questions in the grid.
   static const double defaultGridYSpace = 0.006;

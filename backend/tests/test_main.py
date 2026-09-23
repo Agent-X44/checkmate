@@ -21,7 +21,7 @@ async def test_generate_exam_schema():
     test_payload = {
         "topic": "Python Testing",
         "question_count": 2,
-        "class_id": "test-class-uuid"
+        "class_id": "123e4567-e89b-12d3-a456-426614174000"
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         # Note: This will attempt to call Ollama/Supabase unless mocked

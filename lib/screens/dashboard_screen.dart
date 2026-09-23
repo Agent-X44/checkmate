@@ -4,16 +4,16 @@ import '../models/course.dart';
 import '../services/supabase_service.dart';
 import '../utils/ui_utils.dart';
 import 'course_dashboard_screen.dart';
-import 'answer_sheet_design_screen.dart';
+import 'quizzes_exams_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
   @override
-  State<DashboardScreen> createState() => _DashboardScreenState();
+  State<DashboardScreen> createState() => DashboardScreenState();
 }
 
-class _DashboardScreenState extends State<DashboardScreen> {
+class DashboardScreenState extends State<DashboardScreen> {
   bool _createdExpanded = true;
   bool _enrolledExpanded = true;
   
@@ -25,6 +25,22 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void initState() {
     super.initState();
     _refreshAll();
+  }
+
+  void addCreatedCourse(Course course) {
+    if (mounted) {
+      setState(() {
+        _myCourses.insert(0, course);
+      });
+    }
+  }
+
+  void addEnrolledCourse(Course course) {
+    if (mounted) {
+      setState(() {
+        _enrolledCourses.insert(0, course);
+      });
+    }
   }
 
   Future<void> _refreshAll() async {
@@ -353,7 +369,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: contentColor,
-                          fontSize: 20,
+                          fontSize: 26,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -421,7 +437,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => const AnswerSheetDesignScreen(),
+                          builder: (context) => QuizzesExamsScreen(
+                            courseId: course.id,
+                            isOwner: course.isOwner,
+                          ),
                         ),
                       );
                     },
@@ -481,7 +500,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                             color: contentColor,
-                            fontSize: 20,
+                            fontSize: 26,
                             fontWeight: FontWeight.bold),
                       ),
                     ),

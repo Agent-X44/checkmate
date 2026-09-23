@@ -49,15 +49,18 @@ dependencies:
   open_filex: ^4.5.0
   share_plus: ^10.1.4
   flutter_native_splash: ^2.4.8
+  flutter_launcher_icons: ^0.14.4
   qr_flutter: ^4.1.0
   file_picker: ^11.0.3
   app_links: ^6.3.3
   google_mlkit_barcode_scanning: ^0.16.1
+  uuid: ^4.6.0
+  syncfusion_flutter_pdf: ^34.2.8
+  http_parser: ^4.1.2
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_launcher_icons: ^0.14.4
   mockito: ^5.4.4
 
   # The "flutter_lints" package below contains a set of recommended lints to

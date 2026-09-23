@@ -36,6 +36,8 @@ class _MainNavigationState extends State<MainNavigation>
   bool _isFabExpanded = false;
   bool _notificationsOn = false;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  
+  final GlobalKey<DashboardScreenState> _dashboardKey = GlobalKey<DashboardScreenState>();
 
   late AnimationController _animationController;
   late Animation<double> _expandAnimation;
@@ -212,13 +214,18 @@ class _MainNavigationState extends State<MainNavigation>
               if (nameCtrl.text.isEmpty) return;
               final nav = Navigator.of(dialogContext);
               try {
-                await SupabaseService.createClass(
+                final newCourse = await SupabaseService.createClass(
                   name: nameCtrl.text,
                 );
                 nav.pop();
                 if (!mounted) return;
                 _toggleFab();
-                _refreshDrawerCourses();
+                
+                setState(() {
+                  _drawerCachedCourses.insert(0, newCourse);
+                });
+                _dashboardKey.currentState?.addCreatedCourse(newCourse);
+                
                 CheckMateUi.showTopPrompt(context, 'Course created successfully!', isError: false);
               } catch (e) {
                 if (!mounted) return;
@@ -277,7 +284,12 @@ class _MainNavigationState extends State<MainNavigation>
                 nav.pop();
                 if (!mounted) return;
                 _toggleFab();
-                _refreshDrawerCourses();
+                
+                setState(() {
+                  _drawerCachedCourses.insert(0, course);
+                });
+                _dashboardKey.currentState?.addEnrolledCourse(course);
+                
                 CheckMateUi.showTopPrompt(context, 'Joined course: ${course.name}!', isError: false);
               } catch (e) {
                 if (!mounted) return;
@@ -447,7 +459,7 @@ class _MainNavigationState extends State<MainNavigation>
           builder: (context) {
             switch (_selectedIndex) {
               case 0:
-                return const DashboardScreen();
+                return DashboardScreen(key: _dashboardKey);
               case 1:
                 return ScannerScreen(
                   key: const ValueKey('scanner-tab'),
@@ -460,6 +472,9 @@ class _MainNavigationState extends State<MainNavigation>
                   themeMode: widget.themeMode,
                   onThemeChanged: widget.onThemeChanged,
                   onLogout: widget.onLogout,
+                  onProfileUpdated: () {
+                    setState(() {});
+                  },
                 );
               default:
                 return const DashboardScreen();

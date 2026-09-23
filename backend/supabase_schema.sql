@@ -48,7 +48,10 @@ CREATE TABLE exams (
     title TEXT NOT NULL,
     status TEXT CHECK (status IN ('Draft', 'Ready', 'Published')) DEFAULT 'Draft',
     is_approved BOOLEAN DEFAULT FALSE,
+    has_multiple_sets BOOLEAN DEFAULT FALSE,
     results_released BOOLEAN DEFAULT FALSE,
+    template_id TEXT DEFAULT 'standard_50_mcq_v1',
+    question_structure JSONB,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -69,10 +72,25 @@ CREATE TABLE answer_sheets (
     exam_id UUID REFERENCES exams(id),
     student_id UUID REFERENCES profiles(id),
     sheet_identifier TEXT UNIQUE NOT NULL,
+    set_type TEXT NOT NULL DEFAULT '1' CHECK (set_type IN ('1', '2', 'A', 'B')),
     status TEXT DEFAULT 'Pending',
     scanned_at TIMESTAMPTZ
 );
+BEGIN;
 
+DELETE FROM public.ai_insights;
+DELETE FROM public.grades;
+DELETE FROM public.answer_sheets;
+DELETE FROM public.questions;
+DELETE FROM public.exams;
+DELETE FROM public.learning_materials;
+DELETE FROM public.enrollments;
+DELETE FROM public.classes;
+
+-- Optional, only if you want to wipe profile records too:
+-- DELETE FROM public.profiles;
+
+COMMIT;
 -- 7. Grades (Final score per sheet)
 CREATE TABLE grades (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -137,14 +155,45 @@ USING (true);
 
 -- Enrollments RLS Policies
 ALTER TABLE enrollments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE answer_sheets ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Users manage own enrollments" ON enrollments FOR ALL TO authenticated
 USING (auth.uid() = user_id OR class_id IN (SELECT id FROM classes WHERE instructor_id = auth.uid()))
 WITH CHECK (auth.uid() = user_id);
 
--- Exams: Students can only see approved exams in their classes
+-- Instructors create and manage sheets for students in their classes.
+CREATE POLICY "Instructors manage answer sheets" ON answer_sheets FOR ALL TO authenticated
+USING (
+  exam_id IN (
+    SELECT id FROM exams
+    WHERE class_id IN (SELECT id FROM classes WHERE instructor_id = auth.uid())
+  )
+)
+WITH CHECK (
+  exam_id IN (
+    SELECT id FROM exams
+    WHERE class_id IN (SELECT id FROM classes WHERE instructor_id = auth.uid())
+  )
+);
+
+-- Students can resolve their own sheet metadata while scanning/reviewing.
+CREATE POLICY "Students view own answer sheets" ON answer_sheets FOR SELECT TO authenticated
+USING (student_id = auth.uid());
+
+-- Exams RLS Policies
+-- Instructors can insert exams into their own classes
+CREATE POLICY "Instructors insert exams" ON exams FOR INSERT TO authenticated
+WITH CHECK (class_id IN (SELECT id FROM classes WHERE instructor_id = auth.uid()));
+
+CREATE POLICY "Instructors view own exams" ON exams FOR SELECT TO authenticated
+USING (class_id IN (SELECT id FROM classes WHERE instructor_id = auth.uid()));
+
 CREATE POLICY "Students see approved exams" ON exams FOR SELECT
 USING (is_approved = true AND class_id IN (SELECT class_id FROM enrollments WHERE user_id = auth.uid()));
+
+-- Service Role Policy (Required for backend inserting)
+CREATE POLICY "Service Role Full Access" ON exams FOR ALL TO service_role USING (true) WITH CHECK (true);
+CREATE POLICY "Service Role Full Access on questions" ON questions FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 -- Grades: Students can only see their own released grades (BR-12)
 CREATE POLICY "Students see own released grades" ON grades FOR SELECT

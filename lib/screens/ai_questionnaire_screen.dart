@@ -1,10 +1,15 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
+import 'package:file_picker/file_picker.dart';
 import '../services/api_service.dart';
+import '../services/supabase_service.dart';
+import '../services/exam_set_service.dart';
 import '../utils/ui_utils.dart';
+import '../models/omr/bubble_sheet_template.dart';
+import '../models/omr/template_registry.dart';
 
 class AIQuestionnaireScreen extends StatefulWidget {
   final String type;
@@ -23,19 +28,95 @@ class AIQuestionnaireScreen extends StatefulWidget {
 class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
   final TextEditingController _inputController = TextEditingController(text: '');
   int _currentStep = 0; // 0: Input, 1: Terminal, 2: Review
-  int _questionCount = 10;
+  String _assessmentType = 'Quiz'; // Can be 'Quiz' or 'Exam'
   
+  late int _selectedTotal;
+  late BubbleSheetTemplate _selectedTemplate;
+
+  Map<int, List<BubbleSheetTemplate>> get _templatesByTotal {
+    final map = <int, List<BubbleSheetTemplate>>{};
+    for (var t in AnswerSheetTemplateRegistry.all) {
+      if (!map.containsKey(t.totalQuestions)) {
+        map[t.totalQuestions] = [];
+      }
+      map[t.totalQuestions]!.add(t);
+    }
+    return map;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    final totals = _templatesByTotal.keys.toList()..sort();
+    _selectedTotal = totals.contains(50) ? 50 : totals.first;
+    _selectedTemplate = _templatesByTotal[_selectedTotal]!.firstWhere(
+      (t) => t.tfCount == 0, 
+      orElse: () => _templatesByTotal[_selectedTotal]!.first
+    );
+  }
+
   // Terminal Logic
-  final List<String> _terminalLogs = [];
+  String _streamedText = "";
   final ScrollController _terminalScrollController = ScrollController();
   StreamSubscription? _streamSubscription;
 
   // Data Logic
   List<dynamic> _finalQuestions = [];
   bool _isGenerationFinished = false;
+  bool _isSaving = false;
+  PlatformFile? _selectedFile;
+  String _sourceMode = 'topic';
+  bool _hasMultipleSets = false;
+
+  Future<void> _saveToDrafts() async {
+    setState(() => _isSaving = true);
+    try {
+      await SupabaseService.saveCreatedExam(
+        classId: widget.classId,
+        title: _inputController.text,
+        assessmentType: _assessmentType,
+        questions: _finalQuestions,
+        hasMultipleSets: _hasMultipleSets,
+        templateId: _selectedTemplate.id,
+      );
+      if (mounted) {
+        CheckMateUi.showTopPrompt(context, '$_assessmentType saved to Drafts successfully!', isError: false);
+        Navigator.pop(context, true);
+      }
+    } catch (e) {
+      if (mounted) {
+        CheckMateUi.showTopPrompt(context, 'Failed to save draft: $e');
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
+    }
+  }
+
+  Future<void> _pickSourceFile() async {
+    try {
+      final result = await FilePicker.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['pdf', 'docx', 'pptx', 'doc', 'ppt'],
+        withData: true,
+      );
+      if (result != null && result.files.isNotEmpty) {
+        setState(() {
+          _selectedFile = result.files.first;
+          // Pre-fill topic from filename if empty
+          if (_inputController.text.trim().isEmpty) {
+            _inputController.text = _selectedFile!.name.split('.').first.replaceAll('_', ' ');
+          }
+        });
+      }
+    } catch (e) {
+      CheckMateUi.showTopPrompt(context, 'File pick failed: $e');
+    }
+  }
 
   void _startGeneration() async {
-    if (_inputController.text.trim().isEmpty) return;
+    if (_inputController.text.trim().isEmpty && _selectedFile == null) return;
     
     // Hide keyboard safely
     FocusScope.of(context).unfocus();
@@ -45,19 +126,55 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
     
     setState(() {
       _currentStep = 1;
-      _terminalLogs.clear();
+      _streamedText = "LOG: Initializing Pipeline...\n\n";
       _isGenerationFinished = false;
-      _terminalLogs.add("[SYSTEM] Pipeline Initialization...");
     });
 
-    // 1. Live Stream Listener (Debug Visuals)
-    _streamSubscription = ApiService.generateExamStream(
-      topic: _inputController.text,
-      classId: widget.classId,
-      questionCount: _questionCount,
-    ).listen((event) {
-      if (mounted) {
-        setState(() => _terminalLogs.add(event));
+    // Unified Stream: Handles both terminal logging and JSON delivery in one go
+    final mcqCount = _selectedTemplate.mcqCount;
+    final tfCount = _selectedTemplate.tfCount;
+    final includeMcq = mcqCount > 0;
+    final includeTf = tfCount > 0;
+
+    // Choose the appropriate streaming API depending on whether a file was selected
+    Stream<Map<String, dynamic>> stream;
+    if (_selectedFile != null) {
+      List<int> bytes = _selectedFile!.bytes ?? (await File(_selectedFile!.path!).readAsBytes());
+      stream = ApiService.generateExamWithFile(
+        topic: _inputController.text,
+        classId: widget.classId,
+        fileBytes: bytes,
+        filename: _selectedFile!.name,
+        questionCount: _selectedTotal,
+        assessmentType: _assessmentType,
+        includeMcq: includeMcq,
+        includeTf: includeTf,
+        mcqCount: mcqCount,
+        tfCount: tfCount,
+        sourceMode: _sourceMode,
+        hasMultipleSets: _hasMultipleSets,
+      );
+    } else {
+      stream = ApiService.generateExamStream(
+        topic: _inputController.text,
+        classId: widget.classId,
+        questionCount: _selectedTotal,
+        assessmentType: _assessmentType,
+        includeMcq: includeMcq,
+        includeTf: includeTf,
+        mcqCount: mcqCount,
+        tfCount: tfCount,
+        sourceMode: _sourceMode,
+        hasMultipleSets: _hasMultipleSets,
+      );
+    }
+
+    _streamSubscription = stream.listen((event) {
+      if (!mounted) return;
+
+      final type = event['type'];
+      if (type == 'token') {
+        setState(() => _streamedText += (event['content'] ?? ''));
         
         // Auto-scroll to bottom of terminal
         Timer(const Duration(milliseconds: 100), () {
@@ -69,43 +186,29 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
             );
           }
         });
-      }
-    }, onError: (e) {
-      if (mounted) setState(() => _terminalLogs.add("[CRITICAL] Stream Error: $e"));
-    });
-
-    // 2. Data Fetcher (The actual JSON delivery)
-    try {
-      final data = await ApiService.createExam(
-        topic: _inputController.text,
-        classId: widget.classId,
-        questionCount: _questionCount,
-      );
-      
-      if (mounted) {
+      } else if (type == 'complete') {
         setState(() {
-          var questionsJson = data['questions'];
+          var questionsJson = event['questions'];
           if (questionsJson is List) {
             _finalQuestions = questionsJson;
           } else if (questionsJson is Map) {
             _finalQuestions = [questionsJson];
           }
           _isGenerationFinished = true;
-          _terminalLogs.add("[SYSTEM] Data received. Cleaning up...");
-          
-          // Smooth transition to Review Step
-          Future.delayed(const Duration(milliseconds: 1500), () {
-             if (mounted) setState(() => _currentStep = 2);
-          });
+          _streamedText += "\n\n[SYSTEM] Assessment created and saved successfully! Transitioning...";
         });
+        
+        // Smooth transition to Review Step
+        Future.delayed(const Duration(milliseconds: 1500), () {
+           if (mounted) setState(() => _currentStep = 2);
+        });
+      } else if (type == 'error') {
+        setState(() => _streamedText += "\n[CRITICAL] Error: ${event['content']}");
+        CheckMateUi.showTopPrompt(context, 'Generation Failed: ${event['content']}');
       }
-    } catch (e) {
-      if (mounted) {
-        debugPrint("[CRITICAL] UI Generation Failure: $e");
-        CheckMateUi.showTopPrompt(context, 'Generation Failed: $e');
-        setState(() => _currentStep = 0);
-      }
-    }
+    }, onError: (e) {
+      if (mounted) setState(() => _streamedText += "\n[CRITICAL] Stream Error: $e");
+    });
   }
 
   @override
@@ -132,42 +235,165 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
   }
 
   Widget _buildInput() {
-    return Padding(
+    return SingleChildScrollView(
       key: const ValueKey(0),
       padding: const EdgeInsets.all(24.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Topic or Content Source', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const Text('Question Source', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 12),
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment<String>(value: 'topic', label: Text('Topic'), icon: Icon(Icons.lightbulb_outline)),
+              ButtonSegment<String>(value: 'material', label: Text('Material'), icon: Icon(Icons.menu_book)),
+              ButtonSegment<String>(value: 'existing_questions', label: Text('Existing Questions'), icon: Icon(Icons.fact_check)),
+            ],
+            selected: {_sourceMode},
+            onSelectionChanged: (selection) => setState(() {
+              _sourceMode = selection.first;
+              if (_sourceMode == 'topic') _selectedFile = null;
+            }),
+          ),
           const SizedBox(height: 12),
           TextField(
             controller: _inputController,
-            maxLines: 4,
+            maxLines: 3,
             decoration: InputDecoration(
-              hintText: 'e.g. OSPFv2 Routing, Chemistry...',
+              hintText: _sourceMode == 'existing_questions'
+                  ? 'Paste questions with optional answer keys...'
+                  : 'e.g. OSPFv2 Routing, Chemistry...',
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               filled: true,
               fillColor: Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(51),
             ),
           ),
-          const SizedBox(height: 30),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('Question Count', style: TextStyle(fontWeight: FontWeight.bold)),
-              Text('$_questionCount', style: const TextStyle(color: Colors.blueAccent, fontWeight: FontWeight.bold, fontSize: 18)),
+          if (_sourceMode != 'topic') ...[
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _pickSourceFile,
+                    icon: const Icon(Icons.attach_file),
+                    label: Text(_selectedFile == null
+                        ? (_sourceMode == 'existing_questions'
+                            ? 'Upload Questions File'
+                            : 'Upload Source File')
+                        : _selectedFile!.name),
+                  ),
+                ),
+                if (_selectedFile != null) const SizedBox(width: 8),
+                if (_selectedFile != null)
+                  TextButton(
+                    onPressed: () => setState(() => _selectedFile = null),
+                    child: const Text('Clear'),
+                  ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 20),
+          const Text('Assessment Type', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 8),
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment<String>(value: 'Quiz', label: Text('Quiz'), icon: Icon(Icons.flash_on)),
+              ButtonSegment<String>(value: 'Exam', label: Text('Exam'), icon: Icon(Icons.assignment)),
             ],
+            selected: {_assessmentType},
+            onSelectionChanged: (Set<String> newSelection) {
+              setState(() {
+                _assessmentType = newSelection.first;
+              });
+            },
+            style: SegmentedButton.styleFrom(
+              minimumSize: const Size.fromHeight(44),
+            ),
           ),
-          Slider(
-            value: _questionCount.toDouble(),
-            min: 5, max: 50, divisions: 9,
-            onChanged: (v) => setState(() => _questionCount = v.toInt()),
+          const SizedBox(height: 20),
+
+          const Text('Exam Variants', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 8),
+          SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment<bool>(value: false, label: Text('Single Set'), icon: Icon(Icons.looks_one)),
+              ButtonSegment<bool>(value: true, label: Text('Sets A & B'), icon: Icon(Icons.style)),
+            ],
+            selected: {_hasMultipleSets},
+            onSelectionChanged: (Set<bool> newSelection) {
+              setState(() {
+                _hasMultipleSets = newSelection.first;
+              });
+            },
+            style: SegmentedButton.styleFrom(
+              minimumSize: const Size.fromHeight(44),
+            ),
           ),
-          const Spacer(),
+          const SizedBox(height: 24),
+          
+          const Text('Total Questions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 8),
+          SegmentedButton<int>(
+            segments: _templatesByTotal.keys.map((total) => ButtonSegment<int>(value: total, label: Text('$total Questions'))).toList(),
+            selected: {_selectedTotal},
+            onSelectionChanged: (Set<int> newSelection) {
+              setState(() {
+                _selectedTotal = newSelection.first;
+                _selectedTemplate = _templatesByTotal[_selectedTotal]!.firstWhere(
+                  (t) => t.tfCount == 0, 
+                  orElse: () => _templatesByTotal[_selectedTotal]!.first
+                );
+              });
+            },
+            style: SegmentedButton.styleFrom(
+              minimumSize: const Size.fromHeight(44),
+            ),
+          ),
+          
+          const SizedBox(height: 20),
+          const Text('Question Distribution', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 8),
+          ..._templatesByTotal[_selectedTotal]!.map((t) {
+            final title = t.tfCount == 0 
+                ? 'All Multiple Choice (${t.mcqCount} MCQ)' 
+                : 'Mixed Format (${t.mcqCount} MCQ, ${t.tfCount} T/F)';
+            final isSelected = _selectedTemplate == t;
+            
+            return Card(
+              elevation: 0,
+              color: isSelected ? (Theme.of(context).brightness == Brightness.dark ? Colors.yellow.withValues(alpha: 0.1) : Theme.of(context).colorScheme.primaryContainer.withAlpha(100)) : Colors.transparent,
+              shape: RoundedRectangleBorder(
+                side: BorderSide(color: isSelected ? (Theme.of(context).brightness == Brightness.dark ? Colors.yellow : Theme.of(context).colorScheme.primary) : Colors.grey.shade300),
+                borderRadius: BorderRadius.circular(12)
+              ),
+              margin: const EdgeInsets.only(bottom: 8),
+              child: InkWell(
+                onTap: () => setState(() => _selectedTemplate = t),
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: RadioListTile<BubbleSheetTemplate>(
+                    title: Text(title, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+                    value: t,
+                    groupValue: _selectedTemplate,
+                    onChanged: (val) => setState(() => _selectedTemplate = val!),
+                    activeColor: Theme.of(context).brightness == Brightness.dark ? Colors.yellow : Theme.of(context).colorScheme.primary,
+                  ),
+                ),
+              ),
+            );
+          }),
+          const SizedBox(height: 24),
           ElevatedButton(
-            onPressed: _startGeneration,
-            style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 55)),
-            child: const Text('GENERATE QUESTIONNAIRE'),
+            onPressed: () {
+              _startGeneration();
+            },
+            style: ElevatedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 55),
+              backgroundColor: Theme.of(context).brightness == Brightness.dark ? Colors.yellow : Theme.of(context).colorScheme.primary,
+              foregroundColor: Theme.of(context).brightness == Brightness.dark ? Colors.black : Colors.white,
+            ),
+            child: const Text('GENERATE QUESTIONNAIRE', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -192,24 +418,17 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
           ),
           const Divider(color: Colors.greenAccent, height: 20),
           Expanded(
-            child: ListView.builder(
+            child: SingleChildScrollView(
               controller: _terminalScrollController,
-              itemCount: _terminalLogs.length,
-              itemBuilder: (context, index) {
-                final log = _terminalLogs[index];
-                final isAi = log.startsWith("AI:");
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Text(
-                    log,
-                    style: TextStyle(
-                      color: isAi ? Colors.white70 : Colors.greenAccent.withValues(alpha: 0.8),
-                      fontFamily: 'monospace',
-                      fontSize: 11,
-                    ),
-                  ),
-                );
-              },
+              child: Text(
+                _streamedText,
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontFamily: 'monospace',
+                  fontSize: 13,
+                  height: 1.5,
+                ),
+              ),
             ),
           ),
           const SizedBox(height: 10),
@@ -224,22 +443,50 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
 
   Future<void> _exportDocx() async {
     try {
-      final bytes = await ApiService.exportToDocx(
-        "${widget.type} - ${_inputController.text}", 
-        _finalQuestions
-      );
-      
-      final dir = await getTemporaryDirectory(); // Use temp for sharing
-      final fileName = "CheckMate_Assessment_${DateTime.now().millisecondsSinceEpoch}.docx";
-      final file = File('${dir.path}/$fileName');
-      await file.writeAsBytes(bytes);
-      
-      if (mounted) {
-        // Trigger Android Share Sheet (Allows "Save to device", "Send to Drive", etc.)
-        await Share.shareXFiles(
-          [XFile(file.path)],
-          text: 'Exported Assessment from CheckMate AI',
-        );
+      Directory? saveDir;
+      if (Platform.isAndroid) {
+        saveDir = Directory('/storage/emulated/0/Download');
+        if (!await saveDir.exists()) {
+          saveDir = await getExternalStorageDirectory();
+        }
+      } else {
+        saveDir = await getDownloadsDirectory() ?? await getApplicationDocumentsDirectory();
+      }
+
+      final title = "${widget.type} - ${_inputController.text}";
+
+      if (_hasMultipleSets) {
+        final List<Map<String, dynamic>> questionsMap = _finalQuestions.map((q) => Map<String, dynamic>.from(q as Map)).toList();
+        final setBQuestions = ExamSetService.generateSetB(questionsMap);
+        final bytesSetA = await ApiService.exportToDocx("$title - Set A", _finalQuestions);
+        final bytesSetB = await ApiService.exportToDocx("$title - Set B", setBQuestions);
+
+        final fileNameA = "CheckMate_${_inputController.text.replaceAll(' ', '_')}_SetA_${DateTime.now().millisecondsSinceEpoch}.docx";
+        final fileNameB = "CheckMate_${_inputController.text.replaceAll(' ', '_')}_SetB_${DateTime.now().millisecondsSinceEpoch}.docx";
+
+        await File('${saveDir?.path ?? ""}/$fileNameA').writeAsBytes(bytesSetA);
+        await File('${saveDir?.path ?? ""}/$fileNameB').writeAsBytes(bytesSetB);
+
+        if (mounted) {
+          CheckMateUi.showTopPrompt(
+            context,
+            "Exported Set A and Set B to Downloads",
+            isError: false,
+          );
+        }
+      } else {
+        final bytes = await ApiService.exportToDocx(title, _finalQuestions);
+        final fileName = "CheckMate_Assessment_${DateTime.now().millisecondsSinceEpoch}.docx";
+        final file = File('${saveDir?.path ?? ""}/$fileName');
+        await file.writeAsBytes(bytes);
+
+        if (mounted) {
+          CheckMateUi.showTopPrompt(
+            context,
+            "Exported & saved to Downloads: $fileName",
+            isError: false,
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -279,9 +526,22 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
         ),
         const SizedBox(height: 10),
         ElevatedButton(
-          onPressed: () => Navigator.pop(context),
-          style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 55)),
-          child: const Text('SAVE & FINALIZE'),
+          onPressed: _isSaving ? null : _saveToDrafts,
+          style: ElevatedButton.styleFrom(
+            minimumSize: const Size(double.infinity, 55),
+            backgroundColor: Theme.of(context).brightness == Brightness.dark ? Colors.yellow : Theme.of(context).colorScheme.primary,
+            foregroundColor: Theme.of(context).brightness == Brightness.dark ? Colors.black : Colors.white,
+          ),
+          child: _isSaving
+              ? SizedBox(
+                  width: 24, 
+                  height: 24, 
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2, 
+                    color: Theme.of(context).brightness == Brightness.dark ? Colors.black : Colors.white
+                  )
+                )
+              : const Text('FINISH & SAVE TO DRAFTS', style: TextStyle(fontWeight: FontWeight.bold)),
         ),
       ],
     );
@@ -295,7 +555,7 @@ class _PartHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.blueAccent, letterSpacing: 1.2)),
+      child: Text(title, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Theme.of(context).brightness == Brightness.dark ? Colors.yellow : Colors.blueAccent, letterSpacing: 1.2)),
     );
   }
 }

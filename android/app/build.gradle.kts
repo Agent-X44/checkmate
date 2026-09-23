@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.checkmate.checkmate"
-    compileSdk = 37
+    compileSdk = flutter.compileSdkVersion
     buildToolsVersion = "35.0.0"
     ndkVersion = "28.2.13676358"
 
@@ -21,7 +21,7 @@ android {
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = 24
-        targetSdk = 37
+        targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
@@ -34,6 +34,13 @@ android {
         }
     }
 
+    applicationVariants.all {
+        val variant = this
+        variant.outputs.all {
+            val outputFileName = "CheckMate.apk"
+            (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl).outputFileName = outputFileName
+        }
+    }
 }
 
 kotlin {

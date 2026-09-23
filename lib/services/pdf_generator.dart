@@ -4,40 +4,20 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import '../models/omr/bubble_sheet_template.dart';
-
-class PdfAlignment {
-  final double nameTop;
-  final double nameLeft;
-  final double nameScale;
-  final double qrTop;
-  final double qrRight;
-  final double qrSize;
-  final double setATop;
-  final double setALeft;
-
-  const PdfAlignment({
-    this.nameTop = 115.8,
-    this.nameLeft = 172.5,
-    this.nameScale = 1.0,
-    this.qrTop = 57.0,
-    this.qrRight = 99.6,
-    this.qrSize = 107.0,
-    this.setATop = 175,
-    this.setALeft = 145,
-  });
-}
+import '../models/omr/pdf_alignment.dart';
+export '../models/omr/pdf_alignment.dart';
 
 class PdfGeneratorData {
   final Uint8List imageBytes;
   final String templateName;
   final PdfAlignment alignment;
-  final List<String> studentNames;
+  final List<Map<String, String>> sheetData;
 
   PdfGeneratorData({
     required this.imageBytes,
     required this.templateName,
     required this.alignment,
-    required this.studentNames,
+    required this.sheetData,
   });
 }
 
@@ -47,24 +27,19 @@ class PdfGenerator {
   /// when batch generating for hundreds of students.
   static Future<void> generateAndPrint(
     BubbleSheetTemplate template, {
-    PdfAlignment alignment = const PdfAlignment(),
-    required List<String> studentNames,
+    PdfAlignment? alignment,
+    required List<Map<String, String>> sheetData,
   }) async {
     // 1. Load assets on Main Thread (rootBundle is not isolate-safe)
-    ByteData bytes;
-    if (template.name == 'Standard 30 Questions') {
-      bytes = await rootBundle.load('assets/30_questions.png');
-    } else {
-      bytes = await rootBundle.load('assets/50_questions.png');
-    }
+    final ByteData bytes = await rootBundle.load(template.assetPath);
     final Uint8List imageBytes = bytes.buffer.asUint8List();
 
     // 2. Prepare request data
     final request = PdfGeneratorData(
       imageBytes: imageBytes,
       templateName: template.name,
-      alignment: alignment,
-      studentNames: studentNames,
+      alignment: alignment ?? template.pdfAlignment,
+      sheetData: sheetData,
     );
 
     // 3. Heavy Compute offloaded to Background Isolate
@@ -81,19 +56,34 @@ class PdfGenerator {
     final pdf = pw.Document();
     final pw.MemoryImage image = pw.MemoryImage(data.imageBytes);
 
-    for (int i = 0; i < data.studentNames.length; i++) {
-      final String studentName = data.studentNames[i];
-      final String sheetId = "CM50-A-${(i + 1).toString().padLeft(4, '0')}";
+    // Calculate exact page format based on image aspect ratio to prevent white space
+    final double imgWidth = image.width?.toDouble() ?? 545.27;
+    final double imgHeight = image.height?.toDouble() ?? 781.89;
+    final double imgAspect = imgWidth / imgHeight;
+
+    // Keep the base width similar to A4 to maintain text sizes and coordinate scale
+    const double baseWidth = 545.27; // A4 width (595.27) minus 50 margin
+    final double baseHeight = baseWidth / imgAspect;
+
+    // Create a custom page format that tightly hugs the image with exactly 20px margin on all 4 corners
+    final customFormat = PdfPageFormat(
+      baseWidth + 40, // 20px left + 20px right
+      baseHeight + 40, // 20px top + 20px bottom
+      marginAll: 20,
+    );
+
+    for (int i = 0; i < data.sheetData.length; i++) {
+      final String studentName = data.sheetData[i]['name'] ?? 'Unknown Student';
+      final String sheetId = data.sheetData[i]['qrCode'] ?? 'UNKNOWN_ID';
+      final String setType = data.sheetData[i]['set'] ?? 'A';
 
       pdf.addPage(
         pw.Page(
-          pageFormat: PdfPageFormat.a4,
-          margin: const pw.EdgeInsets.only(
-              top: 35, left: 25, right: 25, bottom: 25),
+          pageFormat: customFormat,
           build: (pw.Context context) {
             return pw.Stack(
               children: [
-                pw.Image(image, fit: pw.BoxFit.contain),
+                pw.Image(image, fit: pw.BoxFit.fill),
 
                 // Overlay: Name and Labels
                 pw.Positioned(
@@ -139,9 +129,9 @@ class PdfGenerator {
                                 fontWeight: pw.FontWeight.bold,
                               ),
                             ),
-                            _checkbox('A', isChecked: false),
+                            _checkbox('1', isChecked: setType == '1'),
                             pw.SizedBox(width: 20),
-                            _checkbox('B', isChecked: false),
+                            _checkbox('2', isChecked: setType == '2'),
                           ],
                         ),
                       ],

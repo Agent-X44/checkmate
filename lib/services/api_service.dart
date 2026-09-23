@@ -1,7 +1,7 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http_parser/http_parser.dart';
 import '../models/omr/processed_sheet.dart';
 
 /// Service for interacting with the FastAPI Backend for AI and OMR metadata.
@@ -23,7 +23,7 @@ class ApiService {
 
   static final Dio _dio = Dio(
     BaseOptions(
-      // Default to HF Space URL, falls back to local emulator if needed
+      // Prefer the Hugging Face backend for the project demo, but keep the local FastAPI route as a fallback.
       baseUrl: hfSpaceUrl,
       connectTimeout: const Duration(minutes: 2),
       receiveTimeout: const Duration(minutes: 2),
@@ -37,7 +37,19 @@ class ApiService {
 
   static String get baseUrl => _dio.options.baseUrl;
 
+  static bool _isValidUuid(String value) {
+    if (value.trim().isEmpty) return false;
+    final uuidPattern = RegExp(
+      r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+    );
+    return uuidPattern.hasMatch(value.trim());
+  }
+
   static Future<Map<String, dynamic>> resolveSheet(String identifier) async {
+    if (!_isValidUuid(identifier)) {
+      throw const FormatException('Invalid sheet ID format.');
+    }
+
     try {
       final response = await _dio.get('/resolve-sheet/$identifier');
       return response.data;
@@ -51,16 +63,44 @@ class ApiService {
     required String topic, 
     required String classId, 
     int questionCount = 5,
+    String assessmentType = 'Quiz',
   }) async {
+    if (!_isValidUuid(classId)) {
+      throw const FormatException('Invalid class ID format.');
+    }
+
     try {
       final response = await _dio.post('/generate-exam', data: {
         'topic': topic,
         'class_id': classId,
         'question_count': questionCount,
+        'assessment_type': assessmentType,
       });
       return response.data;
     } catch (e) {
       debugPrint("API Error (createExam): $e");
+      rethrow;
+    }
+  }
+
+  static Future<Map<String, dynamic>> saveDraft({
+    required String classId,
+    required String title,
+    required String assessmentType,
+    required List<dynamic> questions,
+    bool hasMultipleSets = false,
+  }) async {
+    try {
+      final response = await _dio.post('/save-draft', data: {
+        'class_id': classId,
+        'title': title,
+        'assessment_type': assessmentType,
+        'questions': questions,
+        'has_multiple_sets': hasMultipleSets,
+      });
+      return response.data;
+    } catch (e) {
+      debugPrint("API Error (saveDraft): $e");
       rethrow;
     }
   }
@@ -114,6 +154,62 @@ class ApiService {
     }
   }
 
+  static Future<List<Map<String, dynamic>>> getExamQuestions(String examId) async {
+    try {
+      final response = await _dio.get('/get-exam-questions/$examId');
+      return List<Map<String, dynamic>>.from(response.data);
+    } catch (e) {
+      debugPrint("API Error (getExamQuestions): $e");
+      rethrow;
+    }
+  }
+
+  static Future<void> updateQuestion({
+    required String questionId,
+    required String questionText,
+    required List<String> options,
+    required String correctAnswer,
+  }) async {
+    try {
+      await _dio.put('/update-question/$questionId', data: {
+        'question_text': questionText,
+        'options': options,
+        'correct_answer': correctAnswer,
+      });
+    } catch (e) {
+      debugPrint("API Error (updateQuestion): $e");
+      rethrow;
+    }
+  }
+
+  static Future<void> deleteExamApi(String examId) async {
+    try {
+      await _dio.delete('/delete-exam/$examId');
+    } catch (e) {
+      debugPrint("API Error (deleteExamApi): $e");
+      rethrow;
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> getExams(String classId) async {
+    try {
+      final response = await _dio.get('/get-exams/$classId');
+      return List<Map<String, dynamic>>.from(response.data);
+    } catch (e) {
+      debugPrint("API Error (getExams): $e");
+      rethrow;
+    }
+  }
+
+  static Future<void> deleteCourse(String classId) async {
+    try {
+      await _dio.delete('/delete-course/$classId');
+    } catch (e) {
+      debugPrint("API Error (deleteCourse): $e");
+      rethrow;
+    }
+  }
+
   static Future<void> approveExam(String examId) async {
     try {
       await _dio.post('/approve-exam/$examId');
@@ -147,29 +243,107 @@ class ApiService {
   }
 
   /// BR-02: Streaming version for live debugging logs.
-  static Stream<String> generateExamStream({
+  /// BR-02: Streaming version that yields tokens and final structured questions.
+  static Stream<Map<String, dynamic>> generateExamStream({
     required String topic,
     required String classId,
     int questionCount = 5,
+    String assessmentType = 'Quiz',
+    bool includeMcq = true,
+    bool includeTf = true,
+    int mcqCount = 5,
+    int tfCount = 0,
+    String sourceMode = 'topic',
+    bool hasMultipleSets = false,
   }) async* {
-    final client = HttpClient();
     try {
-      final request = await client.postUrl(Uri.parse('${_dio.options.baseUrl}/generate-exam-stream'));
-      request.headers.contentType = ContentType.json;
-      request.write(jsonEncode({
+      final formData = FormData.fromMap({
         'topic': topic,
         'class_id': classId,
         'question_count': questionCount,
-      }));
-      
-      final response = await request.close();
-      await for (final line in response.transform(utf8.decoder).transform(const LineSplitter())) {
-        if (line.isNotEmpty) yield line;
+        'assessment_type': assessmentType,
+        'include_mcq': includeMcq,
+        'include_tf': includeTf,
+        'mcq_count': mcqCount,
+        'tf_count': tfCount,
+        'source_mode': sourceMode,
+        'has_multiple_sets': hasMultipleSets,
+      });
+      final response = await _dio.post(
+        '/generate-exam-stream',
+        data: formData,
+        options: Options(responseType: ResponseType.stream),
+      );
+      final byteStream = (response.data as ResponseBody).stream;
+      await for (final line in utf8.decoder.bind(byteStream).transform(const LineSplitter())) {
+        if (line.startsWith('data: ')) {
+          try {
+            final jsonStr = line.substring(6).trim();
+            final Map<String, dynamic> data = jsonDecode(jsonStr);
+            yield data;
+          } catch (_) {}
+        }
       }
     } catch (e) {
-      yield "ERROR: $e";
-    } finally {
-      client.close();
+      yield {'type': 'error', 'content': e.toString()};
+    }
+  }
+
+  /// BR-02: Multipart upload variant that streams the same server-sent events while sending a file.
+  static Stream<Map<String, dynamic>> generateExamWithFile({
+    required String topic,
+    required String classId,
+    required List<int> fileBytes,
+    required String filename,
+    int questionCount = 5,
+    String assessmentType = 'Quiz',
+    bool includeMcq = true,
+    bool includeTf = true,
+    int mcqCount = 5,
+    int tfCount = 0,
+    String sourceMode = 'material',
+    bool hasMultipleSets = false,
+  }) async* {
+    try {
+      final formData = FormData.fromMap({
+        'topic': topic,
+        'class_id': classId,
+        'question_count': questionCount,
+        'assessment_type': assessmentType,
+        'include_mcq': includeMcq,
+        'include_tf': includeTf,
+        'mcq_count': mcqCount,
+        'tf_count': tfCount,
+        'source_mode': sourceMode,
+        'has_multiple_sets': hasMultipleSets,
+        'file': MultipartFile.fromBytes(
+          fileBytes,
+          filename: filename,
+          contentType: MediaType('application', 'octet-stream'),
+        ),
+      });
+
+      final response = await _dio.post(
+        '/generate-exam-stream',
+        data: formData,
+        options: Options(responseType: ResponseType.stream, headers: {'Content-Type': 'multipart/form-data'}),
+      );
+
+      // Dio wraps streamed responses in ResponseBody.
+      final Stream<List<int>> byteStream = (response.data as ResponseBody).stream;
+      await for (final line in utf8.decoder
+          .bind(byteStream.cast<List<int>>())
+          .transform(const LineSplitter())) {
+        if (line.startsWith('data: ')) {
+          try {
+            final jsonStr = line.substring(6).trim();
+            final Map<String, dynamic> data = jsonDecode(jsonStr);
+            yield data;
+          } catch (_) {}
+        }
+      }
+    } catch (e) {
+      yield {'type': 'error', 'content': e.toString()};
     }
   }
 

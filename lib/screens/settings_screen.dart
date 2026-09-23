@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
+import 'profile_settings_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   final ThemeMode themeMode;
   final ValueChanged<bool> onThemeChanged;
   final VoidCallback onLogout;
+  final VoidCallback onProfileUpdated;
 
   const SettingsScreen({
     super.key,
     required this.themeMode,
     required this.onThemeChanged,
     required this.onLogout,
+    required this.onProfileUpdated,
   });
 
   @override
@@ -62,10 +65,21 @@ class SettingsScreen extends StatelessWidget {
               style: Theme.of(context).textTheme.titleLarge,
             ),
           ),
-          const ListTile(
-            leading: Icon(Icons.person),
-            title: Text('Profile Settings'),
-            trailing: Icon(Icons.chevron_right),
+          ListTile(
+            leading: const Icon(Icons.person),
+            title: const Text('Profile Settings'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () async {
+              final result = await Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ProfileSettingsScreen(),
+                ),
+              );
+              if (result != null) {
+                onProfileUpdated();
+              }
+            },
           ),
           const ListTile(
             leading: Icon(Icons.lock),

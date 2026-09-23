@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 import '../models/omr/bubble_sheet_template.dart';
+import '../models/omr/template_registry.dart';
 import '../models/omr/processed_sheet.dart';
 import '../models/omr/qr_data.dart';
 import '../models/omr/templates/py_image_search_5.dart';
@@ -252,9 +253,11 @@ class ImageProcessor {
 
             if (minSide > 0) {
               final paperRatio = maxSide / minSide;
-              // A4 paper aspect ratio is ~1.41. Ratios between 1.20 and 1.85 are valid paper sheets.
+              // A4 paper aspect ratio is ~1.41.
+              // Extended the valid ratio to include long 30-question templates (which have aspect ratio ~1.9 to 2.1).
+              // Ratios between 1.20 and 2.50 are now valid paper sheets.
               // Square dialog popups (ratio ~1.0) will be ignored as paper sheets!
-              if (paperRatio >= 1.20 && paperRatio <= 1.85) {
+              if (paperRatio >= 1.20 && paperRatio <= 2.50) {
                 foundPaper = true;
                 paperCorners = [];
                 for (var i = 0; i < approx.length; i++) {
@@ -595,9 +598,22 @@ class ImageProcessor {
       }
 
       if (qrData != null) {
-        if (qrData.templateName == 'Standard 50 Questions' || qrData.examCode.startsWith("CM50")) {
+        if (qrData.templateName != null && qrData.templateName!.isNotEmpty) {
+          try {
+             final matchingTemplate = AnswerSheetTemplateRegistry.all.firstWhere(
+                 (t) => t.name == qrData!.templateName || t.id == qrData!.templateName);
+             activeTemplate = matchingTemplate;
+          } catch (e) {
+             // Fallback
+             if (qrData.examCode.startsWith("CM50")) {
+               activeTemplate = Standard50QuestionsTemplate();
+             } else if (qrData.examCode.contains("PY5")) {
+               activeTemplate = PyImageSearch5Template();
+             }
+          }
+        } else if (qrData.examCode.startsWith("CM50")) {
           activeTemplate = Standard50QuestionsTemplate();
-        } else if (qrData.templateName?.contains("5 Questions") == true || qrData.examCode.contains("PY5")) {
+        } else if (qrData.examCode.contains("PY5")) {
           activeTemplate = PyImageSearch5Template();
         }
         
@@ -631,19 +647,9 @@ class ImageProcessor {
       final List<BubbleResult> results = [];
       final List<Uint8List> questionImages = [];
 
-      double gridStart = 0.15;
-      double gridWidth = 0.82;
-      int calibratedY = 60;
-
-      if (activeTemplate is PyImageSearch5Template) {
-        gridStart = PyImageSearch5Template.defaultGridStart;
-        gridWidth = PyImageSearch5Template.defaultGridWidth;
-        calibratedY = PyImageSearch5Template.calibratedYOffset;
-      } else if (activeTemplate is Standard50QuestionsTemplate) {
-        gridStart = Standard50QuestionsTemplate.defaultGridStart;
-        gridWidth = Standard50QuestionsTemplate.defaultGridWidth;
-        calibratedY = Standard50QuestionsTemplate.calibratedYOffset;
-      }
+      double gridStart = activeTemplate.gridStart;
+      double gridWidth = activeTemplate.gridWidth;
+      int calibratedY = activeTemplate.calibratedYOffset;
 
       final List<Rect> activeRegions = activeTemplate.answerRegions;
       final int questionsPerRegion = (activeTemplate.totalQuestions / activeRegions.length).ceil();

@@ -2,6 +2,9 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import '../models/course.dart';
+import 'api_service.dart';
+
+import 'package:uuid/uuid.dart';
 
 /// Service responsible for Supabase Authentication and Database interactions.
 /// 
@@ -10,6 +13,7 @@ import '../models/course.dart';
 /// - BR-12: Security & Row Level Security (Privacy)
 class SupabaseService {
   static final SupabaseClient _client = Supabase.instance.client;
+  static SupabaseClient get client => _client;
 
   // --- AUTHENTICATION ---
 
@@ -86,9 +90,24 @@ class SupabaseService {
 
   static Session? get currentSession => _client.auth.currentSession;
 
+  static Future<void> updateProfileName(String newName) async {
+    final user = currentUser;
+    if (user == null) throw Exception("Not authenticated");
+
+    // Update in profiles table
+    await _client.from('profiles').upsert({
+      'id': user.id,
+      'name': newName,
+      'email': user.email ?? '', // keep email
+    });
+
+    // Update in Auth user metadata so UI updates immediately
+    await _client.auth.updateUser(UserAttributes(data: {'name': newName}));
+  }
+
   // --- DATABASE: COURSES (BR-01) ---
 
-  static Future<void> createClass({
+  static Future<Course> createClass({
     required String name,
   }) async {
     final user = currentUser;
@@ -108,11 +127,13 @@ class SupabaseService {
       debugPrint("Profile synchronization error: $e");
     }
 
-    await _client.from('classes').insert({
+    final response = await _client.from('classes').insert({
       'name': name,
       'code': code,
       'instructor_id': user.id,
-    });
+    }).select('*, profiles(*)').single();
+    
+    return Course.fromMap(response, isOwner: true);
   }
 
   static Future<String> resetCourseCode(String classId) async {
@@ -129,39 +150,38 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) throw Exception("Not authenticated");
 
-    // 1. Self-healing profile check
     try {
-      await _client.from('profiles').upsert({
-        'id': user.id,
-        'name': user.userMetadata?['name'] ?? user.email?.split('@')[0] ?? 'Instructor',
-        'email': user.email ?? '',
-        'role': 'Instructor',
-      });
-    } catch (e) {
-      debugPrint("Profile synchronization notice: $e");
-    }
+      // 1. Try direct cascade delete via Supabase client
+      // First, get all exams for this class
+      final examRes = await _client.from('exams').select('id').eq('class_id', classId);
+      final examIds = (examRes as List).map((e) => e['id'].toString()).toList();
 
-    // 2. Cascade delete dependent child records first to satisfy foreign key constraints
-    try {
-      await _client.from('enrollments').delete().eq('class_id', classId);
-    } catch (e) {
-      debugPrint("Enrollments cleanup notice: $e");
-    }
+      for (final examId in examIds) {
+        try { await _client.from('ai_insights').delete().eq('exam_id', examId); } catch (_) {}
+        
+        try {
+          final sheetRes = await _client.from('answer_sheets').select('id').eq('exam_id', examId);
+          final sheetIds = (sheetRes as List).map((s) => s['id'].toString()).toList();
+          for (final sheetId in sheetIds) {
+            try { await _client.from('grades').delete().eq('sheet_id', sheetId); } catch (_) {}
+          }
+          await _client.from('answer_sheets').delete().eq('exam_id', examId);
+        } catch (_) {}
 
-    try {
-      await _client.from('learning_materials').delete().eq('class_id', classId);
-    } catch (e) {
-      debugPrint("Learning materials cleanup notice: $e");
-    }
+        try { await _client.from('questions').delete().eq('exam_id', examId); } catch (_) {}
+      }
 
-    try {
-      await _client.from('exams').delete().eq('class_id', classId);
-    } catch (e) {
-      debugPrint("Exams cleanup notice: $e");
-    }
+      try { await _client.from('exams').delete().eq('class_id', classId); } catch (_) {}
+      try { await _client.from('enrollments').delete().eq('class_id', classId); } catch (_) {}
+      try { await _client.from('learning_materials').delete().eq('class_id', classId); } catch (_) {}
 
-    // 3. Delete the class record
-    await _client.from('classes').delete().eq('id', classId);
+      // Finally delete class
+      await _client.from('classes').delete().eq('id', classId);
+    } catch (e) {
+      debugPrint("Direct Supabase course deletion notice ($e) - falling back to Backend API...");
+      // Fallback to FastAPI backend endpoint which bypasses RLS and foreign keys
+      await ApiService.deleteCourse(classId);
+    }
   }
 
   static Future<void> unenrollClass(String classId) async {
@@ -300,8 +320,95 @@ class SupabaseService {
 
   // --- DATABASE: EXAMS (BR-02, BR-03) ---
 
+  static Future<void> saveCreatedExam({
+    required String classId,
+    required String title,
+    required String assessmentType,
+    required List<dynamic> questions,
+    bool hasMultipleSets = false,
+    String? templateId,
+  }) async {
+    final user = currentUser;
+    if (user == null) throw Exception("Not authenticated");
+
+    try {
+      // 1. Try direct Supabase insert
+      final examResponse = await _client.from('exams').insert({
+        'class_id': classId,
+        'title': '[$assessmentType] $title',
+        'is_approved': false,
+        'status': 'Draft',
+        'has_multiple_sets': hasMultipleSets,
+        if (templateId != null) 'template_id': templateId,
+      }).select('id').single();
+
+      final String examId = examResponse['id'];
+
+      // 2. Insert Questions into Supabase
+      if (questions.isNotEmpty) {
+        final inserts = questions.map((q) => {
+          'exam_id': examId,
+          'question_text': (q['questionText'] ?? q['text'] ?? '').toString(),
+          'correct_answer': (q['correctAnswer'] ?? q['answer'] ?? 'A').toString(),
+          'question_type': (q['questionType'] ?? 'MCQ').toString(),
+          'topic_tag': (q['topicTag'] ?? title).toString(),
+        }).toList();
+
+        await _client.from('questions').insert(inserts);
+      }
+    } catch (e) {
+      debugPrint("Direct Supabase save notice ($e) - falling back to Backend API...");
+      // Fallback to FastAPI backend endpoint which bypasses RLS policies
+      await ApiService.saveDraft(
+        classId: classId,
+        title: title,
+        assessmentType: assessmentType,
+        questions: questions,
+        hasMultipleSets: hasMultipleSets,
+      );
+    }
+  }
+
   static Stream<List<Map<String, dynamic>>> streamExams(String classId) {
     return _client.from('exams').stream(primaryKey: ['id']).eq('class_id', classId).order('created_at', ascending: false);
+  }
+
+  static Future<List<Map<String, dynamic>>> getExams(String classId) async {
+    try {
+      // 1. Try Backend API first to ensure unapproved draft exams are returned (bypasses RLS SELECT restrictions)
+      return await ApiService.getExams(classId);
+    } catch (e) {
+      debugPrint("Direct Supabase getExams fallback ($e)...");
+      final response = await _client.from('exams').select().eq('class_id', classId).order('created_at', ascending: false);
+      return List<Map<String, dynamic>>.from(response);
+    }
+  }
+
+  static Future<void> deleteExam(String examId) async {
+    try {
+      await ApiService.deleteExamApi(examId);
+    } catch (e) {
+      debugPrint("ApiService deleteExamApi fallback ($e)...");
+      await _client.from('questions').delete().eq('exam_id', examId);
+      await _client.from('ai_insights').delete().eq('exam_id', examId);
+      
+      final sheets = await _client.from('answer_sheets').select('id').eq('exam_id', examId);
+      for (final s in (sheets as List)) {
+        await _client.from('grades').delete().eq('sheet_id', s['id']);
+      }
+      await _client.from('answer_sheets').delete().eq('exam_id', examId);
+      await _client.from('exams').delete().eq('id', examId);
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> getExamQuestions(String examId) async {
+    try {
+      return await ApiService.getExamQuestions(examId);
+    } catch (e) {
+      debugPrint("ApiService getExamQuestions fallback ($e)...");
+      final response = await _client.from('questions').select().eq('exam_id', examId);
+      return List<Map<String, dynamic>>.from(response);
+    }
   }
 
   static Future<void> approveExam(String examId) async {
@@ -309,8 +416,130 @@ class SupabaseService {
   }
 
   static Future<List<Map<String, dynamic>>> getEnrolledStudents(String classId) async {
-    final response = await _client.from('enrollments').select('profiles(id, name)').eq('class_id', classId);
-    return List<Map<String, dynamic>>.from(response);
+    // We must query 'enrollments' specifically for this class, and join the 'profiles' data.
+    // The previous eq('class_id', classId) was failing because RLS policies might block students 
+    // from being seen if the role wasn't checked properly, OR the query structure was off.
+    final response = await _client
+        .from('enrollments')
+        .select('user_id, profiles(id, name)')
+        .eq('class_id', classId);
+    
+    // Filter out any null profiles just in case
+    return (response as List).where((e) => e['profiles'] != null).cast<Map<String, dynamic>>().toList();
+  }
+
+  static Future<List<Map<String, String>>> generateAnswerSheetsData(
+    String examId,
+    String classId, {
+    String setType = 'A',
+    bool alternateSets = false,
+  }) async {
+    final studentsData = await getEnrolledStudents(classId);
+    studentsData.sort((a, b) {
+      final aName = (a['profiles']?['name']?.toString() ?? 'Student').toLowerCase();
+      final bName = (b['profiles']?['name']?.toString() ?? 'Student').toLowerCase();
+      return aName.compareTo(bName);
+    });
+    List<Map<String, String>> sheetData = [];
+    final errors = <String>[];
+    const uuid = Uuid();
+    var schemaSupportsSets = true;
+
+    // Fix: If there are NO students, we still want the instructor to be able to test print!
+    // So we generate a dummy "Instructor Key" sheet if the class is empty.
+    if (studentsData.isEmpty) {
+      final String dummyId = uuid.v4();
+      final dummySheet = <String, dynamic>{
+        'id': dummyId,
+        'exam_id': examId,
+        'student_id': currentUser?.id, // Assign to instructor
+        'sheet_identifier': dummyId,
+      };
+      try {
+        dummySheet['set_type'] = alternateSets ? 'A' : setType;
+        await _client.from('answer_sheets').insert(dummySheet);
+      } catch (e) {
+        if (!_isMissingSetTypeError(e)) rethrow;
+        schemaSupportsSets = false;
+        dummySheet.remove('set_type');
+        await _client.from('answer_sheets').insert(dummySheet);
+      }
+      return [{'name': 'Instructor Key (Demo)', 'qrCode': dummyId, 'set': schemaSupportsSets ? (alternateSets ? 'A' : setType) : 'A'}];
+    }
+
+    for (var index = 0; index < studentsData.length; index++) {
+      final s = studentsData[index];
+      final profile = s['profiles'];
+      if (profile == null) continue;
+      
+      final studentId = profile['id'];
+      final studentName = profile['name']?.toString() ?? 'Student';
+      final studentSet = alternateSets ? (index.isEven ? 'A' : 'B') : setType;
+
+      try {
+        // Check if an answer sheet already exists for this student and exam
+        Map<String, dynamic>? existing;
+        try {
+          final query = _client
+              .from('answer_sheets')
+                .select('id, set_type')
+              .eq('exam_id', examId)
+              .eq('student_id', studentId);
+          if (schemaSupportsSets) {
+            existing = await query.eq('set_type', studentSet).maybeSingle();
+          } else {
+            existing = await query.maybeSingle();
+          }
+        } catch (e) {
+          if (!_isMissingSetTypeError(e)) rethrow;
+          schemaSupportsSets = false;
+          existing = await _client
+              .from('answer_sheets')
+              .select('id')
+              .eq('exam_id', examId)
+              .eq('student_id', studentId)
+              .maybeSingle();
+        }
+
+        String sheetIdentifier;
+        if (existing != null) {
+          sheetIdentifier = existing['id'].toString();
+        } else {
+          // Generate a new UUID and insert it as the sheet_identifier (and id)
+          sheetIdentifier = uuid.v4();
+          final sheet = <String, dynamic>{
+            'id': sheetIdentifier, // Explicitly set ID so QR code is identical to row UUID
+            'exam_id': examId,
+            'student_id': studentId,
+            'sheet_identifier': sheetIdentifier,
+          };
+          if (schemaSupportsSets) sheet['set_type'] = studentSet;
+          await _client.from('answer_sheets').insert(sheet);
+        }
+        sheetData.add({
+          'name': studentName,
+          'qrCode': sheetIdentifier,
+          'set': schemaSupportsSets ? studentSet : 'A',
+        });
+      } catch (e) {
+        debugPrint("Error generating answer sheet for student $studentId: $e");
+        errors.add("$studentName: $e");
+      }
+    }
+
+    if (sheetData.isEmpty && errors.isNotEmpty) {
+      throw Exception(
+        'Students were found, but answer sheets could not be created. '
+        '${errors.join(' | ')}',
+      );
+    }
+    return sheetData;
+  }
+
+  static bool _isMissingSetTypeError(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('answer_sheets.set_type does not exist') ||
+        message.contains('column answer_sheets.set_type does not exist');
   }
 
   // --- DATABASE: INSIGHTS & GRADES (BR-10, BR-12) ---
