@@ -1,4 +1,4 @@
-![Alt Text](assets/checkmate.png)
+![Alt Text](assets/splash_dark.png)
 # CheckMate 
 ## I. What is it?
 CheckMate is a mobile application that uses Optical Mark Recognition (OMR) and smartphone 
