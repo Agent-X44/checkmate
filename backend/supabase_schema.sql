@@ -50,7 +50,10 @@ CREATE TABLE exams (
     is_approved BOOLEAN DEFAULT FALSE,
     has_multiple_sets BOOLEAN DEFAULT FALSE,
     results_released BOOLEAN DEFAULT FALSE,
-    template_id TEXT DEFAULT 'standard_50_mcq_v1',
+    template_id TEXT DEFAULT 'standard_50_questions',
+    total_questions INT DEFAULT 0,
+    mcq_count INT DEFAULT 0,
+    tf_count INT DEFAULT 0,
     question_structure JSONB,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );

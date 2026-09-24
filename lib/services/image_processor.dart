@@ -233,7 +233,7 @@ class ImageProcessor {
 
         if (bestContour != null) {
           final perimeter = cv.arcLength(bestContour, true);
-          final approx = pool.add(cv.approxPolyDP(bestContour, 0.02 * perimeter, true));
+          final approx = pool.add(cv.approxPolyDP(bestContour, 0.04 * perimeter, true));
 
           final double imgArea = (finalW * finalH).toDouble();
 
@@ -254,10 +254,10 @@ class ImageProcessor {
             if (minSide > 0) {
               final paperRatio = maxSide / minSide;
               // A4 paper aspect ratio is ~1.41.
-              // Extended the valid ratio to include long 30-question templates (which have aspect ratio ~1.9 to 2.1).
-              // Ratios between 1.20 and 2.50 are now valid paper sheets.
+              // Extended the valid ratio to include long 30-question templates (which have aspect ratio ~2.2 to 2.5).
+              // Ratios between 1.20 and 2.90 are now valid paper sheets.
               // Square dialog popups (ratio ~1.0) will be ignored as paper sheets!
-              if (paperRatio >= 1.20 && paperRatio <= 2.50) {
+              if (paperRatio >= 1.20 && paperRatio <= 2.90) {
                 foundPaper = true;
                 paperCorners = [];
                 for (var i = 0; i < approx.length; i++) {
@@ -466,9 +466,17 @@ class ImageProcessor {
   static ProcessedSheet? _processOmrInternal(OmrRequest message) {
     final pool = CvPool();
     try {
-      final mat = pool.add(cv.imdecode(message.bytes, cv.IMREAD_COLOR));
+      cv.Mat mat = pool.add(cv.imdecode(message.bytes, cv.IMREAD_COLOR));
       if (mat.isEmpty) {
         return null;
+      }
+
+      // Downsample oversized camera captures (e.g. 12MP/4K photos) to max 2000px width
+      // to prevent native Out-Of-Memory (OOM) crashes while preserving 100% OMR accuracy.
+      if (mat.width > 2000) {
+        final double scale = 2000.0 / mat.width;
+        final int newH = (mat.height * scale).toInt();
+        mat = pool.add(cv.resize(mat, (2000, newH)));
       }
 
       if (message.expectedQr != null) {
@@ -492,16 +500,6 @@ class ImageProcessor {
       final rawImageQr = QrDetectionService.detectEntireImage(mat);
       if (rawImageQr != null && rawImageQr.sheetIdentifier.isNotEmpty && rawImageQr.sheetIdentifier != "UNKNOWN") {
         debugPrint("OMR: Found QR on raw unwarped image -> ${rawImageQr.sheetIdentifier}");
-        return ProcessedSheet(
-          warpedImage: message.bytes,
-          thresholdImage: message.bytes,
-          answerRegion: message.bytes,
-          questionImages: [],
-          results: [],
-          qrData: rawImageQr,
-          detectedSet: "SET A",
-          templateName: message.template.name,
-        );
       }
 
       final int matW = mat.width;
@@ -587,37 +585,41 @@ class ImageProcessor {
       }
 
       if (qrData == null || qrData.examCode == "UNKNOWN") {
-        try {
-          final int targetH = (mat.height * (800.0 / mat.width)).toInt();
-          final smallMat = pool.add(cv.resize(mat, (800, targetH)));
-          final smallQr = QrDetectionService.detectEntireImage(smallMat);
-          if (smallQr != null && smallQr.examCode != "UNKNOWN") {
-            qrData = smallQr;
-          }
-        } catch (_) {}
+        if (message.expectedQr != null && message.expectedQr!.examCode != "UNKNOWN") {
+          debugPrint("OMR: Could not find QR in warped image, falling back to scanner's locked QR data.");
+          qrData = message.expectedQr;
+        } else {
+          try {
+            debugPrint("OMR: QR completely failed, extracting ID dynamically via template constraints...");
+            final int targetH = (mat.height * (800.0 / mat.width)).toInt();
+            final smallMat = pool.add(cv.resize(mat, (800, targetH)));
+            final smallQr = QrDetectionService.detectEntireImage(smallMat);
+            if (smallQr != null && smallQr.examCode != "UNKNOWN") {
+              qrData = smallQr;
+            }
+          } catch (_) {}
+        }
       }
 
       if (qrData != null) {
-        if (qrData.templateName != null && qrData.templateName!.isNotEmpty) {
+        final currentQr = qrData;
+        final tName = currentQr.templateName;
+        if (tName != null && tName.isNotEmpty) {
           try {
              final matchingTemplate = AnswerSheetTemplateRegistry.all.firstWhere(
-                 (t) => t.name == qrData!.templateName || t.id == qrData!.templateName);
+                 (t) => t.name == tName || t.id == tName);
              activeTemplate = matchingTemplate;
-          } catch (e) {
-             // Fallback
-             if (qrData.examCode.startsWith("CM50")) {
-               activeTemplate = Standard50QuestionsTemplate();
-             } else if (qrData.examCode.contains("PY5")) {
-               activeTemplate = PyImageSearch5Template();
-             }
+          } catch (_) {}
+        } else if (message.template.id == 'custom') {
+          // Only fallback if message.template wasn't explicitly provided from DB metadata
+          if (currentQr.examCode.startsWith("CM50")) {
+            activeTemplate = Standard50QuestionsTemplate();
+          } else if (currentQr.examCode.contains("PY5")) {
+            activeTemplate = PyImageSearch5Template();
           }
-        } else if (qrData.examCode.startsWith("CM50")) {
-          activeTemplate = Standard50QuestionsTemplate();
-        } else if (qrData.examCode.contains("PY5")) {
-          activeTemplate = PyImageSearch5Template();
         }
         
-        if (qrData.examCode == "UNKNOWN") {
+        if (qrData.examCode == "UNKNOWN" && message.template.id == 'custom') {
           debugPrint("OMR: QR decoded failed, attempting geometric inference...");
           activeTemplate = Standard50QuestionsTemplate();
           qrData = QrData(

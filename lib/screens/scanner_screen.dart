@@ -13,9 +13,12 @@ import '../services/supabase_service.dart';
 import '../services/deep_link_service.dart';
 import '../models/omr/processed_sheet.dart';
 import '../models/omr/qr_data.dart';
+import '../models/omr/bubble_sheet_template.dart';
+import '../models/omr/template_registry.dart';
 import '../models/omr/templates/standard_50_questions.dart';
 import '../utils/ui_utils.dart';
 import 'ai_analysis_screen.dart';
+import 'sheet_evaluation_screen.dart';
 
 /// Screen responsible for live camera feed and document edge detection.
 /// Enforces:
@@ -64,7 +67,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
       _controller!.value.isInitialized &&
       _paperDetected &&
       _rawCorners != null &&
-      _rawCorners!.length >= 8;
+      _rawCorners!.length >= 8 &&
+      _lockedSheetQr != null; // Must lock QR before capturing
 
   // Isolate state
   bool _isIsolateWorking = false;
@@ -72,7 +76,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
   List<Offset>? _detectedCorners;
   List<double>? _rawCorners;
   List<Offset>? _detectedQrCorners;
-  QrData? _detectedLiveQr;
+  QrData?
+      _lockedSheetQr; // BR-05: Lock the decoded QR so it isn't lost during edge detection
   String _lastQrDebugText = 'QR: waiting';
   Offset? _focusPoint;
   DateTime _lastUIUpdate = DateTime.now();
@@ -84,8 +89,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
   Isolate? _isolate;
   SendPort? _isolateSendPort;
   final ReceivePort _mainReceivePort = ReceivePort();
-  final BarcodeScanner _barcodeScanner = BarcodeScanner(formats: [BarcodeFormat.qrCode]);
+  final BarcodeScanner _barcodeScanner =
+      BarcodeScanner(formats: [BarcodeFormat.qrCode]);
   DateTime? _lastQrScanTime;
+  DateTime? _lastFrameTime;
+  DateTime? _qrLockTime;
 
   @override
   void initState() {
@@ -169,7 +177,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
     // 1. Detect whether the current frame contains a Course Invitation QR
     final inviteCode = message.detectedQr == null
         ? null
-        : QrClassificationService.extractInvitationCodeFromQr(message.detectedQr!);
+        : QrClassificationService.extractInvitationCodeFromQr(
+            message.detectedQr!);
 
     final isCourseInvite = inviteCode != null;
 
@@ -183,12 +192,14 @@ class _ScannerScreenState extends State<ScannerScreen> {
       if (message.qrCorners != null && message.qrCorners!.length >= 8) {
         _detectedQrCorners = List.generate(
           4,
-          (i) => Offset(message.qrCorners![i * 2], message.qrCorners![i * 2 + 1]),
+          (i) =>
+              Offset(message.qrCorners![i * 2], message.qrCorners![i * 2 + 1]),
         );
-        _detectedLiveQr = message.detectedQr;
+        _lockedSheetQr = message.detectedQr;
       } else {
         _detectedQrCorners = null;
-        _detectedLiveQr = null;
+        _lockedSheetQr = null;
+        _qrLockTime = null;
       }
 
       // Update UI to ensure "PAPER DETECTED" is strictly hidden while scanning Course QR
@@ -215,27 +226,42 @@ class _ScannerScreenState extends State<ScannerScreen> {
     // Keep QR tracking active even before full paper-edge confirmation so valid answer-sheet
     // QR codes are not suppressed by the edge-detection gate.
     final candidateQr = message.detectedQr;
-    if (candidateQr != null && candidateQr.sheetIdentifier.isNotEmpty && candidateQr.sheetIdentifier != 'UNKNOWN') {
-      final inviteCode = QrClassificationService.extractInvitationCodeFromQr(candidateQr);
-      if (inviteCode == null) {
-        final coords = message.qrCorners != null && message.qrCorners!.length >= 8
-            ? message.qrCorners!
-            : const [0.20, 0.20, 0.80, 0.20, 0.80, 0.80, 0.20, 0.80];
-        _detectedQrCorners = List.generate(4, (i) => Offset(coords[i * 2], coords[i * 2 + 1]));
-        _detectedLiveQr = candidateQr;
-        _lastQrDebugText = 'QR: ${candidateQr.sheetIdentifier}';
+
+    // If we haven't locked a sheet QR yet, keep looking for one
+    if (_lockedSheetQr == null) {
+      if (candidateQr != null &&
+          candidateQr.sheetIdentifier.isNotEmpty &&
+          candidateQr.sheetIdentifier != 'UNKNOWN') {
+        final inviteCode =
+            QrClassificationService.extractInvitationCodeFromQr(candidateQr);
+        if (inviteCode == null) {
+          _lockedSheetQr = candidateQr; // Lock it!
+          _qrLockTime = DateTime.now();
+          _qrFirstMode = false; // Transition directly to edge detection mode
+          _lastQrDebugText = 'LOCKED: ${candidateQr.sheetIdentifier}';
+        } else {
+          _lastQrDebugText = 'QR: invite candidate $inviteCode';
+        }
       } else {
-        _detectedQrCorners = null;
-        _detectedLiveQr = null;
-        _lastQrDebugText = 'QR: invite candidate ${inviteCode}';
+        _lastQrDebugText = 'QR: waiting';
       }
+    }
+
+    // Always update the QR bounding box to track the physical code if it's visible
+    if (candidateQr != null &&
+        message.qrCorners != null &&
+        message.qrCorners!.length >= 8) {
+      _detectedQrCorners = List.generate(
+          4,
+          (i) =>
+              Offset(message.qrCorners![i * 2], message.qrCorners![i * 2 + 1]));
     } else {
-      _detectedQrCorners = null;
-      _detectedLiveQr = null;
-      _lastQrDebugText = 'QR: waiting';
+      _detectedQrCorners =
+          null; // Hide the box gracefully if the QR leaves the camera view
     }
 
     // 2. Paper edge detection for OMR answer sheets
+    // Edge detection runs completely independently of the QR lock.
     if (message.foundPaper && !_qrFirstMode) {
       _detectionCounter = _detectionPersistenceThreshold;
       _rawCorners = message.corners;
@@ -266,31 +292,34 @@ class _ScannerScreenState extends State<ScannerScreen> {
   }
 
   String _normalizeJoinCode(String raw) {
-    return raw
-        .replaceAll(RegExp(r'[^A-Za-z0-9]'), '')
-        .trim()
-        .toUpperCase();
+    return raw.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').trim().toUpperCase();
   }
 
   Future<bool> _validateCourseCodeBeforeJoin(String inviteCode) async {
     final normalizedCode = _normalizeJoinCode(inviteCode);
-    debugPrint('QR JOIN DEBUG: validating code raw="$inviteCode" normalized="$normalizedCode"');
+    debugPrint(
+        'QR JOIN DEBUG: validating code raw="$inviteCode" normalized="$normalizedCode"');
 
     try {
-      final courseData = await SupabaseService.getCourseDataByCode(normalizedCode).timeout(
+      final courseData =
+          await SupabaseService.getCourseDataByCode(normalizedCode).timeout(
         const Duration(seconds: 3),
       );
-      debugPrint('QR JOIN DEBUG: validation result for $normalizedCode => ${courseData != null ? courseData['id'] : 'NOT_FOUND'}');
+      debugPrint(
+          'QR JOIN DEBUG: validation result for $normalizedCode => ${courseData != null ? courseData['id'] : 'NOT_FOUND'}');
       return courseData != null;
     } catch (e) {
-      debugPrint('QR JOIN DEBUG: validation exception for $normalizedCode :: $e');
+      debugPrint(
+          'QR JOIN DEBUG: validation exception for $normalizedCode :: $e');
       return false;
     }
   }
 
-  Future<void> _joinCourseFromPrompt(String inviteCode, BuildContext bottomSheetContext) async {
+  Future<void> _joinCourseFromPrompt(
+      String inviteCode, BuildContext bottomSheetContext) async {
     final normalizedCode = _normalizeJoinCode(inviteCode);
-    debugPrint('JOIN COURSE BUTTON: pressed raw="$inviteCode" normalized="$normalizedCode"');
+    debugPrint(
+        'JOIN COURSE BUTTON: pressed raw="$inviteCode" normalized="$normalizedCode"');
 
     final isValidCourse = await _validateCourseCodeBeforeJoin(normalizedCode);
     if (!isValidCourse) {
@@ -306,16 +335,20 @@ class _ScannerScreenState extends State<ScannerScreen> {
     }
 
     try {
-      debugPrint('JOIN COURSE: starting direct Supabase join for $normalizedCode');
+      debugPrint(
+          'JOIN COURSE: starting direct Supabase join for $normalizedCode');
 
       final targetContext = navigatorKey.currentContext ?? context;
       if (targetContext.mounted) {
-        CheckMateUi.showTopPrompt(targetContext, 'Joining course ($normalizedCode)...', isError: false);
+        CheckMateUi.showTopPrompt(
+            targetContext, 'Joining course ($normalizedCode)...',
+            isError: false);
       }
 
       final course = await SupabaseService.joinClass(normalizedCode).timeout(
         const Duration(seconds: 8),
-        onTimeout: () => throw Exception('Course join timed out. Please check your network and try again.'),
+        onTimeout: () => throw Exception(
+            'Course join timed out. Please check your network and try again.'),
       );
 
       if (mounted) {
@@ -350,7 +383,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
     // Debounce duplicate scans of same code within 3 seconds
     if (_lastScannedInviteCode == inviteCode &&
         _lastInvitePromptTime != null &&
-        DateTime.now().difference(_lastInvitePromptTime!).inMilliseconds < 1000) {
+        DateTime.now().difference(_lastInvitePromptTime!).inMilliseconds <
+            1000) {
       return;
     }
 
@@ -363,7 +397,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
     final normalizedInviteCode = _normalizeJoinCode(inviteCode);
     Map<String, dynamic>? courseData;
     try {
-      courseData = await SupabaseService.getCourseDataByCode(normalizedInviteCode).timeout(const Duration(seconds: 2));
+      courseData =
+          await SupabaseService.getCourseDataByCode(normalizedInviteCode)
+              .timeout(const Duration(seconds: 2));
     } catch (e) {
       debugPrint("Course lookup error: $e");
     }
@@ -374,7 +410,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
     // looks like an invitation code so the user can take action immediately.
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final accentColor = isDark ? theme.colorScheme.secondary : theme.colorScheme.primary;
+    final accentColor =
+        isDark ? theme.colorScheme.secondary : theme.colorScheme.primary;
 
     if (courseData == null) {
       await showModalBottomSheet(
@@ -406,7 +443,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
                     color: accentColor.withValues(alpha: 0.15),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(Icons.school_rounded, color: accentColor, size: 40),
+                  child:
+                      Icon(Icons.school_rounded, color: accentColor, size: 40),
                 ),
                 const SizedBox(height: 16),
                 Text(
@@ -445,8 +483,12 @@ class _ScannerScreenState extends State<ScannerScreen> {
                           if (mounted) {
                             _isConfirmationCardOpen = false;
                           }
-                          if (Navigator.of(bottomSheetContext, rootNavigator: true).canPop()) {
-                            Navigator.of(bottomSheetContext, rootNavigator: true).pop();
+                          if (Navigator.of(bottomSheetContext,
+                                  rootNavigator: true)
+                              .canPop()) {
+                            Navigator.of(bottomSheetContext,
+                                    rootNavigator: true)
+                                .pop();
                           }
                         },
                         style: OutlinedButton.styleFrom(
@@ -455,7 +497,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
                             borderRadius: BorderRadius.circular(12),
                           ),
                           side: BorderSide(
-                            color: isDark ? Colors.white30 : Colors.grey.shade400,
+                            color:
+                                isDark ? Colors.white30 : Colors.grey.shade400,
                           ),
                         ),
                         child: Text(
@@ -471,7 +514,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
                     Expanded(
                       child: ElevatedButton(
                         onPressed: () async {
-                          await _joinCourseFromPrompt(normalizedInviteCode, bottomSheetContext);
+                          await _joinCourseFromPrompt(
+                              normalizedInviteCode, bottomSheetContext);
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: accentColor,
@@ -510,7 +554,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
     final instructorId = courseData['instructor_id']?.toString().trim();
     final currentUserId = currentUser?.id.trim();
 
-    if (instructorId != null && currentUserId != null && instructorId == currentUserId) {
+    if (instructorId != null &&
+        currentUserId != null &&
+        instructorId == currentUserId) {
       await _showCreatorNoticeCard(inviteCode, courseData['name'] ?? '');
       if (mounted) {
         _isConfirmationCardOpen = false;
@@ -588,8 +634,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
                         if (mounted) {
                           _isConfirmationCardOpen = false;
                         }
-                        if (Navigator.of(bottomSheetContext, rootNavigator: true).canPop()) {
-                          Navigator.of(bottomSheetContext, rootNavigator: true).pop();
+                        if (Navigator.of(bottomSheetContext,
+                                rootNavigator: true)
+                            .canPop()) {
+                          Navigator.of(bottomSheetContext, rootNavigator: true)
+                              .pop();
                         }
                       },
                       style: OutlinedButton.styleFrom(
@@ -614,7 +663,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
                   Expanded(
                     child: ElevatedButton(
                       onPressed: () async {
-                        await _joinCourseFromPrompt(inviteCode, bottomSheetContext);
+                        await _joinCourseFromPrompt(
+                            inviteCode, bottomSheetContext);
                       },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: accentColor,
@@ -648,7 +698,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
     }
   }
 
-  Future<void> _showCreatorNoticeCard(String inviteCode, String courseName) async {
+  Future<void> _showCreatorNoticeCard(
+      String inviteCode, String courseName) async {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
@@ -681,7 +732,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
                   color: Colors.amber.withValues(alpha: 0.15),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(Icons.info_outline_rounded, color: Colors.amber, size: 40),
+                child: const Icon(Icons.info_outline_rounded,
+                    color: Colors.amber, size: 40),
               ),
               const SizedBox(height: 16),
               Text(
@@ -726,8 +778,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
                 width: double.infinity,
                 child: ElevatedButton(
                   onPressed: () {
-                    if (Navigator.of(bottomSheetContext, rootNavigator: true).canPop()) {
-                      Navigator.of(bottomSheetContext, rootNavigator: true).pop();
+                    if (Navigator.of(bottomSheetContext, rootNavigator: true)
+                        .canPop()) {
+                      Navigator.of(bottomSheetContext, rootNavigator: true)
+                          .pop();
                     }
                   },
                   style: ElevatedButton.styleFrom(
@@ -764,7 +818,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
     if (clean.contains('code=')) {
       final uri = Uri.tryParse(clean);
       if (uri != null) {
-        final codeParam = uri.queryParameters['code'] ?? uri.queryParameters['joinCode'];
+        final codeParam =
+            uri.queryParameters['code'] ?? uri.queryParameters['joinCode'];
         if (codeParam != null && codeParam.trim().isNotEmpty) {
           return codeParam.trim().toUpperCase();
         }
@@ -774,17 +829,19 @@ class _ScannerScreenState extends State<ScannerScreen> {
     // 2. Extract from URL (Any domain, looking for code param or short alphanumeric path segment)
     final uri = Uri.tryParse(clean);
     if (uri != null && uri.scheme.isNotEmpty) {
-      final codeParam = uri.queryParameters['code'] ?? uri.queryParameters['joinCode'];
+      final codeParam =
+          uri.queryParameters['code'] ?? uri.queryParameters['joinCode'];
       if (codeParam != null && codeParam.trim().isNotEmpty) {
         return codeParam.trim().toUpperCase();
       }
       if (uri.pathSegments.isNotEmpty) {
         // Check if any of the last path segments is a valid 5-8 char code (e.g. /course/EDJNRU)
-        final segments = uri.pathSegments.where((s) => s.trim().isNotEmpty).toList();
+        final segments =
+            uri.pathSegments.where((s) => s.trim().isNotEmpty).toList();
         if (segments.isNotEmpty) {
           final lastSegment = segments.last.trim().toUpperCase();
-          if (RegExp(r'^[A-Z0-9]{5,8}$').hasMatch(lastSegment) && 
-              !lastSegment.startsWith("SHEET") && 
+          if (RegExp(r'^[A-Z0-9]{5,8}$').hasMatch(lastSegment) &&
+              !lastSegment.startsWith("SHEET") &&
               !lastSegment.contains("UNKNOWN")) {
             return lastSegment;
           }
@@ -793,9 +850,15 @@ class _ScannerScreenState extends State<ScannerScreen> {
     }
 
     // 3. Format: "Code: EDJNRU" or "Code EDJNRU" or "JOIN: EDJNRU"
-    if (clean.toUpperCase().contains("CODE") || clean.toUpperCase().contains("JOIN")) {
+    if (clean.toUpperCase().contains("CODE") ||
+        clean.toUpperCase().contains("JOIN")) {
       final match = RegExp(r'[A-Z0-9]{5,8}').firstMatch(
-        clean.toUpperCase().replaceAll("CODE", "").replaceAll("JOIN", "").replaceAll(":", "").trim(),
+        clean
+            .toUpperCase()
+            .replaceAll("CODE", "")
+            .replaceAll("JOIN", "")
+            .replaceAll(":", "")
+            .trim(),
       );
       if (match != null) {
         return match.group(0);
@@ -803,10 +866,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
     }
 
     // 4. Raw Join Code: 5 to 8 uppercase alphanumeric characters (e.g. EDJNRU)
-    final isAlphanumericCode = RegExp(r'^[A-Z0-9]{5,8}$').hasMatch(clean.toUpperCase());
-    if (isAlphanumericCode && 
-        !clean.toLowerCase().startsWith("sheet") && 
-        !clean.contains("-AUTO") && 
+    final isAlphanumericCode =
+        RegExp(r'^[A-Z0-9]{5,8}$').hasMatch(clean.toUpperCase());
+    if (isAlphanumericCode &&
+        !clean.toLowerCase().startsWith("sheet") &&
+        !clean.contains("-AUTO") &&
         !clean.toLowerCase().contains("unknown") &&
         !clean.toLowerCase().contains("cm50") &&
         !clean.toLowerCase().contains("py5")) {
@@ -817,21 +881,24 @@ class _ScannerScreenState extends State<ScannerScreen> {
   }
 
   /// BR-05 Enforcement: Resolve Sheet ID via backend before grading.
-  Future<void> _handleProcessedSheet(ProcessedSheet sheet) async {
+  Future<void> _handleProcessedSheet(ProcessedSheet sheet,
+      {Map<String, dynamic>? preResolvedMetadata}) async {
     try {
       final qrData = sheet.qrData;
       final rawIdentifier = qrData?.sheetIdentifier ?? '';
 
       // 1. FIRST: Detect whether this QR is actually a Course Invitation.
-      final inviteCode = qrData == null ? null : QrClassificationService.extractInvitationCodeFromQr(qrData);
+      final inviteCode = qrData == null
+          ? null
+          : QrClassificationService.extractInvitationCodeFromQr(qrData);
       if (inviteCode != null) {
         await _triggerCourseJoinPrompt(inviteCode);
         return;
       }
 
       // 2. SECOND: Validate if this is a valid OMR Answer Sheet QR.
-      if (qrData == null || 
-          rawIdentifier.isEmpty || 
+      if (qrData == null ||
+          rawIdentifier.isEmpty ||
           rawIdentifier == "UNKNOWN") {
         _showErrorSnackBar("Invalid paper, please try again.");
         return;
@@ -845,12 +912,57 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
       // 4. Resolve metadata from Supabase
       // This verifies if the sheet actually belongs to this exam/student
-      final metadata = await ApiService.resolveSheet(rawIdentifier);
-      
+      final metadata =
+          preResolvedMetadata ?? await ApiService.resolveSheet(rawIdentifier);
+      final studentName = metadata['student_name'] ??
+          metadata['profiles']?['name'] ??
+          'Student';
+
       if (mounted) {
-        _scannedResults.add(sheet);
         _processedSheetIds.add(rawIdentifier);
-        _showSuccessSnackBar("Verified: ${metadata['student_name']}");
+
+        // Turn off flash torch before navigating to evaluation screen so the flash LED doesn't stay burning
+        if (_controller != null) {
+          try {
+            await _controller!.setFlashMode(FlashMode.off);
+            if (mounted) setState(() => _isFlashOn = false);
+          } catch (_) {}
+        }
+
+        // Directly proceed to Pre-processing, Warping/Cropping, and Evaluation with Dev Tools
+        final evaluatedSheet = await Navigator.push<ProcessedSheet>(
+          context,
+          MaterialPageRoute(
+            builder: (context) => SheetEvaluationScreen(
+              sheet: sheet,
+              metadata: metadata,
+            ),
+          ),
+        );
+
+        if (evaluatedSheet != null) {
+          final resolvedExamId = metadata['exam_id']?.toString() ??
+              metadata['exams']?['id']?.toString() ??
+              sheet.qrData?.examCode ??
+              'unknown';
+          final updatedSheet = evaluatedSheet.copyWith(
+            qrData: QrData(
+              studentName: studentName,
+              examCode: resolvedExamId,
+              course: metadata['exams']?['classes']?['name']?.toString() ??
+                  sheet.qrData?.course ??
+                  '',
+              examTitle: metadata['exams']?['title']?.toString() ??
+                  sheet.qrData?.examTitle ??
+                  '',
+              sheetIdentifier: rawIdentifier,
+              templateName: sheet.qrData?.templateName,
+            ),
+          );
+          _scannedResults.add(updatedSheet);
+          _showSuccessSnackBar(
+              "Evaluated: $studentName. Tap 'FINISH SESSION' below to save results!");
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -860,12 +972,20 @@ class _ScannerScreenState extends State<ScannerScreen> {
         } else if (e.toString().contains("403")) {
           errorMsg = "Unauthorized: Assessment is not approved yet.";
         }
-        
+
         _showErrorSnackBar(errorMsg);
       }
     } finally {
       if (mounted) {
-        setState(() => _isOmrProcessing = false);
+        setState(() {
+          _isOmrProcessing = false;
+          _lockedSheetQr =
+              null; // Clear the lock after a complete grading cycle (success or failure)
+          _qrLockTime = null;
+          _qrFirstMode = true; // Go back to searching for a QR
+          _paperDetected = false;
+          _detectionCounter = 0;
+        });
       }
     }
   }
@@ -876,6 +996,51 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
   void _showSuccessSnackBar(String msg) {
     CheckMateUi.showTopPrompt(context, msg, isError: false);
+  }
+
+  void _onCameraFrame(CameraImage image) {
+    if (!mounted ||
+        _isProcessing ||
+        _isolateSendPort == null ||
+        _isIsolateWorking) return;
+
+    // Frame throttling (100ms interval = max ~10 FPS for CV isolate) keeps RAM & thermal usage stable at ResolutionPreset.high
+    final now = DateTime.now();
+    if (_lastFrameTime != null &&
+        now.difference(_lastFrameTime!).inMilliseconds < 100) {
+      return;
+    }
+    _lastFrameTime = now;
+
+    // Auto-unlock QR lock if idle for over 20 seconds without completing capture
+    if (_lockedSheetQr != null &&
+        _qrLockTime != null &&
+        now.difference(_qrLockTime!).inSeconds > 20) {
+      if (mounted) {
+        setState(() {
+          _lockedSheetQr = null;
+          _qrLockTime = null;
+          _detectedQrCorners = null;
+          _lastQrDebugText = 'QR lock expired, rescan sheet';
+        });
+      }
+    }
+
+    unawaited(_tryDecodeQrFromCameraFrame(image));
+
+    _isIsolateWorking = true;
+    try {
+      _isolateSendPort!.send(ScanRequest(
+        bytes: image.planes[0].bytes,
+        width: image.width,
+        height: image.height,
+        bytesPerRow: image.planes[0].bytesPerRow,
+        replyPort: _mainReceivePort.sendPort,
+      ));
+    } catch (e) {
+      _isIsolateWorking = false;
+      debugPrint("ScanRequest send notice: $e");
+    }
   }
 
   Future<void> _initializeCamera() async {
@@ -900,20 +1065,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
     try {
       await _controller!.initialize();
-      _controller!.startImageStream((image) {
-        if (_isProcessing || _isolateSendPort == null || _isIsolateWorking) return;
-
-        unawaited(_tryDecodeQrFromCameraFrame(image));
-        
-        _isIsolateWorking = true;
-        _isolateSendPort!.send(ScanRequest(
-          bytes: image.planes[0].bytes,
-          width: image.width,
-          height: image.height,
-          bytesPerRow: image.planes[0].bytesPerRow,
-          replyPort: _mainReceivePort.sendPort,
-        ));
-      });
+      _controller!.startImageStream(_onCameraFrame);
       if (mounted) {
         setState(() {
           _isInitialized = true;
@@ -937,15 +1089,18 @@ class _ScannerScreenState extends State<ScannerScreen> {
     }
   }
 
-  Future<void> _handleTapToFocus(TapDownDetails details, Size widgetSize) async {
+  Future<void> _handleTapToFocus(
+      TapDownDetails details, Size widgetSize) async {
     if (_controller == null || !_controller!.value.isInitialized) return;
     try {
       final offset = details.localPosition;
       final nx = offset.dy / widgetSize.height;
       final ny = 1.0 - (offset.dx / widgetSize.width);
       setState(() => _focusPoint = offset);
-      await _controller!.setFocusPoint(Offset(nx.clamp(0.05, 0.95), ny.clamp(0.05, 0.95)));
-      await _controller!.setExposurePoint(Offset(nx.clamp(0.05, 0.95), ny.clamp(0.05, 0.95)));
+      await _controller!
+          .setFocusPoint(Offset(nx.clamp(0.05, 0.95), ny.clamp(0.05, 0.95)));
+      await _controller!
+          .setExposurePoint(Offset(nx.clamp(0.05, 0.95), ny.clamp(0.05, 0.95)));
       await Future.delayed(const Duration(milliseconds: 500));
       if (mounted) setState(() => _focusPoint = null);
     } catch (_) {}
@@ -953,13 +1108,17 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
   Future<void> _tryDecodeQrFromCameraFrame(CameraImage image) async {
     final now = DateTime.now();
-    if (_lastQrScanTime != null && now.difference(_lastQrScanTime!).inMilliseconds < 300) return;
+    if (_lastQrScanTime != null &&
+        now.difference(_lastQrScanTime!).inMilliseconds < 250) return;
     _lastQrScanTime = now;
 
     try {
       final isAndroid = Platform.isAndroid;
-      final inputFormat = isAndroid ? InputImageFormat.nv21 : InputImageFormat.yuv420;
-      final bytes = isAndroid ? image.planes[0].bytes : _concatenatePlanes(image);
+      final inputFormat =
+          isAndroid ? InputImageFormat.nv21 : InputImageFormat.yuv420;
+      // Always supply complete concatenated plane buffer so ML Kit's NV21 native reader
+      // receives the full w * h * 1.5 byte array, avoiding native C++ buffer overflow crashes.
+      final bytes = _concatenatePlanes(image);
       final bytesPerRow = image.planes.first.bytesPerRow;
 
       final inputImage = InputImage.fromBytes(
@@ -979,9 +1138,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
       if (rawValue.trim().isEmpty) return;
 
       final candidate = QrData.fromRaw(rawValue);
-      if (candidate.sheetIdentifier.isEmpty || candidate.sheetIdentifier == 'UNKNOWN') return;
+      if (candidate.sheetIdentifier.isEmpty ||
+          candidate.sheetIdentifier == 'UNKNOWN') return;
 
-      final inviteCode = QrClassificationService.extractInvitationCodeFromQr(candidate);
+      final inviteCode =
+          QrClassificationService.extractInvitationCodeFromQr(candidate);
       final normalizedCorners = barcodes.first.cornerPoints.isNotEmpty
           ? List.generate(4, (index) {
               final point = barcodes.first.cornerPoints[index];
@@ -1000,7 +1161,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
         _lastQrDebugText = 'QR: invite candidate $inviteCode';
         if (mounted) {
           setState(() {
-            _detectedLiveQr = candidate;
             _detectedQrCorners = normalizedCorners;
           });
           await _triggerCourseJoinPrompt(inviteCode);
@@ -1008,10 +1168,13 @@ class _ScannerScreenState extends State<ScannerScreen> {
         return;
       }
 
-      if (mounted) {
+      // If we haven't locked a QR yet, lock it from the camera frame!
+      if (_lockedSheetQr == null && mounted) {
         setState(() {
-          _detectedLiveQr = candidate;
-          _lastQrDebugText = 'QR: ${candidate.sheetIdentifier}';
+          _lockedSheetQr = candidate;
+          _qrLockTime = DateTime.now();
+          _qrFirstMode = false;
+          _lastQrDebugText = 'LOCKED: ${candidate.sheetIdentifier}';
           _detectedQrCorners = normalizedCorners;
         });
       }
@@ -1047,7 +1210,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
     if (!_isInitialized || _controller == null) {
       return const Scaffold(
           backgroundColor: Colors.black,
-          body: Center(child: CircularProgressIndicator(color: Colors.blueAccent)));
+          body: Center(
+              child: CircularProgressIndicator(color: Colors.blueAccent)));
     }
     final size = MediaQuery.of(context).size;
     final cameraValue = _controller!.value;
@@ -1083,7 +1247,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
                               width: 60,
                               height: 60,
                               decoration: BoxDecoration(
-                                  border: Border.all(color: accentColor, width: 1.5)))),
+                                  border: Border.all(
+                                      color: accentColor, width: 1.5)))),
                     if (_detectedCorners != null)
                       Positioned.fill(
                           child: IgnorePointer(
@@ -1092,34 +1257,56 @@ class _ScannerScreenState extends State<ScannerScreen> {
                                       corners: _detectedCorners!,
                                       isDetected: _paperDetected,
                                       color: accentColor)))),
-                    if (_detectedQrCorners != null && _detectedLiveQr != null)
-                      Positioned.fill(
+                    if (_detectedQrCorners != null &&
+                        _lockedSheetQr != null) ...[
+                      Builder(builder: (context) {
+                        final lockedQr = _lockedSheetQr;
+                        if (lockedQr == null) return const SizedBox.shrink();
+                        final inviteCode =
+                            _extractInviteCode(lockedQr.sheetIdentifier);
+                        return Positioned.fill(
                           child: IgnorePointer(
-                              child: CustomPaint(
-                                  painter: QrBoundingBoxPainter(
-                                      corners: _detectedQrCorners!,
-                                      label: _extractInviteCode(_detectedLiveQr!.sheetIdentifier) != null
-                                          ? "Course Code: ${_extractInviteCode(_detectedLiveQr!.sheetIdentifier)}"
-                                          : "Answer Sheet QR",
-                                      color: _extractInviteCode(_detectedLiveQr!.sheetIdentifier) != null
-                                          ? (isDark ? Colors.yellowAccent : Colors.amber)
-                                          : Colors.greenAccent)))),
+                            child: CustomPaint(
+                              painter: QrBoundingBoxPainter(
+                                corners: _detectedQrCorners!,
+                                label: inviteCode != null
+                                    ? "Course Code: $inviteCode"
+                                    : "LOCKED: ${lockedQr.sheetIdentifier}",
+                                color: inviteCode != null
+                                    ? (isDark
+                                        ? Colors.yellowAccent
+                                        : Colors.amber)
+                                    : accentColor,
+                              ),
+                            ),
+                          ),
+                        );
+                      }),
+                    ],
                   ]);
                 }),
               ),
             ),
           ),
-          
+
           if (_isOmrProcessing)
             Container(
-              color: Colors.black54,
+              color: Colors.black87,
               child: Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     CircularProgressIndicator(color: accentColor),
                     const SizedBox(height: 16),
-                    const Text("IDENTIFYING STUDENT...", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
+                    const Text("IDENTIFYING STUDENT...",
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16)),
+                    const SizedBox(height: 6),
+                    Text("Resolving answer key & running local OMR...",
+                        style: TextStyle(
+                            color: Colors.grey.shade300, fontSize: 13)),
                   ],
                 ),
               ),
@@ -1132,20 +1319,31 @@ class _ScannerScreenState extends State<ScannerScreen> {
             child: Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(20)),
-                  child: Text("SCANNED: ${_scannedResults.length}", style: TextStyle(color: accentColor, fontWeight: FontWeight.bold)),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                      color: Colors.black87,
+                      borderRadius: BorderRadius.circular(20)),
+                  child: Text("SCANNED: ${_scannedResults.length}",
+                      style: TextStyle(
+                          color: accentColor, fontWeight: FontWeight.bold)),
                 ),
                 const Spacer(),
                 Container(
                   constraints: const BoxConstraints(maxWidth: 220),
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(16)),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                      color: Colors.black87,
+                      borderRadius: BorderRadius.circular(16)),
                   child: Text(
                     _lastQrDebugText,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white70, fontSize: 11, fontFamily: 'monospace'),
+                    style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 11,
+                        fontFamily: 'monospace'),
                   ),
                 ),
                 IconButton(
@@ -1174,8 +1372,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
                 setState(() => _isFlashOn = !_isFlashOn);
               },
               backgroundColor: Colors.black45,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              child: Icon(_isFlashOn ? Icons.flash_on : Icons.flash_off, color: Colors.white),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              child: Icon(_isFlashOn ? Icons.flash_on : Icons.flash_off,
+                  color: Colors.white),
             ),
           ),
 
@@ -1189,9 +1389,15 @@ class _ScannerScreenState extends State<ScannerScreen> {
                   Padding(
                     padding: const EdgeInsets.only(bottom: 20.0),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 10.0),
-                      decoration: BoxDecoration(color: accentColor, borderRadius: BorderRadius.circular(30)),
-                      child: const Text("PAPER DETECTED", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20.0, vertical: 10.0),
+                      decoration: BoxDecoration(
+                          color: accentColor,
+                          borderRadius: BorderRadius.circular(30)),
+                      child: const Text("PAPER DETECTED",
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black)),
                     ),
                   ),
                 Row(
@@ -1203,9 +1409,12 @@ class _ScannerScreenState extends State<ScannerScreen> {
                       child: FloatingActionButton(
                         heroTag: 'capture',
                         onPressed: _canCapturePaper ? _captureAndProcess : null,
-                        backgroundColor: _canCapturePaper ? accentColor : Colors.white24,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(40)),
-                        child: const Icon(Icons.qr_code_scanner, color: Colors.black, size: 40),
+                        backgroundColor:
+                            _canCapturePaper ? accentColor : Colors.white24,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(40)),
+                        child: const Icon(Icons.qr_code_scanner,
+                            color: Colors.black, size: 40),
                       ),
                     ),
                   ],
@@ -1215,8 +1424,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
                     padding: const EdgeInsets.only(top: 20),
                     child: TextButton(
                       onPressed: _finishSession,
-                      child: Text("FINISH SESSION (${_scannedResults.length})", 
-                        style: TextStyle(color: accentColor, fontWeight: FontWeight.bold, fontSize: 16)),
+                      child: Text("FINISH SESSION (${_scannedResults.length})",
+                          style: TextStyle(
+                              color: accentColor,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16)),
                     ),
                   ),
               ],
@@ -1227,51 +1439,141 @@ class _ScannerScreenState extends State<ScannerScreen> {
     );
   }
 
-Future<void> _captureAndProcess() async {
-  if (!_canCapturePaper) {
-    final inviteCode = _detectedLiveQr == null
-        ? null
-        : QrClassificationService.extractInvitationCodeFromQr(_detectedLiveQr!);
-    if (inviteCode != null) {
-      _isConfirmationCardOpen = false;
-      await _triggerCourseJoinPrompt(inviteCode);
-      return;
+  void _restartStreamIfNeeded() {
+    if (_controller != null &&
+        _controller!.value.isInitialized &&
+        !_controller!.value.isStreamingImages &&
+        mounted &&
+        !_isProcessing) {
+      try {
+        _controller!.startImageStream(_onCameraFrame);
+      } catch (e) {
+        debugPrint("Notice restarting image stream: $e");
+      }
     }
-    _showErrorSnackBar('Align the answer sheet and wait until paper detection is active.');
-    return;
   }
 
-  final corners = _rawCorners != null ? List<double>.from(_rawCorners!) : <double>[];
-  setState(() => _isOmrProcessing = true);
+  Future<void> _captureAndProcess() async {
+    if (!_canCapturePaper) {
+      final inviteCode = _lockedSheetQr == null
+          ? null
+          : QrClassificationService.extractInvitationCodeFromQr(
+              _lockedSheetQr!);
+      if (inviteCode != null) {
+        _isConfirmationCardOpen = false;
+        await _triggerCourseJoinPrompt(inviteCode);
+        return;
+      }
+      _showErrorSnackBar(
+          'Align the answer sheet and wait until paper detection is active.');
+      return;
+    }
+
+    final corners =
+        _rawCorners != null ? List<double>.from(_rawCorners!) : <double>[];
+    setState(() => _isOmrProcessing = true);
 
     try {
+      // Pause live stream before taking photo to prevent Camera HAL lock/crash on Android
+      if (_controller != null && _controller!.value.isStreamingImages) {
+        try {
+          await _controller!.stopImageStream();
+        } catch (e) {
+          debugPrint("Notice: stopImageStream before capture: $e");
+        }
+      }
+
       final XFile photo = await _controller!.takePicture();
       final Uint8List bytes = await photo.readAsBytes();
 
-      // [LABEL: Architecture - Isolation & Parallelism]
-      // Spawn a dedicated, short-lived isolate for the heavy OMR processing.
-      // This prevents the live camera feed (edgeDetectionWorker) from dropping frames 
-      // or blocking the UI thread while the user waits for the processing.
+      // 1. Dynamically resolve the template from metadata or question count before processing OMR
+      BubbleSheetTemplate resolvedTemplate = Standard50QuestionsTemplate();
+      Map<String, dynamic>? preResolvedMetadata;
+
+      final rawIdentifier = _lockedSheetQr?.sheetIdentifier ?? '';
+      if (rawIdentifier.isNotEmpty && rawIdentifier != 'UNKNOWN') {
+        try {
+          preResolvedMetadata = await ApiService.resolveSheet(rawIdentifier);
+          final exam = preResolvedMetadata['exams'];
+          final templateId = exam?['template_id']?.toString();
+          final examId = exam?['id']?.toString() ?? '';
+
+          // 1. FIRST: Check actual questions count in exam
+          if (examId.isNotEmpty) {
+            final questions = await SupabaseService.getExamQuestions(examId);
+            if (questions.isNotEmpty) {
+              final qCount = questions.length;
+              final mCount = questions
+                  .where(
+                      (q) => (q['question_type'] ?? q['questionType']) == 'MCQ')
+                  .length;
+              final tCount = questions
+                  .where(
+                      (q) => (q['question_type'] ?? q['questionType']) == 'TF')
+                  .length;
+
+              final matched = AnswerSheetTemplateRegistry.forConfiguration(
+                  qCount, mCount, tCount);
+              resolvedTemplate = matched;
+            }
+          }
+
+          // 2. SECOND: If questions were empty, check DB columns total_questions or template_id
+          if (resolvedTemplate is Standard50QuestionsTemplate) {
+            final totalQs = (exam?['total_questions'] as num?)?.toInt() ?? 0;
+            final mcqCount = (exam?['mcq_count'] as num?)?.toInt() ?? 0;
+            final tfCount = (exam?['tf_count'] as num?)?.toInt() ?? 0;
+
+            if (totalQs > 0) {
+              final matched = AnswerSheetTemplateRegistry.forConfiguration(
+                  totalQs, mcqCount, tfCount);
+              resolvedTemplate = matched;
+            } else if (templateId != null && templateId.isNotEmpty) {
+              final matched = AnswerSheetTemplateRegistry.byId(templateId);
+              if (matched != null) {
+                resolvedTemplate = matched;
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint("Pre-capture template resolution notice: $e");
+        }
+      }
+
+      // 2. Spawn a dedicated isolate for heavy OMR processing with the resolved template
       final request = OmrRequest(
         bytes: bytes,
         corners: corners,
-        template: Standard50QuestionsTemplate(),
-        expectedQr: _detectedLiveQr,
+        template: resolvedTemplate,
+        expectedQr: _lockedSheetQr,
       );
-      
+
       final processedSheet = await ImageProcessor.processOmr(request);
 
       if (mounted) {
         if (processedSheet != null) {
-          await _handleProcessedSheet(processedSheet);
+          await _handleProcessedSheet(processedSheet,
+              preResolvedMetadata: preResolvedMetadata);
         } else {
           _showErrorSnackBar("Could not process sheet. Please try again.");
-          setState(() => _isOmrProcessing = false);
+          setState(() {
+            _isOmrProcessing = false;
+            _lockedSheetQr = null; // Unlock QR on failure so they can rescan
+            _qrLockTime = null;
+          });
+          _restartStreamIfNeeded();
         }
       }
     } catch (e) {
       _showErrorSnackBar("Capture failed: $e");
-      if (mounted) setState(() => _isOmrProcessing = false);
+      if (mounted) {
+        setState(() {
+          _isOmrProcessing = false;
+          _lockedSheetQr = null; // Unlock QR on failure
+          _qrLockTime = null;
+        });
+        _restartStreamIfNeeded();
+      }
     }
   }
 
@@ -1323,7 +1625,8 @@ class QrBoundingBoxPainter extends CustomPainter {
     final mappedCorners = ordered.map((p) {
       final scaledX = p.dx > 1.0 ? p.dx : p.dx * size.width;
       final scaledY = p.dy > 1.0 ? p.dy : p.dy * size.height;
-      return Offset(scaledX.clamp(0.0, size.width), scaledY.clamp(0.0, size.height));
+      return Offset(
+          scaledX.clamp(0.0, size.width), scaledY.clamp(0.0, size.height));
     }).toList();
 
     final path = Path()
@@ -1353,22 +1656,30 @@ class QrBoundingBoxPainter extends CustomPainter {
       final dirNext = (pNext - pCurr);
       final lenNext = dirNext.distance;
       if (lenNext > 0) {
-        final armNext = pCurr + (dirNext / lenNext) * armLength.clamp(0, lenNext / 2);
+        final armNext =
+            pCurr + (dirNext / lenNext) * armLength.clamp(0, lenNext / 2);
         canvas.drawLine(pCurr, armNext, bracketPaint);
       }
 
       final dirPrev = (pPrev - pCurr);
       final lenPrev = dirPrev.distance;
       if (lenPrev > 0) {
-        final armPrev = pCurr + (dirPrev / lenPrev) * armLength.clamp(0, lenPrev / 2);
+        final armPrev =
+            pCurr + (dirPrev / lenPrev) * armLength.clamp(0, lenPrev / 2);
         canvas.drawLine(pCurr, armPrev, bracketPaint);
       }
     }
 
     if (label.isNotEmpty) {
       final topMid = Offset(
-        (mappedCorners[0].dx + mappedCorners[1].dx + mappedCorners[2].dx + mappedCorners[3].dx) / 4,
-        math.min(math.min(mappedCorners[0].dy, mappedCorners[1].dy), math.min(mappedCorners[2].dy, mappedCorners[3].dy)) - 18,
+        (mappedCorners[0].dx +
+                mappedCorners[1].dx +
+                mappedCorners[2].dx +
+                mappedCorners[3].dx) /
+            4,
+        math.min(math.min(mappedCorners[0].dy, mappedCorners[1].dy),
+                math.min(mappedCorners[2].dy, mappedCorners[3].dy)) -
+            18,
       );
 
       final textSpan = TextSpan(
@@ -1406,7 +1717,9 @@ class QrBoundingBoxPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant QrBoundingBoxPainter oldDelegate) {
-    return oldDelegate.corners != corners || oldDelegate.label != label || oldDelegate.color != color;
+    return oldDelegate.corners != corners ||
+        oldDelegate.label != label ||
+        oldDelegate.color != color;
   }
 }
 
@@ -1414,28 +1727,40 @@ class EdgePainter extends CustomPainter {
   final List<Offset> corners;
   final bool isDetected;
   final Color color;
-  EdgePainter({required this.corners, this.isDetected = false, required this.color});
+  EdgePainter(
+      {required this.corners, this.isDetected = false, required this.color});
   @override
   void paint(Canvas canvas, Size size) {
     if (corners.isEmpty) return;
     final paint = Paint()
-      ..color = isDetected ? color.withValues(alpha: 0.5) : Colors.white24
+      ..color = isDetected ? color.withValues(alpha: 0.8) : Colors.white24
       ..strokeWidth = isDetected ? 3 : 1
       ..style = PaintingStyle.stroke;
 
-    final pts = corners.map((p) => Offset(p.dx * size.width, p.dy * size.height)).toList();
+    final fillPaint = Paint()
+      ..color = isDetected ? color.withValues(alpha: 0.1) : Colors.transparent
+      ..style = PaintingStyle.fill;
+
+    final pts = corners
+        .map((p) => Offset(p.dx * size.width, p.dy * size.height))
+        .toList();
     double cx = pts.map((p) => p.dx).reduce((a, b) => a + b) / 4;
     double cy = pts.map((p) => p.dy).reduce((a, b) => a + b) / 4;
-    pts.sort((a, b) => math.atan2(a.dy - cy, a.dx - cx).compareTo(math.atan2(b.dy - cy, b.dx - cx)));
-    
+    pts.sort((a, b) => math
+        .atan2(a.dy - cy, a.dx - cx)
+        .compareTo(math.atan2(b.dy - cy, b.dx - cx)));
+
     final path = Path()
       ..moveTo(pts[0].dx, pts[0].dy)
       ..lineTo(pts[1].dx, pts[1].dy)
       ..lineTo(pts[2].dx, pts[2].dy)
       ..lineTo(pts[3].dx, pts[3].dy)
       ..close();
+
+    canvas.drawPath(path, fillPaint);
     canvas.drawPath(path, paint);
   }
+
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

@@ -42,6 +42,28 @@ class ProcessedSheet {
     required this.templateName,
   });
 
+  ProcessedSheet copyWith({
+    Uint8List? warpedImage,
+    Uint8List? thresholdImage,
+    Uint8List? answerRegion,
+    List<Uint8List>? questionImages,
+    List<BubbleResult>? results,
+    QrData? qrData,
+    String? detectedSet,
+    String? templateName,
+  }) {
+    return ProcessedSheet(
+      warpedImage: warpedImage ?? this.warpedImage,
+      thresholdImage: thresholdImage ?? this.thresholdImage,
+      answerRegion: answerRegion ?? this.answerRegion,
+      questionImages: questionImages ?? this.questionImages,
+      results: results ?? this.results,
+      qrData: qrData ?? this.qrData,
+      detectedSet: detectedSet ?? this.detectedSet,
+      templateName: templateName ?? this.templateName,
+    );
+  }
+
   Map<String, dynamic> toMap() {
     return {
       'warpedImage': base64Encode(warpedImage),

@@ -11,7 +11,7 @@ class Standard30QuestionsTemplate extends BubbleSheetTemplate {
           pdfAlignment: const PdfAlignment.for30Questions(),
           paperAspectRatio: 0.449, // 545.27 / 1214.39
           answerRegions: [
-            const Rect.fromLTRB(0.1, 0.25, 0.9, 0.95), // Single Column Box
+            const Rect.fromLTRB(0.134, 0.314, 0.990, 0.908),
           ],
           qrRegion: const Rect.fromLTRB(0.68, 0.1, 0.94, 0.22),
           setRegion: const Rect.fromLTRB(0.05, 0.08, 0.25, 0.13),

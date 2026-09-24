@@ -7,7 +7,7 @@ import 'api_service.dart';
 import 'package:uuid/uuid.dart';
 
 /// Service responsible for Supabase Authentication and Database interactions.
-/// 
+///
 /// Enforces:
 /// - BR-01: Course/Class Management (Create/Join)
 /// - BR-12: Security & Row Level Security (Privacy)
@@ -43,17 +43,18 @@ class SupabaseService {
   static Future<AuthResponse?> signInWithGoogle() async {
     try {
       debugPrint("GOOGLE_AUTH: Starting flow...");
-      
+
       // The Web Client ID (serverClientId) is the ONLY one needed for the handshake.
-      const webClientId = '521288904900-cjt4oidq41d7er31gev8tddsfsc30s5q.apps.googleusercontent.com';
+      const webClientId =
+          '521288904900-cjt4oidq41d7er31gev8tddsfsc30s5q.apps.googleusercontent.com';
 
       final GoogleSignIn googleSignIn = GoogleSignIn(
         serverClientId: webClientId,
       );
-      
+
       // Sign out first to ensure the account picker always appears
       await googleSignIn.signOut();
-      
+
       final googleUser = await googleSignIn.signIn();
       if (googleUser == null) {
         debugPrint("GOOGLE_AUTH: Cancelled.");
@@ -65,7 +66,8 @@ class SupabaseService {
       final idToken = googleAuth.idToken;
 
       if (idToken == null) {
-        debugPrint("GOOGLE_AUTH: ERROR - idToken is null. Check Web Client ID configuration.");
+        debugPrint(
+            "GOOGLE_AUTH: ERROR - idToken is null. Check Web Client ID configuration.");
         return null;
       }
 
@@ -119,7 +121,8 @@ class SupabaseService {
     try {
       await _client.from('profiles').upsert({
         'id': user.id,
-        'name': user.userMetadata?['name'] ?? user.email?.split('@')[0] ?? 'User',
+        'name':
+            user.userMetadata?['name'] ?? user.email?.split('@')[0] ?? 'User',
         'email': user.email ?? '',
         'role': 'Instructor',
       });
@@ -127,12 +130,16 @@ class SupabaseService {
       debugPrint("Profile synchronization error: $e");
     }
 
-    final response = await _client.from('classes').insert({
-      'name': name,
-      'code': code,
-      'instructor_id': user.id,
-    }).select('*, profiles(*)').single();
-    
+    final response = await _client
+        .from('classes')
+        .insert({
+          'name': name,
+          'code': code,
+          'instructor_id': user.id,
+        })
+        .select('*, profiles(*)')
+        .single();
+
     return Course.fromMap(response, isOwner: true);
   }
 
@@ -153,32 +160,53 @@ class SupabaseService {
     try {
       // 1. Try direct cascade delete via Supabase client
       // First, get all exams for this class
-      final examRes = await _client.from('exams').select('id').eq('class_id', classId);
+      final examRes =
+          await _client.from('exams').select('id').eq('class_id', classId);
       final examIds = (examRes as List).map((e) => e['id'].toString()).toList();
 
       for (final examId in examIds) {
-        try { await _client.from('ai_insights').delete().eq('exam_id', examId); } catch (_) {}
-        
         try {
-          final sheetRes = await _client.from('answer_sheets').select('id').eq('exam_id', examId);
-          final sheetIds = (sheetRes as List).map((s) => s['id'].toString()).toList();
+          await _client.from('ai_insights').delete().eq('exam_id', examId);
+        } catch (_) {}
+
+        try {
+          final sheetRes = await _client
+              .from('answer_sheets')
+              .select('id')
+              .eq('exam_id', examId);
+          final sheetIds =
+              (sheetRes as List).map((s) => s['id'].toString()).toList();
           for (final sheetId in sheetIds) {
-            try { await _client.from('grades').delete().eq('sheet_id', sheetId); } catch (_) {}
+            try {
+              await _client.from('grades').delete().eq('sheet_id', sheetId);
+            } catch (_) {}
           }
           await _client.from('answer_sheets').delete().eq('exam_id', examId);
         } catch (_) {}
 
-        try { await _client.from('questions').delete().eq('exam_id', examId); } catch (_) {}
+        try {
+          await _client.from('questions').delete().eq('exam_id', examId);
+        } catch (_) {}
       }
 
-      try { await _client.from('exams').delete().eq('class_id', classId); } catch (_) {}
-      try { await _client.from('enrollments').delete().eq('class_id', classId); } catch (_) {}
-      try { await _client.from('learning_materials').delete().eq('class_id', classId); } catch (_) {}
+      try {
+        await _client.from('exams').delete().eq('class_id', classId);
+      } catch (_) {}
+      try {
+        await _client.from('enrollments').delete().eq('class_id', classId);
+      } catch (_) {}
+      try {
+        await _client
+            .from('learning_materials')
+            .delete()
+            .eq('class_id', classId);
+      } catch (_) {}
 
       // Finally delete class
       await _client.from('classes').delete().eq('id', classId);
     } catch (e) {
-      debugPrint("Direct Supabase course deletion notice ($e) - falling back to Backend API...");
+      debugPrint(
+          "Direct Supabase course deletion notice ($e) - falling back to Backend API...");
       // Fallback to FastAPI backend endpoint which bypasses RLS and foreign keys
       await ApiService.deleteCourse(classId);
     }
@@ -195,13 +223,11 @@ class SupabaseService {
   }
 
   static String normalizeJoinCode(String value) {
-    return value
-        .replaceAll(RegExp(r'[^A-Za-z0-9]'), '')
-        .trim()
-        .toUpperCase();
+    return value.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').trim().toUpperCase();
   }
 
-  static Future<Map<String, dynamic>?> getCourseDataByCode(String classCode) async {
+  static Future<Map<String, dynamic>?> getCourseDataByCode(
+      String classCode) async {
     final cleanCode = normalizeJoinCode(classCode);
     return await _client
         .from('classes')
@@ -216,7 +242,8 @@ class SupabaseService {
       if (user == null) throw Exception("Not authenticated");
 
       final cleanCode = normalizeJoinCode(classCode);
-      debugPrint('SUPABASE JOIN DEBUG: request classCode="$classCode" normalized="$cleanCode" user=${user.id}');
+      debugPrint(
+          'SUPABASE JOIN DEBUG: request classCode="$classCode" normalized="$cleanCode" user=${user.id}');
 
       if (cleanCode.length < 5 || cleanCode.length > 8) {
         throw Exception("Invalid course code format. Please try again.");
@@ -225,7 +252,9 @@ class SupabaseService {
       try {
         await _client.from('profiles').upsert({
           'id': user.id,
-          'name': user.userMetadata?['name'] ?? user.email?.split('@')[0] ?? 'Student',
+          'name': user.userMetadata?['name'] ??
+              user.email?.split('@')[0] ??
+              'Student',
           'email': user.email ?? '',
           'role': 'Student',
         });
@@ -239,9 +268,11 @@ class SupabaseService {
           .eq('code', cleanCode)
           .maybeSingle();
 
-      debugPrint('SUPABASE JOIN DEBUG: class lookup for $cleanCode => ${classData == null ? 'NOT_FOUND' : classData['id']}');
+      debugPrint(
+          'SUPABASE JOIN DEBUG: class lookup for $cleanCode => ${classData == null ? 'NOT_FOUND' : classData['id']}');
       if (classData == null) {
-        throw Exception("Invalid course code ($cleanCode). Please double-check and try again.");
+        throw Exception(
+            "Invalid course code ($cleanCode). Please double-check and try again.");
       }
 
       final classId = classData['id'];
@@ -260,7 +291,8 @@ class SupabaseService {
           .maybeSingle();
 
       if (existing != null) {
-        debugPrint('SUPABASE JOIN DEBUG: already enrolled user=${user.id} class=$classId');
+        debugPrint(
+            'SUPABASE JOIN DEBUG: already enrolled user=${user.id} class=$classId');
         return course;
       }
 
@@ -270,36 +302,45 @@ class SupabaseService {
         'role': 'Student',
       });
 
-      debugPrint('SUPABASE JOIN DEBUG: enrolled user=${user.id} class=$classId');
+      debugPrint(
+          'SUPABASE JOIN DEBUG: enrolled user=${user.id} class=$classId');
       return course;
-    }()).timeout(
+    }())
+        .timeout(
       const Duration(seconds: 8),
-      onTimeout: () => throw Exception('Course join timed out. Please check your network connection and try again.'),
+      onTimeout: () => throw Exception(
+          'Course join timed out. Please check your network connection and try again.'),
     );
   }
 
   static Stream<List<Map<String, dynamic>>> streamCreatedCourses() {
     final user = currentUser;
     if (user == null) return Stream.value([]);
-    return _client.from('classes').stream(primaryKey: ['id']).eq('instructor_id', user.id).order('created_at');
+    return _client
+        .from('classes')
+        .stream(primaryKey: ['id'])
+        .eq('instructor_id', user.id)
+        .order('created_at');
   }
 
   static Stream<List<Map<String, dynamic>>> streamEnrolledCourses() {
     final user = currentUser;
     if (user == null) return Stream.value([]);
     // Listen to enrollments for this user
-    return _client.from('enrollments').stream(primaryKey: ['id']).eq('user_id', user.id);
+    return _client
+        .from('enrollments')
+        .stream(primaryKey: ['id']).eq('user_id', user.id);
   }
 
   static Future<List<Course>> getEnrolledCoursesDetails() async {
     final user = currentUser;
     if (user == null) return [];
-    
+
     final response = await _client
         .from('enrollments')
         .select('*, classes(*, profiles(*))')
         .eq('user_id', user.id);
-    
+
     return (response as List).map((m) {
       final classData = m['classes'];
       return Course.fromMap(classData, isOwner: false);
@@ -309,13 +350,15 @@ class SupabaseService {
   static Future<List<Course>> getCreatedCoursesDetails() async {
     final user = currentUser;
     if (user == null) return [];
-    
+
     final response = await _client
         .from('classes')
         .select('*, profiles(*)')
         .eq('instructor_id', user.id);
-    
-    return (response as List).map((m) => Course.fromMap(m, isOwner: true)).toList();
+
+    return (response as List)
+        .map((m) => Course.fromMap(m, isOwner: true))
+        .toList();
   }
 
   // --- DATABASE: EXAMS (BR-02, BR-03) ---
@@ -333,31 +376,40 @@ class SupabaseService {
 
     try {
       // 1. Try direct Supabase insert
-      final examResponse = await _client.from('exams').insert({
-        'class_id': classId,
-        'title': '[$assessmentType] $title',
-        'is_approved': false,
-        'status': 'Draft',
-        'has_multiple_sets': hasMultipleSets,
-        if (templateId != null) 'template_id': templateId,
-      }).select('id').single();
+      final examResponse = await _client
+          .from('exams')
+          .insert({
+            'class_id': classId,
+            'title': '[$assessmentType] $title',
+            'is_approved': false,
+            'status': 'Draft',
+            'has_multiple_sets': hasMultipleSets,
+            if (templateId != null) 'template_id': templateId,
+          })
+          .select('id')
+          .single();
 
       final String examId = examResponse['id'];
 
       // 2. Insert Questions into Supabase
       if (questions.isNotEmpty) {
-        final inserts = questions.map((q) => {
-          'exam_id': examId,
-          'question_text': (q['questionText'] ?? q['text'] ?? '').toString(),
-          'correct_answer': (q['correctAnswer'] ?? q['answer'] ?? 'A').toString(),
-          'question_type': (q['questionType'] ?? 'MCQ').toString(),
-          'topic_tag': (q['topicTag'] ?? title).toString(),
-        }).toList();
+        final inserts = questions
+            .map((q) => {
+                  'exam_id': examId,
+                  'question_text':
+                      (q['questionText'] ?? q['text'] ?? '').toString(),
+                  'correct_answer':
+                      (q['correctAnswer'] ?? q['answer'] ?? 'A').toString(),
+                  'question_type': (q['questionType'] ?? 'MCQ').toString(),
+                  'topic_tag': (q['topicTag'] ?? title).toString(),
+                })
+            .toList();
 
         await _client.from('questions').insert(inserts);
       }
     } catch (e) {
-      debugPrint("Direct Supabase save notice ($e) - falling back to Backend API...");
+      debugPrint(
+          "Direct Supabase save notice ($e) - falling back to Backend API...");
       // Fallback to FastAPI backend endpoint which bypasses RLS policies
       await ApiService.saveDraft(
         classId: classId,
@@ -370,7 +422,11 @@ class SupabaseService {
   }
 
   static Stream<List<Map<String, dynamic>>> streamExams(String classId) {
-    return _client.from('exams').stream(primaryKey: ['id']).eq('class_id', classId).order('created_at', ascending: false);
+    return _client
+        .from('exams')
+        .stream(primaryKey: ['id'])
+        .eq('class_id', classId)
+        .order('created_at', ascending: false);
   }
 
   static Future<List<Map<String, dynamic>>> getExams(String classId) async {
@@ -379,7 +435,11 @@ class SupabaseService {
       return await ApiService.getExams(classId);
     } catch (e) {
       debugPrint("Direct Supabase getExams fallback ($e)...");
-      final response = await _client.from('exams').select().eq('class_id', classId).order('created_at', ascending: false);
+      final response = await _client
+          .from('exams')
+          .select('*, questions(id, question_type)')
+          .eq('class_id', classId)
+          .order('created_at', ascending: false);
       return List<Map<String, dynamic>>.from(response);
     }
   }
@@ -391,8 +451,11 @@ class SupabaseService {
       debugPrint("ApiService deleteExamApi fallback ($e)...");
       await _client.from('questions').delete().eq('exam_id', examId);
       await _client.from('ai_insights').delete().eq('exam_id', examId);
-      
-      final sheets = await _client.from('answer_sheets').select('id').eq('exam_id', examId);
+
+      final sheets = await _client
+          .from('answer_sheets')
+          .select('id')
+          .eq('exam_id', examId);
       for (final s in (sheets as List)) {
         await _client.from('grades').delete().eq('sheet_id', s['id']);
       }
@@ -401,31 +464,44 @@ class SupabaseService {
     }
   }
 
-  static Future<List<Map<String, dynamic>>> getExamQuestions(String examId) async {
+  static Future<List<Map<String, dynamic>>> getExamQuestions(
+      String examId) async {
     try {
       return await ApiService.getExamQuestions(examId);
     } catch (e) {
       debugPrint("ApiService getExamQuestions fallback ($e)...");
-      final response = await _client.from('questions').select().eq('exam_id', examId);
+      final response =
+          await _client.from('questions').select().eq('exam_id', examId);
       return List<Map<String, dynamic>>.from(response);
     }
   }
 
   static Future<void> approveExam(String examId) async {
-    await _client.from('exams').update({'is_approved': true, 'status': 'Ready'}).eq('id', examId);
+    try {
+      await ApiService.approveExam(examId);
+    } catch (e) {
+      debugPrint("ApiService approveExam fallback ($e)...");
+      await _client
+          .from('exams')
+          .update({'is_approved': true, 'status': 'Ready'}).eq('id', examId);
+    }
   }
 
-  static Future<List<Map<String, dynamic>>> getEnrolledStudents(String classId) async {
+  static Future<List<Map<String, dynamic>>> getEnrolledStudents(
+      String classId) async {
     // We must query 'enrollments' specifically for this class, and join the 'profiles' data.
-    // The previous eq('class_id', classId) was failing because RLS policies might block students 
+    // The previous eq('class_id', classId) was failing because RLS policies might block students
     // from being seen if the role wasn't checked properly, OR the query structure was off.
     final response = await _client
         .from('enrollments')
         .select('user_id, profiles(id, name)')
         .eq('class_id', classId);
-    
+
     // Filter out any null profiles just in case
-    return (response as List).where((e) => e['profiles'] != null).cast<Map<String, dynamic>>().toList();
+    return (response as List)
+        .where((e) => e['profiles'] != null)
+        .cast<Map<String, dynamic>>()
+        .toList();
   }
 
   static Future<List<Map<String, String>>> generateAnswerSheetsData(
@@ -436,8 +512,10 @@ class SupabaseService {
   }) async {
     final studentsData = await getEnrolledStudents(classId);
     studentsData.sort((a, b) {
-      final aName = (a['profiles']?['name']?.toString() ?? 'Student').toLowerCase();
-      final bName = (b['profiles']?['name']?.toString() ?? 'Student').toLowerCase();
+      final aName =
+          (a['profiles']?['name']?.toString() ?? 'Student').toLowerCase();
+      final bName =
+          (b['profiles']?['name']?.toString() ?? 'Student').toLowerCase();
       return aName.compareTo(bName);
     });
     List<Map<String, String>> sheetData = [];
@@ -464,14 +542,20 @@ class SupabaseService {
         dummySheet.remove('set_type');
         await _client.from('answer_sheets').insert(dummySheet);
       }
-      return [{'name': 'Instructor Key (Demo)', 'qrCode': dummyId, 'set': schemaSupportsSets ? (alternateSets ? 'A' : setType) : 'A'}];
+      return [
+        {
+          'name': 'Instructor Key (Demo)',
+          'qrCode': dummyId,
+          'set': schemaSupportsSets ? (alternateSets ? 'A' : setType) : 'A'
+        }
+      ];
     }
 
     for (var index = 0; index < studentsData.length; index++) {
       final s = studentsData[index];
       final profile = s['profiles'];
       if (profile == null) continue;
-      
+
       final studentId = profile['id'];
       final studentName = profile['name']?.toString() ?? 'Student';
       final studentSet = alternateSets ? (index.isEven ? 'A' : 'B') : setType;
@@ -482,7 +566,7 @@ class SupabaseService {
         try {
           final query = _client
               .from('answer_sheets')
-                .select('id, set_type')
+              .select('id, set_type')
               .eq('exam_id', examId)
               .eq('student_id', studentId);
           if (schemaSupportsSets) {
@@ -508,7 +592,8 @@ class SupabaseService {
           // Generate a new UUID and insert it as the sheet_identifier (and id)
           sheetIdentifier = uuid.v4();
           final sheet = <String, dynamic>{
-            'id': sheetIdentifier, // Explicitly set ID so QR code is identical to row UUID
+            'id':
+                sheetIdentifier, // Explicitly set ID so QR code is identical to row UUID
             'exam_id': examId,
             'student_id': studentId,
             'sheet_identifier': sheetIdentifier,
@@ -548,24 +633,50 @@ class SupabaseService {
     final user = currentUser;
     if (user == null) return null;
 
-    final response = await _client.from('grades').select('*, answer_sheets!inner(exam_id, student_id)').eq('answer_sheets.exam_id', examId).eq('answer_sheets.student_id', user.id).maybeSingle();
+    final response = await _client
+        .from('grades')
+        .select('*, answer_sheets!inner(exam_id, student_id)')
+        .eq('answer_sheets.exam_id', examId)
+        .eq('answer_sheets.student_id', user.id)
+        .maybeSingle();
     if (response == null) return null;
 
-    final insight = await _client.from('ai_insights').select().eq('exam_id', examId).eq('student_id', user.id).maybeSingle();
+    final insight = await _client
+        .from('ai_insights')
+        .select()
+        .eq('exam_id', examId)
+        .eq('student_id', user.id)
+        .maybeSingle();
 
     return {'grade': response, 'insight': insight};
   }
 
   static Future<Map<String, dynamic>> getClassAnalytics(String classId) async {
-    final grades = await _client.from('grades').select('percentage, answer_sheets!inner(exam_id)').eq('answer_sheets.exam_id', classId);
+    final grades = await _client
+        .from('grades')
+        .select('percentage, answer_sheets!inner(exams!inner(class_id))')
+        .eq('answer_sheets.exams.class_id', classId);
     if (grades.isEmpty) return {'avg': 0.0, 'count': 0};
-    final total = grades.fold<double>(0, (sum, item) => sum + (item['percentage'] ?? 0.0));
+    final total = grades.fold<double>(
+        0, (sum, item) => sum + (item['percentage'] ?? 0.0));
+    return {'avg': total / grades.length, 'count': grades.length};
+  }
+
+  static Future<Map<String, dynamic>> getExamAnalytics(String examId) async {
+    final grades = await _client
+        .from('grades')
+        .select('percentage, answer_sheets!inner(exam_id)')
+        .eq('answer_sheets.exam_id', examId);
+    if (grades.isEmpty) return {'avg': 0.0, 'count': 0};
+    final total = grades.fold<double>(
+        0, (sum, item) => sum + (item['percentage'] ?? 0.0));
     return {'avg': total / grades.length, 'count': grades.length};
   }
 
   // --- DATABASE: LEARNING MATERIALS (BR-13) ---
 
-  static Stream<List<Map<String, dynamic>>> streamLearningMaterials(String classId) {
+  static Stream<List<Map<String, dynamic>>> streamLearningMaterials(
+      String classId) {
     return _client
         .from('learning_materials')
         .stream(primaryKey: ['id'])
@@ -578,7 +689,8 @@ class SupabaseService {
     required String fileName,
     required Uint8List bytes,
   }) async {
-    final storagePath = 'class_$classId/${DateTime.now().millisecondsSinceEpoch}_$fileName';
+    final storagePath =
+        'class_$classId/${DateTime.now().millisecondsSinceEpoch}_$fileName';
     try {
       await _client.storage.from('materials').uploadBinary(
             storagePath,

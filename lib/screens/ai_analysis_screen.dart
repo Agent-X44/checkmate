@@ -3,6 +3,7 @@ import '../services/api_service.dart';
 import '../utils/ui_utils.dart';
 import '../models/omr/processed_sheet.dart';
 import 'session_insights_screen.dart';
+import 'sheet_evaluation_screen.dart';
 
 /// Screen summarizing the current OMR scanning session.
 /// Enforces:
@@ -64,8 +65,28 @@ class _AIAnalysisScreenState extends State<AIAnalysisScreen> {
                     title: Text(sheet.qrData?.studentName ?? "Unknown Student"),
                     subtitle: Text("Score: ${ApiService.calculateScore(sheet).toStringAsFixed(1)}%"),
                     trailing: const Icon(Icons.chevron_right),
-                    onTap: () {
-                      // Logic for individual sheet review could be added here
+                    onTap: () async {
+                      final updated = await Navigator.push<ProcessedSheet>(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => SheetEvaluationScreen(
+                            sheet: sheet,
+                            metadata: {
+                              'student_name': sheet.qrData?.studentName,
+                              'set_type': sheet.detectedSet,
+                              'exams': {
+                                'title': sheet.templateName,
+                                'id': sheet.qrData?.examCode,
+                              },
+                            },
+                          ),
+                        ),
+                      );
+                      if (updated != null && mounted) {
+                        setState(() {
+                          _results[index] = updated;
+                        });
+                      }
                     },
                   ),
                 );

@@ -366,7 +366,10 @@ async def generate_exam(request: ExamRequest):
                         "class_id": request.class_id,
                         "title": f"[{request.assessment_type}] {request.topic}",
                         "is_approved": False,
-                        "template_id": template_id
+                        "template_id": template_id,
+                        "total_questions": request.question_count,
+                        "mcq_count": request.mcq_count,
+                        "tf_count": request.tf_count,
                     }).execute()
                     if res.data: exam_id = res.data[0]['id']
                 except Exception as db_err:
@@ -480,7 +483,10 @@ async def generate_exam_stream(
                         "title": f"[{assessment_type}] {topic}",
                         "is_approved": False,
                         "template_id": template_id,
-                        "has_multiple_sets": has_multiple_sets
+                        "has_multiple_sets": has_multiple_sets,
+                        "total_questions": question_count,
+                        "mcq_count": mcq_count,
+                        "tf_count": tf_count,
                     }).execute()
                     if res.data: exam_id = res.data[0]['id']
                 except Exception as db_err:
@@ -626,7 +632,10 @@ async def save_draft(request: SaveDraftRequest):
             "is_approved": False,
             "status": "Draft",
             "template_id": template_id,
-            "has_multiple_sets": request.has_multiple_sets
+            "has_multiple_sets": request.has_multiple_sets,
+            "total_questions": len(request.questions),
+            "mcq_count": mcq_count,
+            "tf_count": tf_count,
         }).execute()
         
         if not res.data:
@@ -711,11 +720,65 @@ async def get_exams(class_id: str):
     if not supabase:
         raise HTTPException(status_code=500, detail="Database unconfigured")
     try:
-        res = supabase.table("exams").select("*").eq("class_id", class_id).order("created_at", desc=True).execute()
+        res = supabase.table("exams").select("*, questions(id, question_type), answer_sheets(id, grades(percentage))").eq("class_id", class_id).order("created_at", desc=True).execute()
         return res.data or []
     except Exception as e:
         logger.error(f"Get exams error: {e}")
         raise HTTPException(status_code=500, detail=f"Database query error: {str(e)}")
+
+@app.post("/approve-exam/{exam_id}")
+async def approve_exam(exam_id: str):
+    """Approve an exam, locking content and marking it Ready bypassing RLS."""
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database unconfigured")
+    try:
+        res = supabase.table("exams").update({
+            "is_approved": True,
+            "status": "Ready"
+        }).eq("id", exam_id).execute()
+        
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Exam not found")
+        return {"status": "success", "exam_id": exam_id, "is_approved": True}
+    except Exception as e:
+        logger.error(f"Approve exam error: {e}")
+        raise HTTPException(status_code=500, detail=f"Approve exam error: {str(e)}")
+
+@app.post("/unapprove-exam/{exam_id}")
+async def unapprove_exam(exam_id: str):
+    """Unapprove an exam so it returns to Draft status."""
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database unconfigured")
+    try:
+        res = supabase.table("exams").update({
+            "is_approved": False,
+            "status": "Draft"
+        }).eq("id", exam_id).execute()
+        
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Exam not found")
+        return {"status": "success", "exam_id": exam_id, "is_approved": False}
+    except Exception as e:
+        logger.error(f"Unapprove exam error: {e}")
+        raise HTTPException(status_code=500, detail=f"Unapprove exam error: {str(e)}")
+
+@app.post("/release-results/{exam_id}")
+async def release_results(exam_id: str):
+    """Release assessment results to students bypassing RLS."""
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database unconfigured")
+    try:
+        res = supabase.table("exams").update({
+            "results_released": True,
+            "status": "Published"
+        }).eq("id", exam_id).execute()
+        
+        if not res.data:
+            raise HTTPException(status_code=404, detail="Exam not found")
+        return {"status": "success", "exam_id": exam_id, "results_released": True}
+    except Exception as e:
+        logger.error(f"Release results error: {e}")
+        raise HTTPException(status_code=500, detail=f"Release results error: {str(e)}")
 
 @app.delete("/delete-course/{class_id}")
 async def delete_course(class_id: str):
@@ -772,10 +835,12 @@ async def delete_course(class_id: str):
         raise HTTPException(status_code=500, detail=f"Delete course error: {str(e)}")
 
 @app.get("/resolve-sheet/{sheet_id}")
-async def resolve_sheet(sheet_id: str):
-    """BR-05: Resolve sheet metadata by sheet_id."""
+async def resolve_sheet(sheet_id: str, user=Depends(get_current_user)):
+    """BR-05: Resolve sheet metadata by sheet_id, enforcing Instructor authorization."""
     if not supabase:
         raise HTTPException(status_code=500, detail="Database connection unconfigured")
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
         uuid.UUID(str(sheet_id))
@@ -783,10 +848,25 @@ async def resolve_sheet(sheet_id: str):
         raise HTTPException(status_code=404, detail="Sheet not found")
 
     try:
-        res = supabase.table("answer_sheets").select("*, exams(*)").eq("id", sheet_id).execute()
+        # Fetch sheet and deeply join profiles, exam and class
+        res = supabase.table("answer_sheets").select("*, profiles(*), exams(*, classes(*))").eq("id", sheet_id).execute()
         if not res.data:
             raise HTTPException(status_code=404, detail="Sheet not found")
-        return res.data[0]
+            
+        sheet_data = res.data[0]
+        profile = sheet_data.get('profiles') or {}
+        sheet_data['student_name'] = profile.get('name', 'Student')
+        
+        # BR Authorization Gate: Ensure the current user is the instructor of the class that owns this exam
+        exam = sheet_data.get('exams')
+        if not exam:
+            raise HTTPException(status_code=403, detail="Assessment data is corrupted or missing.")
+            
+        course = exam.get('classes')
+        if not course or course.get('instructor_id') != user.user.id:
+            raise HTTPException(status_code=403, detail="You are not authorized to evaluate this assessment.")
+            
+        return sheet_data
     except HTTPException:
         raise
     except Exception as e:
@@ -803,7 +883,7 @@ async def batch_sync(sync_data: BatchSyncRequest):
             try:
                 # Ensure the sheet_id is a valid UUID before trying to insert to avoid Supabase 22P02 errors
                 uuid.UUID(str(r.sheet_id))
-                supabase.table("grades").insert({
+                supabase.table("grades").upsert({
                     "sheet_id": r.sheet_id,
                     "score": r.score,
                     "total_questions": r.total,

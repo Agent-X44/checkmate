@@ -6,6 +6,7 @@ class BubbleResult {
   final bool isFilled;
   final List<String> multipleAnswers;
   final bool isAmbiguous;
+  final bool? isCorrect; // Added to store grading status
 
   BubbleResult({
     this.answer,
@@ -13,6 +14,7 @@ class BubbleResult {
     this.isFilled = false,
     this.multipleAnswers = const [],
     this.isAmbiguous = false,
+    this.isCorrect,
   });
 
   Map<String, dynamic> toMap() {
@@ -22,6 +24,7 @@ class BubbleResult {
       'isFilled': isFilled,
       'multipleAnswers': multipleAnswers,
       'isAmbiguous': isAmbiguous,
+      'isCorrect': isCorrect,
     };
   }
 
@@ -31,6 +34,7 @@ class BubbleResult {
     bool? isFilled,
     List<String>? multipleAnswers,
     bool? isAmbiguous,
+    bool? isCorrect,
   }) {
     return BubbleResult(
       answer: answer ?? this.answer,
@@ -38,6 +42,7 @@ class BubbleResult {
       isFilled: isFilled ?? this.isFilled,
       multipleAnswers: multipleAnswers ?? this.multipleAnswers,
       isAmbiguous: isAmbiguous ?? this.isAmbiguous,
+      isCorrect: isCorrect ?? this.isCorrect,
     );
   }
 }
