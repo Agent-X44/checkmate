@@ -57,7 +57,7 @@ class _SessionInsightsScreenState extends State<SessionInsightsScreen> {
     _pollingTimer = Timer.periodic(const Duration(seconds: 5), (timer) async {
       try {
         final data = await ApiService.analyzeClass(widget.examId);
-        if (data.containsKey('insights') && data['insights'] != null) {
+        if (data.containsKey('analysis') && data['analysis'] != null) {
           timer.cancel();
           if (mounted) {
             setState(() {
@@ -94,9 +94,9 @@ class _SessionInsightsScreenState extends State<SessionInsightsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildInsightCard("PEDAGOGICAL INSIGHTS", _insights?['insights'] ?? "Analysis unavailable.", Icons.psychology),
+                _buildInsightCard("PEDAGOGICAL INSIGHTS", _insights?['analysis']?['insights'] ?? "Analysis unavailable.", Icons.psychology),
                 const SizedBox(height: 20),
-                _buildInsightCard("TEACHING RECOMMENDATIONS", _insights?['recommendation'] ?? "Review flagged questions manually.", Icons.school),
+                _buildInsightCard("TEACHING RECOMMENDATIONS", _insights?['analysis']?['recommendations'] ?? "Review flagged questions manually.", Icons.school),
                 
                 const SizedBox(height: 40),
                 const Text("BR-11: CONTROLLED RELEASE", 

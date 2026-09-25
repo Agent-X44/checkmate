@@ -28,12 +28,6 @@ class ThresholdService {
     final clean = cv.morphologyEx(binary, cv.MORPH_OPEN, kernel);
 
     // Cleanup
-    if (gray != src) gray.dispose();
-    normalized.dispose();
-    blurred.dispose();
-    clahe.dispose();
-    binary.dispose();
-    kernel.dispose();
 
     return clean;
   }

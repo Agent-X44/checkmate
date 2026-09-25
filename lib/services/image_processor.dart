@@ -88,33 +88,19 @@ class ScanResponse {
 }
 
 /// [LABEL: Memory Management]
-/// Helper class to track and safely dispose OpenCV objects to prevent FFI memory leaks.
-/// Ensures that even if an exception is thrown in the middle of a CV pipeline,
-/// native memory is correctly freed.
+/// Helper class to track OpenCV objects.
+/// OpenCV Dart 2.0+ uses automatic memory management via Finalizers.
+/// Manual disposal can cause double-free crashes during heavy GC.
 class CvPool {
-  final List<dynamic> _objects = [];
-
   T add<T>(T obj) {
-    _objects.add(obj);
     return obj;
   }
 
   void disposeAll() {
-    for (var obj in _objects) {
-      try {
-        if (obj is cv.Mat) {
-           if (!obj.isEmpty) obj.dispose();
-        } else if (obj is cv.VecPoint) {
-           if (obj.isNotEmpty) obj.dispose();
-        } else {
-           // ignore: avoid_dynamic_calls
-           obj.dispose();
-        }
-      } catch (_) {}
-    }
-    _objects.clear();
+    // No-op: Let Dart Garbage Collector and OpenCV Finalizers handle memory.
   }
 }
+
 
 /// Core Computer Vision engine for OMR processing.
 /// 
@@ -166,11 +152,13 @@ class ImageProcessor {
         final cleanBytes = Uint8List(message.width * message.height);
         for (int y = 0; y < message.height; y++) {
           int start = y * message.bytesPerRow;
-          cleanBytes.setRange(
-            y * message.width,
-            (y + 1) * message.width,
-            message.bytes.getRange(start, start + message.width),
-          );
+          if (start + message.width <= message.bytes.length) {
+            cleanBytes.setRange(
+              y * message.width,
+              (y + 1) * message.width,
+              message.bytes.getRange(start, start + message.width),
+            );
+          }
         }
         mat = pool.add(cv.Mat.fromList(
             message.height, message.width, cv.MatType.CV_8UC1, cleanBytes));

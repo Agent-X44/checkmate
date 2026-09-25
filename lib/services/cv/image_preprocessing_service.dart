@@ -14,7 +14,6 @@ class ImagePreprocessingService {
     );
 
     if (gray != input) {
-      gray.dispose();
     }
     return binary;
   }

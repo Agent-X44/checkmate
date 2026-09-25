@@ -21,19 +21,7 @@ class QrPool {
   }
 
   void disposeAll() {
-    for (var obj in _objects) {
-      try {
-        if (obj is cv.Mat) {
-          if (!obj.isEmpty) obj.dispose();
-        } else if (obj is cv.VecPoint) {
-          if (obj.isNotEmpty) obj.dispose();
-        } else {
-          // ignore: avoid_dynamic_calls
-          obj.dispose();
-        }
-      } catch (_) {}
-    }
-    _objects.clear();
+    // No-op: Let Dart Garbage Collector and OpenCV Finalizers handle memory.
   }
 }
 
@@ -80,11 +68,9 @@ class QrDetectionService {
           fastMode: fastMode,
         );
         if (result != null) {
-          rot90.dispose();
           return result;
         }
       }
-      rot90.dispose();
 
       // 3. Fallback Sweep: 270 deg rotation
       final cv.Mat rot270 = cv.rotate(input, cv.ROTATE_90_COUNTERCLOCKWISE);
@@ -97,11 +83,9 @@ class QrDetectionService {
           fastMode: fastMode,
         );
         if (result != null) {
-          rot270.dispose();
           return result;
         }
       }
-      rot270.dispose();
 
       // 4. Fallback Sweep: 180 deg rotation
       final cv.Mat rot180 = cv.rotate(input, cv.ROTATE_180);
@@ -114,11 +98,9 @@ class QrDetectionService {
           fastMode: fastMode,
         );
         if (result != null) {
-          rot180.dispose();
           return result;
         }
       }
-      rot180.dispose();
     } catch (e) {
       debugPrint("QR Detection Error: $e");
     }

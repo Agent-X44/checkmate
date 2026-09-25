@@ -109,8 +109,6 @@ class PerspectiveService {
     final M = cv.getPerspectiveTransform(orderedCorners, destPoints);
     final warped = cv.warpPerspective(src, M, (targetWidth, targetHeight));
 
-    M.dispose();
-    destPoints.dispose();
 
     return warped;
   }

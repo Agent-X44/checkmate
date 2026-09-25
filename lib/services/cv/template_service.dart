@@ -82,7 +82,6 @@ class TemplateService {
       final (_, otsu) =
           cv.threshold(gray, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
       binary = otsu;
-      gray.dispose();
     }
 
     // 2. Horizontal Projection (Row Sums)
@@ -91,7 +90,6 @@ class TemplateService {
     final List<int> rowSums = List.generate(h, (y) {
       final row = binary.region(cv.Rect(0, y, w, 1));
       final count = cv.countNonZero(row);
-      row.dispose();
       return count;
     });
 
@@ -162,7 +160,6 @@ class TemplateService {
       }
     }
 
-    binary.dispose();
     return rowMats;
   }
 }

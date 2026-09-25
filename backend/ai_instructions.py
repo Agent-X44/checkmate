@@ -13,11 +13,12 @@ SYSTEM_ASSESSMENT_DESIGN = (
     "5. For TF, options must be ['True', 'False'] and correctAnswer A or B.\n"
     "6. Randomize the correct answers. Do NOT use patterns.\n"
     "7. OUTPUT ONLY RAW JSON.\n"
-    "8. NO PREAMBLE. NO EXPLANATIONS.\n\n"
+    "8. Include a 'reasoning' field to think step-by-step before determining the correct answer.\n\n"
     "Example Output Format:\n"
     "{\n"
     "  \"questions\": [\n"
     "    {\n"
+    "      \"reasoning\": \"The capital of France is Paris, which is option A.\",\n"
     "      \"part\": 1,\n"
     "      \"questionType\": \"MCQ\",\n"
     "      \"questionText\": \"What is...\",\n"
@@ -59,18 +60,13 @@ def get_existing_questions_prompt(material: str, count: int) -> str:
 # --- PROMPT 2: CLASS-WIDE PERFORMANCE SUMMARY ---
 SYSTEM_CLASS_ANALYSIS = (
     "You are an Educational Data Analyst. Analyze the provided assessment results and return a structured JSON summary. "
-    "Identify common misconceptions based on the data and provide actionable teaching recommendations.\n\n"
+    "First, use the 'reasoning' field to think step-by-step (Chain of Thought) about the data, identifying score trends, specific question failures, and common misconceptions. "
+    "Then, provide a cohesive paragraph of 'insights' and a paragraph of 'recommendations' for the instructor.\n\n"
     "Example Output Format:\n"
     "{\n"
-    "  \"topicBreakdown\": [\n"
-    "    {\"topic\": \"Topic Name\", \"averageScore\": 85.5, \"studentCount\": 25}\n"
-    "  ],\n"
-    "  \"commonMisconceptions\": [\n"
-    "    \"Students frequently confuse X with Y.\"\n"
-    "  ],\n"
-    "  \"teachingRecommendations\": [\n"
-    "    \"Review the differences between X and Y.\"\n"
-    "  ]\n"
+    "  \"reasoning\": \"Step 1: The average score is 60%. Question 2 had a 90% failure rate...\",\n"
+    "  \"insights\": \"Students generally understood the basic concepts but struggled significantly with...\",\n"
+    "  \"recommendations\": \"Review the topic from Question 2, specifically focusing on...\"\n"
     "}"
 )
 
@@ -83,7 +79,16 @@ def get_class_analysis_prompt(data_json: str) -> str:
 # --- PROMPT 3: PERSONALIZED STUDENT INSIGHT ---
 SYSTEM_STUDENT_MENTOR = (
     "You are a supportive academic mentor. Return structured JSON feedback based on the student's performance. "
-    "Provide a constructive summary, highlight strengths, identify learning gaps from their errors, and list actionable steps for improvement."
+    "First, use the 'reasoning' field to think step-by-step about what the student got right and wrong, and why they might have made those mistakes. "
+    "Then, provide a constructive 'performanceSummary', highlight 'strengths', identify 'learningGaps' from their errors, and list 'actionableSteps' for improvement.\n\n"
+    "Example Output Format:\n"
+    "{\n"
+    "  \"reasoning\": \"The student got 8/10. They missed questions on derivatives of sine and cosine, confusing the negative signs...\",\n"
+    "  \"performanceSummary\": \"Great job overall! You show a strong grasp of the fundamentals...\",\n"
+    "  \"strengths\": [\"Understanding the power rule\", \"Applying the product rule\"],\n"
+    "  \"learningGaps\": [\"Sign changes in trigonometric derivatives\"],\n"
+    "  \"actionableSteps\": [\"Review the derivative of cos(x)\", \"Practice 5 more trig derivative problems\"]\n"
+    "}"
 )
 
 def get_student_insight_prompt(name: str, score: int, total: int, pct: float, errors_json: str) -> str:

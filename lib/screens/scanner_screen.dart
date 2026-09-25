@@ -1296,8 +1296,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    CircularProgressIndicator(color: accentColor),
-                    const SizedBox(height: 16),
                     const Text("IDENTIFYING STUDENT...",
                         style: TextStyle(
                             color: Colors.white,

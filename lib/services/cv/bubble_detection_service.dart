@@ -70,7 +70,6 @@ class BubbleDetectionService {
       final (_, otsu) =
           cv.threshold(gray, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
       binary = otsu;
-      gray.dispose();
     }
 
     final int w = binary.width;
@@ -89,7 +88,6 @@ class BubbleDetectionService {
         );
         final cellMat = binary.region(rect);
         fillRatios.add(cv.countNonZero(cellMat) / (rect.width * rect.height));
-        cellMat.dispose();
       }
     } else {
       final double gridStartX = w * gridStart;
@@ -132,7 +130,6 @@ class BubbleDetectionService {
         }
 
         fillRatios.add(fillRatio);
-        cellMat.dispose();
       }
     }
 
@@ -144,7 +141,6 @@ class BubbleDetectionService {
       }
     }
 
-    binary.dispose();
 
     // 4. MAP TO LETTERS
     final List<String> answers =
