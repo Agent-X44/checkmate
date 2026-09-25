@@ -41,7 +41,7 @@ class LearningMaterialItem {
       fileType: map['file_type'] ?? 'pdf',
       fileSize: map['file_size'] ?? '1.0 MB',
       fileUrl: map['file_url'] ?? '',
-      uploadedAt: map['created_at'] != null 
+      uploadedAt: map['created_at'] != null
           ? DateTime.tryParse(map['created_at'].toString()) ?? DateTime.now()
           : DateTime.now(),
     );
@@ -59,7 +59,8 @@ class LearningMaterialsScreen extends StatefulWidget {
   });
 
   @override
-  State<LearningMaterialsScreen> createState() => _LearningMaterialsScreenState();
+  State<LearningMaterialsScreen> createState() =>
+      _LearningMaterialsScreenState();
 }
 
 class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
@@ -70,7 +71,8 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
   Future<void> _pickAndUploadFile() async {
     // Security check: Only instructors can upload
     if (!widget.isOwner) {
-      CheckMateUi.showTopPrompt(context, 'Only instructors can upload learning materials.');
+      CheckMateUi.showTopPrompt(
+          context, 'Only instructors can upload learning materials.');
       return;
     }
 
@@ -85,7 +87,9 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
         final file = result.files.first;
         final extension = (file.extension ?? 'pdf').toLowerCase();
         final sizeInMb = (file.size / (1024 * 1024)).toStringAsFixed(1);
-        final sizeStr = file.size > 1024 * 1024 ? '$sizeInMb MB' : '${(file.size / 1024).toStringAsFixed(0)} KB';
+        final sizeStr = file.size > 1024 * 1024
+            ? '$sizeInMb MB'
+            : '${(file.size / 1024).toStringAsFixed(0)} KB';
         final title = file.name.split('.').first.replaceAll('_', ' ');
 
         // 1. Optimistic UI: Create pending item with active card progress bar
@@ -181,7 +185,9 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
     if (mounted) {
       CheckMateUi.showTopPrompt(
         context,
-        widget.isOwner ? 'Opening ${item.fileName}...' : 'Downloading ${item.fileName}...',
+        widget.isOwner
+            ? 'Opening ${item.fileName}...'
+            : 'Downloading ${item.fileName}...',
         isError: false,
       );
     }
@@ -193,22 +199,18 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
           await dio.download(item.fileUrl, localFile.path);
         } catch (_) {
           // Fallback placeholder write
-          await localFile.writeAsString(
-            'CheckMate Learning Material\n\n'
-            'Title: ${item.title}\n'
-            'File: ${item.fileName}\n'
-            'Type: ${item.fileType.toUpperCase()}\n'
-            'Downloaded At: ${DateTime.now()}\n\n'
-            'This is an official course document generated for CheckMate LMS.'
-          );
+          await localFile.writeAsString('CheckMate Learning Material\n\n'
+              'Title: ${item.title}\n'
+              'File: ${item.fileName}\n'
+              'Type: ${item.fileType.toUpperCase()}\n'
+              'Downloaded At: ${DateTime.now()}\n\n'
+              'This is an official course document generated for CheckMate LMS.');
         }
       } else {
-        await localFile.writeAsString(
-          'CheckMate Learning Material\n\n'
-          'Title: ${item.title}\n'
-          'File: ${item.fileName}\n'
-          'Downloaded At: ${DateTime.now()}\n'
-        );
+        await localFile.writeAsString('CheckMate Learning Material\n\n'
+            'Title: ${item.title}\n'
+            'File: ${item.fileName}\n'
+            'Downloaded At: ${DateTime.now()}\n');
       }
 
       if (mounted) {
@@ -252,7 +254,8 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
               try {
                 await SupabaseService.deleteLearningMaterial(item.id);
                 if (mounted) {
-                  CheckMateUi.showTopPrompt(context, 'Deleted ${item.fileName}', isError: false);
+                  CheckMateUi.showTopPrompt(context, 'Deleted ${item.fileName}',
+                      isError: false);
                 }
               } catch (e) {
                 if (mounted) {
@@ -324,9 +327,10 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
     final label = _getFileTypeLabel(item.fileType);
     final isDownloading = _downloadingMap[item.id] == true;
     final isUploading = item.isUploading;
-    
+
     // For the instructor (uploader), the icon is ALWAYS an "Open" icon (Icons.open_in_new)
-    final isOpen = widget.isOwner || (item.localPath != null && File(item.localPath!).existsSync());
+    final isOpen = widget.isOwner ||
+        (item.localPath != null && File(item.localPath!).existsSync());
 
     return Card(
       clipBehavior: Clip.antiAlias,
@@ -366,10 +370,14 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
                           overflow: TextOverflow.ellipsis,
                         ),
                         const SizedBox(height: 4),
-                        Row(
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
                               decoration: BoxDecoration(
                                 color: color.withValues(alpha: 0.15),
                                 borderRadius: BorderRadius.circular(4),
@@ -383,15 +391,20 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 8),
                             Text(
-                              isUploading ? 'Uploading to database...' : '${item.fileSize} • $label',
+                              isUploading
+                                  ? 'Uploading to database...'
+                                  : '${item.fileSize} • $label',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: isUploading
                                     ? color
-                                    : (isDark ? Colors.white60 : Colors.black54),
-                                fontWeight: isUploading ? FontWeight.w600 : FontWeight.normal,
+                                    : (isDark
+                                        ? Colors.white60
+                                        : Colors.black54),
+                                fontWeight: isUploading
+                                    ? FontWeight.w600
+                                    : FontWeight.normal,
                               ),
                             ),
                           ],
@@ -411,7 +424,9 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
                       icon: Icon(
                         isOpen ? Icons.open_in_new : Icons.file_download,
                         color: isOpen
-                            ? (isDark ? theme.colorScheme.secondary : theme.colorScheme.primary)
+                            ? (isDark
+                                ? theme.colorScheme.secondary
+                                : theme.colorScheme.primary)
                             : (isDark ? Colors.white70 : Colors.black54),
                         size: 22,
                       ),
@@ -447,17 +462,20 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
       body: StreamBuilder<List<Map<String, dynamic>>>(
         stream: SupabaseService.streamLearningMaterials(widget.courseId),
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting && _pendingUploadItem == null) {
+          if (snapshot.connectionState == ConnectionState.waiting &&
+              _pendingUploadItem == null) {
             return const Center(child: CircularProgressIndicator());
           }
 
           final rawList = snapshot.data ?? [];
-          final streamMaterials = rawList.map((m) => LearningMaterialItem.fromMap(m)).toList();
+          final streamMaterials =
+              rawList.map((m) => LearningMaterialItem.fromMap(m)).toList();
 
           // Merge optimistic pending upload item if not yet present in stream
           final materials = <LearningMaterialItem>[];
           if (_pendingUploadItem != null) {
-            final existsInStream = streamMaterials.any((m) => m.fileName == _pendingUploadItem!.fileName);
+            final existsInStream = streamMaterials
+                .any((m) => m.fileName == _pendingUploadItem!.fileName);
             if (!existsInStream) {
               materials.add(_pendingUploadItem!);
             }
@@ -466,46 +484,61 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
 
           if (materials.isEmpty) {
             return Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.folder_open, size: 64, color: Colors.grey.shade400),
-                  const SizedBox(height: 16),
-                  Text(
-                    'No learning materials uploaded yet.',
-                    style: TextStyle(color: isDark ? Colors.white70 : Colors.black54, fontSize: 16),
-                  ),
-                  if (widget.isOwner) ...[
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Tap + to upload PPTX, DOCX, or PDF files.',
-                      style: TextStyle(color: Colors.grey, fontSize: 13),
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.folder_open,
+                        size: 64, color: Colors.grey.shade400),
+                    const SizedBox(height: 16),
+                    Text(
+                      'No learning materials uploaded yet.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                          color: isDark ? Colors.white70 : Colors.black54,
+                          fontSize: 16),
                     ),
+                    if (widget.isOwner) ...[
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Tap + to upload PPTX, DOCX, or PDF files.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Colors.grey, fontSize: 13),
+                      ),
+                    ],
                   ],
-                ],
+                ),
               ),
             );
           }
 
-          return ListView.builder(
-            padding: const EdgeInsets.all(16),
-            itemCount: materials.length,
-            itemBuilder: (context, index) {
-              final item = materials[index];
-              return _buildMaterialCard(
-                context,
-                item,
-                isDark: isDark,
-                theme: theme,
-              );
-            },
+          return Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 840),
+              child: ListView.builder(
+                padding: const EdgeInsets.all(16),
+                itemCount: materials.length,
+                itemBuilder: (context, index) {
+                  final item = materials[index];
+                  return _buildMaterialCard(
+                    context,
+                    item,
+                    isDark: isDark,
+                    theme: theme,
+                  );
+                },
+              ),
+            ),
           );
         },
       ),
       floatingActionButton: widget.isOwner
           ? FloatingActionButton.extended(
               onPressed: _isUploading ? null : _pickAndUploadFile,
-              backgroundColor: isDark ? theme.colorScheme.secondary : theme.colorScheme.primary,
+              backgroundColor: isDark
+                  ? theme.colorScheme.secondary
+                  : theme.colorScheme.primary,
               foregroundColor: isDark ? Colors.black : Colors.white,
               icon: const Icon(Icons.upload_file),
               label: Text(

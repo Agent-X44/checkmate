@@ -26,10 +26,11 @@ class AIQuestionnaireScreen extends StatefulWidget {
 }
 
 class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
-  final TextEditingController _inputController = TextEditingController(text: '');
+  final TextEditingController _inputController =
+      TextEditingController(text: '');
   int _currentStep = 0; // 0: Input, 1: Terminal, 2: Review
   String _assessmentType = 'Quiz'; // Can be 'Quiz' or 'Exam'
-  
+
   late int _selectedTotal;
   late BubbleSheetTemplate _selectedTemplate;
 
@@ -50,9 +51,8 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
     final totals = _templatesByTotal.keys.toList()..sort();
     _selectedTotal = totals.contains(50) ? 50 : totals.first;
     _selectedTemplate = _templatesByTotal[_selectedTotal]!.firstWhere(
-      (t) => t.tfCount == 0, 
-      orElse: () => _templatesByTotal[_selectedTotal]!.first
-    );
+        (t) => t.tfCount == 0,
+        orElse: () => _templatesByTotal[_selectedTotal]!.first);
   }
 
   // Terminal Logic
@@ -80,7 +80,9 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
         templateId: _selectedTemplate.id,
       );
       if (mounted) {
-        CheckMateUi.showTopPrompt(context, '$_assessmentType saved to Drafts successfully!', isError: false);
+        CheckMateUi.showTopPrompt(
+            context, '$_assessmentType saved to Drafts successfully!',
+            isError: false);
         Navigator.pop(context, true);
       }
     } catch (e) {
@@ -106,7 +108,8 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
           _selectedFile = result.files.first;
           // Pre-fill topic from filename if empty
           if (_inputController.text.trim().isEmpty) {
-            _inputController.text = _selectedFile!.name.split('.').first.replaceAll('_', ' ');
+            _inputController.text =
+                _selectedFile!.name.split('.').first.replaceAll('_', ' ');
           }
         });
       }
@@ -117,13 +120,13 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
 
   void _startGeneration() async {
     if (_inputController.text.trim().isEmpty && _selectedFile == null) return;
-    
+
     // Hide keyboard safely
     FocusScope.of(context).unfocus();
     await Future.delayed(const Duration(milliseconds: 300));
 
     if (!mounted) return;
-    
+
     setState(() {
       _currentStep = 1;
       _streamedText = "LOG: Initializing Pipeline...\n\n";
@@ -139,7 +142,8 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
     // Choose the appropriate streaming API depending on whether a file was selected
     Stream<Map<String, dynamic>> stream;
     if (_selectedFile != null) {
-      List<int> bytes = _selectedFile!.bytes ?? (await File(_selectedFile!.path!).readAsBytes());
+      List<int> bytes = _selectedFile!.bytes ??
+          (await File(_selectedFile!.path!).readAsBytes());
       stream = ApiService.generateExamWithFile(
         topic: _inputController.text,
         classId: widget.classId,
@@ -175,7 +179,7 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
       final type = event['type'];
       if (type == 'token') {
         setState(() => _streamedText += (event['content'] ?? ''));
-        
+
         // Auto-scroll to bottom of terminal
         Timer(const Duration(milliseconds: 100), () {
           if (_terminalScrollController.hasClients) {
@@ -195,19 +199,23 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
             _finalQuestions = [questionsJson];
           }
           _isGenerationFinished = true;
-          _streamedText += "\n\n[SYSTEM] Assessment created and saved successfully! Transitioning...";
+          _streamedText +=
+              "\n\n[SYSTEM] Assessment created and saved successfully! Transitioning...";
         });
-        
+
         // Smooth transition to Review Step
         Future.delayed(const Duration(milliseconds: 1500), () {
-           if (mounted) setState(() => _currentStep = 2);
+          if (mounted) setState(() => _currentStep = 2);
         });
       } else if (type == 'error') {
-        setState(() => _streamedText += "\n[CRITICAL] Error: ${event['content']}");
-        CheckMateUi.showTopPrompt(context, 'Generation Failed: ${event['content']}');
+        setState(
+            () => _streamedText += "\n[CRITICAL] Error: ${event['content']}");
+        CheckMateUi.showTopPrompt(
+            context, 'Generation Failed: ${event['content']}');
       }
     }, onError: (e) {
-      if (mounted) setState(() => _streamedText += "\n[CRITICAL] Stream Error: $e");
+      if (mounted)
+        setState(() => _streamedText += "\n[CRITICAL] Stream Error: $e");
     });
   }
 
@@ -225,11 +233,11 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
       appBar: AppBar(title: Text('AI ${widget.type} Builder')),
       body: AnimatedSwitcher(
         duration: const Duration(milliseconds: 500),
-        child: _currentStep == 0 
-          ? _buildInput() 
-          : _currentStep == 1 
-            ? _buildTerminal() 
-            : _buildReview(),
+        child: _currentStep == 0
+            ? _buildInput()
+            : _currentStep == 1
+                ? _buildTerminal()
+                : _buildReview(),
       ),
     );
   }
@@ -237,165 +245,226 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
   Widget _buildInput() {
     return SingleChildScrollView(
       key: const ValueKey(0),
-      padding: const EdgeInsets.all(24.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Question Source', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 12),
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment<String>(value: 'topic', label: Text('Topic'), icon: Icon(Icons.lightbulb_outline)),
-              ButtonSegment<String>(value: 'material', label: Text('Material'), icon: Icon(Icons.menu_book)),
-              ButtonSegment<String>(value: 'existing_questions', label: Text('Existing Questions'), icon: Icon(Icons.fact_check)),
-            ],
-            selected: {_sourceMode},
-            onSelectionChanged: (selection) => setState(() {
-              _sourceMode = selection.first;
-              if (_sourceMode == 'topic') _selectedFile = null;
-            }),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _inputController,
-            maxLines: 3,
-            decoration: InputDecoration(
-              hintText: _sourceMode == 'existing_questions'
-                  ? 'Paste questions with optional answer keys...'
-                  : 'e.g. OSPFv2 Routing, Chemistry...',
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              filled: true,
-              fillColor: Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(51),
-            ),
-          ),
-          if (_sourceMode != 'topic') ...[
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _pickSourceFile,
-                    icon: const Icon(Icons.attach_file),
-                    label: Text(_selectedFile == null
-                        ? (_sourceMode == 'existing_questions'
-                            ? 'Upload Questions File'
-                            : 'Upload Source File')
-                        : _selectedFile!.name),
-                  ),
+      padding: const EdgeInsets.all(16),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 800),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Question Source',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final option in const [
+                    ('topic', 'Topic', Icons.lightbulb_outline),
+                    ('material', 'Material', Icons.menu_book),
+                    (
+                      'existing_questions',
+                      'Existing Questions',
+                      Icons.fact_check
+                    ),
+                  ])
+                    ChoiceChip(
+                      avatar: Icon(option.$3, size: 18),
+                      label: Text(option.$2),
+                      selected: _sourceMode == option.$1,
+                      onSelected: (_) => setState(() {
+                        _sourceMode = option.$1;
+                        if (_sourceMode == 'topic') _selectedFile = null;
+                      }),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _inputController,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  hintText: _sourceMode == 'existing_questions'
+                      ? 'Paste questions with optional answer keys...'
+                      : 'e.g. OSPFv2 Routing, Chemistry...',
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  filled: true,
+                  fillColor: Theme.of(context)
+                      .colorScheme
+                      .surfaceContainerHighest
+                      .withAlpha(51),
                 ),
-                if (_selectedFile != null) const SizedBox(width: 8),
-                if (_selectedFile != null)
-                  TextButton(
-                    onPressed: () => setState(() => _selectedFile = null),
-                    child: const Text('Clear'),
-                  ),
+              ),
+              if (_sourceMode != 'topic') ...[
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: _pickSourceFile,
+                        icon: const Icon(Icons.attach_file),
+                        label: Text(
+                          _selectedFile == null
+                              ? (_sourceMode == 'existing_questions'
+                                  ? 'Upload Questions File'
+                                  : 'Upload Source File')
+                              : _selectedFile!.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ),
+                    if (_selectedFile != null) const SizedBox(width: 8),
+                    if (_selectedFile != null)
+                      TextButton(
+                        onPressed: () => setState(() => _selectedFile = null),
+                        child: const Text('Clear'),
+                      ),
+                  ],
+                ),
               ],
-            ),
-          ],
-          const SizedBox(height: 20),
-          const Text('Assessment Type', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const SizedBox(height: 8),
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment<String>(value: 'Quiz', label: Text('Quiz'), icon: Icon(Icons.flash_on)),
-              ButtonSegment<String>(value: 'Exam', label: Text('Exam'), icon: Icon(Icons.assignment)),
-            ],
-            selected: {_assessmentType},
-            onSelectionChanged: (Set<String> newSelection) {
-              setState(() {
-                _assessmentType = newSelection.first;
-              });
-            },
-            style: SegmentedButton.styleFrom(
-              minimumSize: const Size.fromHeight(44),
-            ),
-          ),
-          const SizedBox(height: 20),
-
-          const Text('Exam Variants', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const SizedBox(height: 8),
-          SegmentedButton<bool>(
-            segments: const [
-              ButtonSegment<bool>(value: false, label: Text('Single Set'), icon: Icon(Icons.looks_one)),
-              ButtonSegment<bool>(value: true, label: Text('Sets A & B'), icon: Icon(Icons.style)),
-            ],
-            selected: {_hasMultipleSets},
-            onSelectionChanged: (Set<bool> newSelection) {
-              setState(() {
-                _hasMultipleSets = newSelection.first;
-              });
-            },
-            style: SegmentedButton.styleFrom(
-              minimumSize: const Size.fromHeight(44),
-            ),
-          ),
-          const SizedBox(height: 24),
-          
-          const Text('Total Questions', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const SizedBox(height: 8),
-          SegmentedButton<int>(
-            segments: _templatesByTotal.keys.map((total) => ButtonSegment<int>(value: total, label: Text('$total Questions'))).toList(),
-            selected: {_selectedTotal},
-            onSelectionChanged: (Set<int> newSelection) {
-              setState(() {
-                _selectedTotal = newSelection.first;
-                _selectedTemplate = _templatesByTotal[_selectedTotal]!.firstWhere(
-                  (t) => t.tfCount == 0, 
-                  orElse: () => _templatesByTotal[_selectedTotal]!.first
-                );
-              });
-            },
-            style: SegmentedButton.styleFrom(
-              minimumSize: const Size.fromHeight(44),
-            ),
-          ),
-          
-          const SizedBox(height: 20),
-          const Text('Question Distribution', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          const SizedBox(height: 8),
-          ..._templatesByTotal[_selectedTotal]!.map((t) {
-            final title = t.tfCount == 0 
-                ? 'All Multiple Choice (${t.mcqCount} MCQ)' 
-                : 'Mixed Format (${t.mcqCount} MCQ, ${t.tfCount} T/F)';
-            final isSelected = _selectedTemplate == t;
-            
-            return Card(
-              elevation: 0,
-              color: isSelected ? (Theme.of(context).brightness == Brightness.dark ? Colors.yellow.withValues(alpha: 0.1) : Theme.of(context).colorScheme.primaryContainer.withAlpha(100)) : Colors.transparent,
-              shape: RoundedRectangleBorder(
-                side: BorderSide(color: isSelected ? (Theme.of(context).brightness == Brightness.dark ? Colors.yellow : Theme.of(context).colorScheme.primary) : Colors.grey.shade300),
-                borderRadius: BorderRadius.circular(12)
+              const SizedBox(height: 20),
+              const Text('Assessment Type',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final option in const [
+                    ('Quiz', Icons.flash_on),
+                    ('Exam', Icons.assignment),
+                  ])
+                    ChoiceChip(
+                      avatar: Icon(option.$2, size: 18),
+                      label: Text(option.$1),
+                      selected: _assessmentType == option.$1,
+                      onSelected: (_) =>
+                          setState(() => _assessmentType = option.$1),
+                    ),
+                ],
               ),
-              margin: const EdgeInsets.only(bottom: 8),
-              child: InkWell(
-                onTap: () => setState(() => _selectedTemplate = t),
-                borderRadius: BorderRadius.circular(12),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: RadioListTile<BubbleSheetTemplate>(
-                    title: Text(title, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
-                    value: t,
-                    groupValue: _selectedTemplate,
-                    onChanged: (val) => setState(() => _selectedTemplate = val!),
-                    activeColor: Theme.of(context).brightness == Brightness.dark ? Colors.yellow : Theme.of(context).colorScheme.primary,
+              const SizedBox(height: 20),
+              const Text('Exam Variants',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  ChoiceChip(
+                    avatar: const Icon(Icons.looks_one, size: 18),
+                    label: const Text('Single Set'),
+                    selected: !_hasMultipleSets,
+                    onSelected: (_) => setState(() => _hasMultipleSets = false),
                   ),
-                ),
+                  ChoiceChip(
+                    avatar: const Icon(Icons.style, size: 18),
+                    label: const Text('Sets A & B'),
+                    selected: _hasMultipleSets,
+                    onSelected: (_) => setState(() => _hasMultipleSets = true),
+                  ),
+                ],
               ),
-            );
-          }),
-          const SizedBox(height: 24),
-          ElevatedButton(
-            onPressed: () {
-              _startGeneration();
-            },
-            style: ElevatedButton.styleFrom(
-              minimumSize: const Size(double.infinity, 55),
-              backgroundColor: Theme.of(context).brightness == Brightness.dark ? Colors.yellow : Theme.of(context).colorScheme.primary,
-              foregroundColor: Theme.of(context).brightness == Brightness.dark ? Colors.black : Colors.white,
-            ),
-            child: const Text('GENERATE QUESTIONNAIRE', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 24),
+              const Text('Total Questions',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final total in _templatesByTotal.keys)
+                    ChoiceChip(
+                      label: Text('$total Questions'),
+                      selected: _selectedTotal == total,
+                      onSelected: (_) => setState(() {
+                        _selectedTotal = total;
+                        _selectedTemplate =
+                            _templatesByTotal[total]!.firstWhere(
+                          (t) => t.tfCount == 0,
+                          orElse: () => _templatesByTotal[total]!.first,
+                        );
+                      }),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              const Text('Question Distribution',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              const SizedBox(height: 8),
+              ..._templatesByTotal[_selectedTotal]!.map((t) {
+                final title = t.tfCount == 0
+                    ? 'All Multiple Choice (${t.mcqCount} MCQ)'
+                    : 'Mixed Format (${t.mcqCount} MCQ, ${t.tfCount} T/F)';
+                final isSelected = _selectedTemplate == t;
+
+                return Card(
+                  elevation: 0,
+                  color: isSelected
+                      ? (Theme.of(context).brightness == Brightness.dark
+                          ? Colors.yellow.withValues(alpha: 0.1)
+                          : Theme.of(context)
+                              .colorScheme
+                              .primaryContainer
+                              .withAlpha(100))
+                      : Colors.transparent,
+                  shape: RoundedRectangleBorder(
+                      side: BorderSide(
+                          color: isSelected
+                              ? (Theme.of(context).brightness == Brightness.dark
+                                  ? Colors.yellow
+                                  : Theme.of(context).colorScheme.primary)
+                              : Colors.grey.shade300),
+                      borderRadius: BorderRadius.circular(12)),
+                  margin: const EdgeInsets.only(bottom: 8),
+                  child: InkWell(
+                    onTap: () => setState(() => _selectedTemplate = t),
+                    borderRadius: BorderRadius.circular(12),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: RadioListTile<BubbleSheetTemplate>(
+                        title: Text(title,
+                            style: TextStyle(
+                                fontWeight: isSelected
+                                    ? FontWeight.bold
+                                    : FontWeight.normal)),
+                        value: t,
+                        groupValue: _selectedTemplate,
+                        onChanged: (val) =>
+                            setState(() => _selectedTemplate = val!),
+                        activeColor:
+                            Theme.of(context).brightness == Brightness.dark
+                                ? Colors.yellow
+                                : Theme.of(context).colorScheme.primary,
+                      ),
+                    ),
+                  ),
+                );
+              }),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () {
+                  _startGeneration();
+                },
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 55),
+                  backgroundColor:
+                      Theme.of(context).brightness == Brightness.dark
+                          ? Colors.yellow
+                          : Theme.of(context).colorScheme.primary,
+                  foregroundColor:
+                      Theme.of(context).brightness == Brightness.dark
+                          ? Colors.black
+                          : Colors.white,
+                ),
+                child: const Text('GENERATE QUESTIONNAIRE',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -406,37 +475,52 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
       color: Colors.black,
       width: double.infinity,
       padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Row(
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 900),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.terminal, color: Colors.greenAccent, size: 20),
-              SizedBox(width: 10),
-              Text("LIVE AI ENGINE LOGS", style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 12, letterSpacing: 1.2)),
-            ],
-          ),
-          const Divider(color: Colors.greenAccent, height: 20),
-          Expanded(
-            child: SingleChildScrollView(
-              controller: _terminalScrollController,
-              child: Text(
-                _streamedText,
-                style: TextStyle(
-                  color: Colors.white70,
-                  fontFamily: 'monospace',
-                  fontSize: 13,
-                  height: 1.5,
+              const Row(
+                children: [
+                  Icon(Icons.terminal, color: Colors.greenAccent, size: 20),
+                  SizedBox(width: 10),
+                  Text("LIVE AI ENGINE LOGS",
+                      style: TextStyle(
+                          color: Colors.greenAccent,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                          letterSpacing: 1.2)),
+                ],
+              ),
+              const Divider(color: Colors.greenAccent, height: 20),
+              Expanded(
+                child: SingleChildScrollView(
+                  controller: _terminalScrollController,
+                  child: Text(
+                    _streamedText,
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontFamily: 'monospace',
+                      fontSize: 13,
+                      height: 1.5,
+                    ),
+                  ),
                 ),
               ),
-            ),
+              const SizedBox(height: 10),
+              if (!_isGenerationFinished)
+                const LinearProgressIndicator(
+                    backgroundColor: Colors.white10, color: Colors.greenAccent)
+              else
+                const Text("COMPLETED",
+                    style: TextStyle(
+                        color: Colors.greenAccent,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 10)),
+            ],
           ),
-          const SizedBox(height: 10),
-          if (!_isGenerationFinished) 
-            const LinearProgressIndicator(backgroundColor: Colors.white10, color: Colors.greenAccent)
-          else
-            const Text("COMPLETED", style: TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 10)),
-        ],
+        ),
       ),
     );
   }
@@ -450,19 +534,26 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
           saveDir = await getExternalStorageDirectory();
         }
       } else {
-        saveDir = await getDownloadsDirectory() ?? await getApplicationDocumentsDirectory();
+        saveDir = await getDownloadsDirectory() ??
+            await getApplicationDocumentsDirectory();
       }
 
       final title = "${widget.type} - ${_inputController.text}";
 
       if (_hasMultipleSets) {
-        final List<Map<String, dynamic>> questionsMap = _finalQuestions.map((q) => Map<String, dynamic>.from(q as Map)).toList();
+        final List<Map<String, dynamic>> questionsMap = _finalQuestions
+            .map((q) => Map<String, dynamic>.from(q as Map))
+            .toList();
         final setBQuestions = ExamSetService.generateSetB(questionsMap);
-        final bytesSetA = await ApiService.exportToDocx("$title - Set A", _finalQuestions);
-        final bytesSetB = await ApiService.exportToDocx("$title - Set B", setBQuestions);
+        final bytesSetA =
+            await ApiService.exportToDocx("$title - Set A", _finalQuestions);
+        final bytesSetB =
+            await ApiService.exportToDocx("$title - Set B", setBQuestions);
 
-        final fileNameA = "CheckMate_${_inputController.text.replaceAll(' ', '_')}_SetA_${DateTime.now().millisecondsSinceEpoch}.docx";
-        final fileNameB = "CheckMate_${_inputController.text.replaceAll(' ', '_')}_SetB_${DateTime.now().millisecondsSinceEpoch}.docx";
+        final fileNameA =
+            "CheckMate_${_inputController.text.replaceAll(' ', '_')}_SetA_${DateTime.now().millisecondsSinceEpoch}.docx";
+        final fileNameB =
+            "CheckMate_${_inputController.text.replaceAll(' ', '_')}_SetB_${DateTime.now().millisecondsSinceEpoch}.docx";
 
         await File('${saveDir?.path ?? ""}/$fileNameA').writeAsBytes(bytesSetA);
         await File('${saveDir?.path ?? ""}/$fileNameB').writeAsBytes(bytesSetB);
@@ -476,7 +567,8 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
         }
       } else {
         final bytes = await ApiService.exportToDocx(title, _finalQuestions);
-        final fileName = "CheckMate_Assessment_${DateTime.now().millisecondsSinceEpoch}.docx";
+        final fileName =
+            "CheckMate_Assessment_${DateTime.now().millisecondsSinceEpoch}.docx";
         final file = File('${saveDir?.path ?? ""}/$fileName');
         await file.writeAsBytes(bytes);
 
@@ -498,52 +590,68 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
   Widget _buildReview() {
     final part1 = _finalQuestions.where((q) => q['part'] == 1).toList();
     final part2 = _finalQuestions.where((q) => q['part'] == 2).toList();
-    final others = _finalQuestions.where((q) => q['part'] != 1 && q['part'] != 2).toList();
+    final others =
+        _finalQuestions.where((q) => q['part'] != 1 && q['part'] != 2).toList();
 
-    return ListView(
+    return Center(
       key: const ValueKey(2),
-      padding: const EdgeInsets.all(16),
-      children: [
-        if (part1.isNotEmpty) ...[
-          const _PartHeader(title: "PART 1: MULTIPLE CHOICE"),
-          ...part1.map((q) => _QuestionCard(data: q, index: _finalQuestions.indexOf(q) + 1)),
-        ],
-        if (part2.isNotEmpty) ...[
-          const SizedBox(height: 20),
-          const _PartHeader(title: "PART 2: TRUE OR FALSE"),
-          ...part2.map((q) => _QuestionCard(data: q, index: _finalQuestions.indexOf(q) + 1)),
-        ],
-        if (others.isNotEmpty) ...[
-          if (part1.isNotEmpty || part2.isNotEmpty) const _PartHeader(title: "OTHER QUESTIONS"),
-          ...others.map((q) => _QuestionCard(data: q, index: _finalQuestions.indexOf(q) + 1)),
-        ],
-        const SizedBox(height: 20),
-        OutlinedButton.icon(
-          onPressed: _exportDocx,
-          icon: const Icon(Icons.description),
-          label: const Text('EXPORT TO DOCX'),
-          style: OutlinedButton.styleFrom(minimumSize: const Size(double.infinity, 50)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 800),
+        child: ListView(
+          padding: const EdgeInsets.all(16),
+          children: [
+            if (part1.isNotEmpty) ...[
+              const _PartHeader(title: "PART 1: MULTIPLE CHOICE"),
+              ...part1.map((q) => _QuestionCard(
+                  data: q, index: _finalQuestions.indexOf(q) + 1)),
+            ],
+            if (part2.isNotEmpty) ...[
+              const SizedBox(height: 20),
+              const _PartHeader(title: "PART 2: TRUE OR FALSE"),
+              ...part2.map((q) => _QuestionCard(
+                  data: q, index: _finalQuestions.indexOf(q) + 1)),
+            ],
+            if (others.isNotEmpty) ...[
+              if (part1.isNotEmpty || part2.isNotEmpty)
+                const _PartHeader(title: "OTHER QUESTIONS"),
+              ...others.map((q) => _QuestionCard(
+                  data: q, index: _finalQuestions.indexOf(q) + 1)),
+            ],
+            const SizedBox(height: 20),
+            OutlinedButton.icon(
+              onPressed: _exportDocx,
+              icon: const Icon(Icons.description),
+              label: const Text('EXPORT TO DOCX'),
+              style: OutlinedButton.styleFrom(
+                  minimumSize: const Size(double.infinity, 50)),
+            ),
+            const SizedBox(height: 10),
+            ElevatedButton(
+              onPressed: _isSaving ? null : _saveToDrafts,
+              style: ElevatedButton.styleFrom(
+                minimumSize: const Size(double.infinity, 55),
+                backgroundColor: Theme.of(context).brightness == Brightness.dark
+                    ? Colors.yellow
+                    : Theme.of(context).colorScheme.primary,
+                foregroundColor: Theme.of(context).brightness == Brightness.dark
+                    ? Colors.black
+                    : Colors.white,
+              ),
+              child: _isSaving
+                  ? SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Theme.of(context).brightness == Brightness.dark
+                              ? Colors.black
+                              : Colors.white))
+                  : const Text('FINISH & SAVE TO DRAFTS',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
         ),
-        const SizedBox(height: 10),
-        ElevatedButton(
-          onPressed: _isSaving ? null : _saveToDrafts,
-          style: ElevatedButton.styleFrom(
-            minimumSize: const Size(double.infinity, 55),
-            backgroundColor: Theme.of(context).brightness == Brightness.dark ? Colors.yellow : Theme.of(context).colorScheme.primary,
-            foregroundColor: Theme.of(context).brightness == Brightness.dark ? Colors.black : Colors.white,
-          ),
-          child: _isSaving
-              ? SizedBox(
-                  width: 24, 
-                  height: 24, 
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2, 
-                    color: Theme.of(context).brightness == Brightness.dark ? Colors.black : Colors.white
-                  )
-                )
-              : const Text('FINISH & SAVE TO DRAFTS', style: TextStyle(fontWeight: FontWeight.bold)),
-        ),
-      ],
+      ),
     );
   }
 }
@@ -555,7 +663,14 @@ class _PartHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
-      child: Text(title, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Theme.of(context).brightness == Brightness.dark ? Colors.yellow : Colors.blueAccent, letterSpacing: 1.2)),
+      child: Text(title,
+          style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.bold,
+              color: Theme.of(context).brightness == Brightness.dark
+                  ? Colors.yellow
+                  : Colors.blueAccent,
+              letterSpacing: 1.2)),
     );
   }
 }
@@ -569,14 +684,16 @@ class _QuestionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final text = data['questionText'] ?? data['text'] ?? "No question text";
     final isTF = data['questionType'] == 'TF' || data['part'] == 2;
-    
+
     // Default options for T/F if the model is lazy
     List<dynamic> options = data['options'] as List? ?? [];
     if (options.isEmpty && isTF) {
       options = ["True", "False"];
     }
 
-    final rawAnswer = (data['correctAnswer'] ?? data['answer'] ?? "?").toString().toUpperCase();
+    final rawAnswer = (data['correctAnswer'] ?? data['answer'] ?? "?")
+        .toString()
+        .toUpperCase();
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -585,12 +702,14 @@ class _QuestionCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text("$index. $text", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+            Text("$index. $text",
+                style:
+                    const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
             if (options.isNotEmpty) ...[
               const SizedBox(height: 12),
               ...List.generate(options.length, (i) {
                 final letter = String.fromCharCode(65 + i); // A, B...
-                
+
                 // Robust check for Correct Answer
                 bool isCorrect = false;
                 if (isTF) {
@@ -607,21 +726,27 @@ class _QuestionCard extends StatelessWidget {
                   padding: const EdgeInsets.only(bottom: 4),
                   child: Row(
                     children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      Expanded(
+                          child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
-                          color: isCorrect ? Colors.green.withValues(alpha: 0.1) : Colors.transparent,
+                          color: isCorrect
+                              ? Colors.green.withValues(alpha: 0.1)
+                              : Colors.transparent,
                           borderRadius: BorderRadius.circular(4),
-                          border: isCorrect ? Border.all(color: Colors.green.withValues(alpha: 0.5)) : null,
+                          border: isCorrect
+                              ? Border.all(
+                                  color: Colors.green.withValues(alpha: 0.5))
+                              : null,
                         ),
-                        child: Text("$letter) ${options[i]}", 
-                          style: TextStyle(
-                            fontSize: 13, 
-                            color: isCorrect ? Colors.green.shade700 : null,
-                            fontWeight: isCorrect ? FontWeight.bold : null,
-                          )
-                        ),
-                      ),
+                        child: Text("$letter) ${options[i]}",
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: isCorrect ? Colors.green.shade700 : null,
+                              fontWeight: isCorrect ? FontWeight.bold : null,
+                            )),
+                      )),
                     ],
                   ),
                 );

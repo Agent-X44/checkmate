@@ -127,42 +127,46 @@ class _StudentInsightDetailScreenState
           : _data == null
               ? const Center(child: Text("Result not available yet."))
               : SingleChildScrollView(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _buildScoreHeader(grade),
-                      const SizedBox(height: 24),
-                      const Text("AI MENTOR INSIGHTS",
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 1.2,
-                              color: Colors.blueAccent)),
-                      const Divider(),
-                      const SizedBox(height: 12),
-                      if (insightJson != null)
-                        _buildStructuredInsight(insightJson)
-                      else if (_isGeneratingInsight)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 24),
-                          child: Center(
-                            child: Column(
-                              children: [
-                                CircularProgressIndicator(),
-                                SizedBox(height: 12),
-                                Text("AI Mentor is analyzing your results...",
-                                    style: TextStyle(color: Colors.blueAccent)),
-                              ],
+                  padding: const EdgeInsets.all(16),
+                  child: Center(
+                      child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 760),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildScoreHeader(grade),
+                        const SizedBox(height: 24),
+                        const Text("AI MENTOR INSIGHTS",
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 1.2)),
+                        const Divider(),
+                        const SizedBox(height: 12),
+                        if (insightJson != null)
+                          _buildStructuredInsight(insightJson)
+                        else if (_isGeneratingInsight)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 24),
+                            child: Center(
+                              child: Column(
+                                children: [
+                                  CircularProgressIndicator(),
+                                  SizedBox(height: 12),
+                                  Text("AI Mentor is analyzing your results...",
+                                      textAlign: TextAlign.center),
+                                ],
+                              ),
                             ),
-                          ),
-                        )
-                      else
-                        Text(
-                            insightRaw ??
-                                "Your AI-powered pedagogical feedback is being generated. Check back soon!",
-                            style: const TextStyle(fontSize: 15, height: 1.5)),
-                    ],
-                  ),
+                          )
+                        else
+                          Text(
+                              insightRaw ??
+                                  "Your AI-powered pedagogical feedback is being generated. Check back soon!",
+                              style:
+                                  const TextStyle(fontSize: 15, height: 1.5)),
+                      ],
+                    ),
+                  )),
                 ),
     );
   }
@@ -175,45 +179,55 @@ class _StudentInsightDetailScreenState
 
     return Card(
       elevation: 0,
-      color: Colors.blue.shade50,
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: Padding(
         padding: const EdgeInsets.all(24.0),
-        child: Row(
-          children: [
-            Stack(
-              alignment: Alignment.center,
-              children: [
-                SizedBox(
-                  width: 80,
-                  height: 80,
-                  child: CircularProgressIndicator(
-                    value: pct / 100,
-                    strokeWidth: 8,
-                    backgroundColor: Colors.white,
-                    color: pct >= 75 ? Colors.green : Colors.orange,
-                  ),
-                ),
-                Text("${pct.toInt()}%",
-                    style: const TextStyle(
-                        fontSize: 20, fontWeight: FontWeight.bold)),
-              ],
-            ),
-            const SizedBox(width: 24),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text("TOTAL SCORE",
-                    style: TextStyle(fontSize: 12, color: Colors.blueGrey)),
-                Text("$score / $total",
-                    style: const TextStyle(
-                        fontSize: 28, fontWeight: FontWeight.bold)),
-                const Text("Keep up the great work!",
-                    style: TextStyle(fontSize: 12, color: Colors.blueGrey)),
-              ],
-            )
-          ],
-        ),
+        child: LayoutBuilder(
+            builder: (context, constraints) => Flex(
+                  direction: constraints.maxWidth < 340
+                      ? Axis.vertical
+                      : Axis.horizontal,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Stack(
+                      alignment: Alignment.center,
+                      children: [
+                        SizedBox(
+                          width: 80,
+                          height: 80,
+                          child: CircularProgressIndicator(
+                            value: pct / 100,
+                            strokeWidth: 8,
+                            backgroundColor: Colors.white,
+                            color: pct >= 75 ? Colors.green : Colors.orange,
+                          ),
+                        ),
+                        Text("${pct.toInt()}%",
+                            style: const TextStyle(
+                                fontSize: 20, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                    SizedBox(
+                      width: constraints.maxWidth < 340 ? 0 : 24,
+                      height: constraints.maxWidth < 340 ? 16 : 0,
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text("TOTAL SCORE",
+                            style: TextStyle(
+                                fontSize: 12, color: Colors.blueGrey)),
+                        Text("$score / $total",
+                            style: const TextStyle(
+                                fontSize: 28, fontWeight: FontWeight.bold)),
+                        const Text("Assessment result",
+                            style: TextStyle(
+                                fontSize: 12, color: Colors.blueGrey)),
+                      ],
+                    )
+                  ],
+                )),
       ),
     );
   }

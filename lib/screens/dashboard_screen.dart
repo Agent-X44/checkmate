@@ -16,10 +16,11 @@ class DashboardScreen extends StatefulWidget {
 class DashboardScreenState extends State<DashboardScreen> {
   bool _createdExpanded = true;
   bool _enrolledExpanded = true;
-  
+
   List<Course> _myCourses = [];
   List<Course> _enrolledCourses = [];
   bool _isInitialLoading = true;
+  bool _loadFailed = false;
 
   @override
   void initState() {
@@ -52,10 +53,17 @@ class DashboardScreenState extends State<DashboardScreen> {
           _myCourses = my;
           _enrolledCourses = enrolled;
           _isInitialLoading = false;
+          _loadFailed = false;
         });
       }
     } catch (e) {
       debugPrint("Dashboard refresh error: $e");
+      if (mounted) {
+        setState(() {
+          _isInitialLoading = false;
+          _loadFailed = true;
+        });
+      }
     }
   }
 
@@ -82,7 +90,8 @@ class DashboardScreenState extends State<DashboardScreen> {
       try {
         await SupabaseService.deleteClass(course.id);
         if (mounted) {
-          CheckMateUi.showTopPrompt(context, 'Course deleted successfully', isError: false);
+          CheckMateUi.showTopPrompt(context, 'Course deleted successfully',
+              isError: false);
           _refreshAll();
         }
       } catch (e) {
@@ -119,7 +128,9 @@ class DashboardScreenState extends State<DashboardScreen> {
               try {
                 await SupabaseService.renameClass(course.id, newName);
                 if (mounted) {
-                  CheckMateUi.showTopPrompt(context, 'Course renamed successfully!', isError: false);
+                  CheckMateUi.showTopPrompt(
+                      context, 'Course renamed successfully!',
+                      isError: false);
                   _refreshAll();
                 }
               } catch (e) {
@@ -139,7 +150,8 @@ class DashboardScreenState extends State<DashboardScreen> {
     try {
       final newCode = await SupabaseService.resetCourseCode(course.id);
       if (mounted) {
-        CheckMateUi.showTopPrompt(context, 'Join code reset to: $newCode', isError: false);
+        CheckMateUi.showTopPrompt(context, 'Join code reset to: $newCode',
+            isError: false);
         _refreshAll();
       }
     } catch (e) {
@@ -173,7 +185,8 @@ class DashboardScreenState extends State<DashboardScreen> {
       try {
         await SupabaseService.unenrollClass(course.id);
         if (mounted) {
-          CheckMateUi.showTopPrompt(context, 'Left course successfully', isError: false);
+          CheckMateUi.showTopPrompt(context, 'Left course successfully',
+              isError: false);
           _refreshAll();
         }
       } catch (e) {
@@ -186,27 +199,35 @@ class DashboardScreenState extends State<DashboardScreen> {
 
   Widget _buildCollapsibleHeader(
       BuildContext context, String title, bool isExpanded, VoidCallback onTap) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final theme = Theme.of(context);
     return SliverToBoxAdapter(
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                title,
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: isDark ? Colors.white : Colors.black,
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 860),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 22, 20, 8),
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: theme.textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w700),
+                      ),
                     ),
+                    Icon(
+                      isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ],
+                ),
               ),
-              Icon(
-                isExpanded ? Icons.expand_less : Icons.expand_more,
-                color: Colors.grey,
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -214,175 +235,248 @@ class DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildCombinedSummary(BuildContext context, int totalCourses) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     final user = Supabase.instance.client.auth.currentUser;
-    final firstName = (user?.userMetadata?['name']?.toString().split(' ').first) ?? 'Student';
+    final rawName = user?.userMetadata?['name']?.toString().trim();
+    final firstName = rawName == null || rawName.isEmpty
+        ? 'there'
+        : rawName.split(' ').first;
+    final compact = MediaQuery.textScalerOf(context).scale(1) > 1.3;
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(16, 20, 16, 20),
-      color:
-          Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(76),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Hi, $firstName 👋',
-            style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.bold,
-                color: isDark ? Colors.white : Colors.black),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Academic Overview',
-            style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: isDark ? Colors.white70 : Colors.black54),
-          ),
-          const SizedBox(height: 12),
-          Row(
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 860),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 24, 20, 4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: _buildSummaryCard(
-                  context,
-                  'Total Courses',
-                  '$totalCourses',
-                  Icons.auto_stories,
-                  Colors.blue,
+              Text('Hi, $firstName',
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -0.5,
+                  )),
+              const SizedBox(height: 3),
+              Text(
+                totalCourses == 0
+                    ? 'Your learning space is ready.'
+                    : '$totalCourses ${totalCourses == 1 ? 'course' : 'courses'} in your space',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: colors.onSurfaceVariant,
                 ),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: _buildSummaryCard(
-                  context,
-                  'Avg. Performance',
-                  '88%',
-                  Icons.trending_up,
-                  Colors.green,
+              const SizedBox(height: 18),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                decoration: BoxDecoration(
+                  color: colors.surfaceContainerLow,
+                  borderRadius: BorderRadius.circular(18),
+                ),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final stacked = constraints.maxWidth < 320 || compact;
+                    final created = _buildSummaryStat(
+                        context, Icons.edit_note_outlined, 'Created',
+                        '${_myCourses.length}');
+                    final enrolled = _buildSummaryStat(
+                        context, Icons.school_outlined, 'Enrolled',
+                        '${_enrolledCourses.length}');
+                    if (stacked) {
+                      return Column(
+                        children: [
+                          created,
+                          const Divider(height: 24),
+                          enrolled,
+                        ],
+                      );
+                    }
+                    return Row(
+                      children: [
+                        Expanded(child: created),
+                        SizedBox(
+                          height: 34,
+                          child: VerticalDivider(
+                            color: colors.outlineVariant,
+                            width: 24,
+                          ),
+                        ),
+                        Expanded(child: enrolled),
+                      ],
+                    );
+                  },
                 ),
               ),
             ],
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSummaryCard(BuildContext context, String title, String value,
-      IconData icon, Color color) {
-    return Card(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Theme.of(context).dividerColor),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12.0),
-        child: Row(
-          children: [
-            Icon(icon, color: color, size: 24),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title,
-                      style: const TextStyle(fontSize: 10, color: Colors.grey)),
-                  Text(value,
-                      style: const TextStyle(
-                          fontSize: 14, fontWeight: FontWeight.bold)),
-                ],
-              ),
-            ),
-          ],
         ),
       ),
     );
   }
 
+  Widget _buildSummaryStat(
+      BuildContext context, IconData icon, String label, String value) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final accent = theme.brightness == Brightness.dark
+        ? colors.secondary
+        : colors.primary;
+    return Row(
+      children: [
+        Icon(icon, size: 23, color: accent),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(value,
+                  style: theme.textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w800)),
+              Text(label,
+                  style: theme.textTheme.bodySmall
+                      ?.copyWith(color: colors.onSurfaceVariant)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildCourseGrid(BuildContext context, List<Course> courses) {
-    return SliverList(
-      delegate: SliverChildBuilderDelegate(
-        (context, index) {
-          final course = courses[index];
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 16.0),
-            child: _buildCourseCard(context, course),
-          );
-        },
-        childCount: courses.length,
+    return SliverToBoxAdapter(
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 860),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.3;
+                final columns =
+                    !largeText && constraints.maxWidth >= 680 ? 2 : 1;
+                final cardWidth =
+                    (constraints.maxWidth - 12 * (columns - 1)) / columns;
+                return Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    for (final course in courses)
+                      SizedBox(
+                        width: cardWidth,
+                        child: _buildCourseCard(context, course),
+                      ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
       ),
     );
   }
 
   Widget _buildCourseCard(BuildContext context, Course course) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final dark = theme.brightness == Brightness.dark;
+    final accent = dark ? colors.secondary : colors.primary;
     final gradient = course.adaptiveGradient(context);
-    // Dark Mode -> Dark text & icons matching scaffold background (#141318) for high contrast on soft pastel cards
-    // Light Mode -> Crisp White text & icons for contrast on vibrant saturated cards
-    final contentColor = isDark ? const Color(0xFF141318) : Colors.white;
-    final iconBgColor = isDark
-        ? Colors.black.withValues(alpha: 0.12)
-        : Colors.white.withValues(alpha: 0.25);
 
-    if (course.isOwner) {
-      // Created Courses: Course name is centered vertically in the card
-      return Card(
-        clipBehavior: Clip.antiAlias,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        elevation: 2,
-        child: InkWell(
-          onLongPress: () => _deleteCourse(course),
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => CourseDashboardScreen(
-                  course: course,
-                  onCourseDeleted: () {},
+    void openCourse() {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => CourseDashboardScreen(
+            course: course,
+            onCourseDeleted: () {},
+          ),
+        ),
+      );
+    }
+
+    return Material(
+      color: colors.surfaceContainerLow,
+      borderRadius: BorderRadius.circular(18),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: openCourse,
+        onLongPress: course.isOwner ? () => _deleteCourse(course) : null,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(14, 13, 8, 13),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 58,
+                height: 58,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: gradient,
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(15),
+                ),
+                child: Icon(
+                  course.isOwner ? Icons.menu_book_outlined : Icons.school_outlined,
+                  color: dark ? const Color(0xFF141318) : Colors.white,
+                  size: 27,
                 ),
               ),
-            );
-          },
-          child: Container(
-            height: 108,
-            width: double.infinity,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: gradient,
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            child: Stack(
-              children: [
-                // Vertically Centered Course Name
-                Positioned.fill(
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 16.0, right: 52.0, top: 12.0, bottom: 12.0),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
+              const SizedBox(width: 13),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
                         course.name,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: contentColor,
-                          fontSize: 26,
-                          fontWeight: FontWeight.bold,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                    ),
+                      const SizedBox(height: 5),
+                      Text(
+                        course.isOwner ? 'Teaching' : 'Enrolled',
+                        style: theme.textTheme.labelMedium?.copyWith(
+                          color: accent,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        course.isOwner
+                            ? 'Code ${course.code}'
+                            : 'With ${course.instructor}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                      if (!course.isOwner)
+                        Text(
+                          'Avg. grade ${course.averageGrade}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: colors.onSurfaceVariant,
+                          ),
+                        ),
+                    ],
                   ),
                 ),
-
-                // Top Right Options Icon with PopupMenu
-                Positioned(
-                  top: 4,
-                  right: 4,
-                  child: PopupMenuButton<String>(
-                    icon: Icon(Icons.more_vert, color: contentColor),
+              ),
+              const SizedBox(width: 2),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  PopupMenuButton<String>(
+                    tooltip: 'Course options',
+                    icon: Icon(Icons.more_vert, color: colors.onSurfaceVariant),
                     onSelected: (value) {
                       if (value == 'rename') {
                         _renameCourse(course);
@@ -390,174 +484,61 @@ class DashboardScreenState extends State<DashboardScreen> {
                         _resetCourseCode(course);
                       } else if (value == 'delete') {
                         _deleteCourse(course);
+                      } else if (value == 'leave') {
+                        _unenrollCourse(course);
                       }
                     },
-                    itemBuilder: (context) => const [
-                      PopupMenuItem(
-                        value: 'rename',
-                        child: Row(
-                          children: [
-                            Icon(Icons.edit, size: 20),
-                            SizedBox(width: 8),
-                            Text('Rename Course'),
+                    itemBuilder: (context) => course.isOwner
+                        ? const [
+                            PopupMenuItem(
+                              value: 'rename',
+                              child: Text('Rename course'),
+                            ),
+                            PopupMenuItem(
+                              value: 'reset_code',
+                              child: Text('Reset join code'),
+                            ),
+                            PopupMenuDivider(),
+                            PopupMenuItem(
+                              value: 'delete',
+                              child: Text('Delete course'),
+                            ),
+                          ]
+                        : const [
+                            PopupMenuItem(
+                              value: 'leave',
+                              child: Text('Leave course'),
+                            ),
                           ],
-                        ),
-                      ),
-                      PopupMenuItem(
-                        value: 'reset_code',
-                        child: Row(
-                          children: [
-                            Icon(Icons.refresh, size: 20),
-                            SizedBox(width: 8),
-                            Text('Reset Join Code'),
-                          ],
-                        ),
-                      ),
-                      PopupMenuDivider(),
-                      PopupMenuItem(
-                        value: 'delete',
-                        child: Row(
-                          children: [
-                            Icon(Icons.delete_forever, color: Colors.red, size: 20),
-                            SizedBox(width: 8),
-                            Text('Delete Course', style: TextStyle(color: Colors.red)),
-                          ],
-                        ),
-                      ),
-                    ],
                   ),
-                ),
-
-                // Bottom Right Print Action Button
-                Positioned(
-                  bottom: 12,
-                  right: 12,
-                  child: InkWell(
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => QuizzesExamsScreen(
-                            courseId: course.id,
-                            isOwner: course.isOwner,
+                  if (course.isOwner)
+                    IconButton(
+                      tooltip: 'Open answer sheets',
+                      onPressed: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => QuizzesExamsScreen(
+                              courseId: course.id,
+                              isOwner: course.isOwner,
+                            ),
                           ),
-                        ),
-                      );
-                    },
-                    borderRadius: BorderRadius.circular(16),
-                    child: CircleAvatar(
-                      radius: 16,
-                      backgroundColor: iconBgColor,
-                      child: Icon(Icons.print, size: 16, color: contentColor),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    } else {
-      // Enrolled Courses: Top course title + bottom instructor line
-      return Card(
-        clipBehavior: Clip.antiAlias,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        elevation: 2,
-        child: InkWell(
-          onTap: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => CourseDashboardScreen(
-                  course: course,
-                  onCourseDeleted: () {},
-                ),
-              ),
-            );
-          },
-          child: Container(
-            height: 138,
-            width: double.infinity,
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: gradient,
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-            ),
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        course.name,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            color: contentColor,
-                            fontSize: 26,
-                            fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                    PopupMenuButton<String>(
-                      icon: Icon(Icons.more_vert, color: contentColor),
-                      onSelected: (value) {
-                        if (value == 'leave') {
-                          _unenrollCourse(course);
-                        }
+                        );
                       },
-                      itemBuilder: (context) => const [
-                        PopupMenuItem(
-                          value: 'leave',
-                          child: Row(
-                            children: [
-                              Icon(Icons.exit_to_app, color: Colors.red, size: 20),
-                              SizedBox(width: 8),
-                              Text('Leave Course', style: TextStyle(color: Colors.red)),
-                            ],
-                          ),
-                        ),
-                      ],
+                      icon: Icon(Icons.print_outlined, color: accent),
+                    )
+                  else
+                    Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Icon(Icons.chevron_right, color: accent),
                     ),
-                  ],
-                ),
-                const Spacer(),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Instructor: ${course.instructor}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                            color: contentColor.withValues(alpha: 0.85),
-                            fontSize: 13,
-                            fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                    Text(
-                      'Avg Grade: ${course.averageGrade}',
-                      style: TextStyle(
-                        color: contentColor,
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+                ],
+              ),
+            ],
           ),
         ),
-      );
-    }
+      ),
+    );
   }
 
   @override
@@ -575,9 +556,9 @@ class DashboardScreenState extends State<DashboardScreen> {
           physics: const AlwaysScrollableScrollPhysics(),
           slivers: [
             SliverToBoxAdapter(
-              child: _buildCombinedSummary(context, _myCourses.length + _enrolledCourses.length),
+              child: _buildCombinedSummary(
+                  context, _myCourses.length + _enrolledCourses.length),
             ),
-
             if (_myCourses.isNotEmpty) ...[
               _buildCollapsibleHeader(
                 context,
@@ -585,13 +566,8 @@ class DashboardScreenState extends State<DashboardScreen> {
                 _createdExpanded,
                 () => setState(() => _createdExpanded = !_createdExpanded),
               ),
-              if (_createdExpanded)
-                SliverPadding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                  sliver: _buildCourseGrid(context, _myCourses),
-                ),
+              if (_createdExpanded) _buildCourseGrid(context, _myCourses),
             ],
-
             if (_enrolledCourses.isNotEmpty) ...[
               const SliverToBoxAdapter(child: SizedBox(height: 8)),
               _buildCollapsibleHeader(
@@ -601,22 +577,50 @@ class DashboardScreenState extends State<DashboardScreen> {
                 () => setState(() => _enrolledExpanded = !_enrolledExpanded),
               ),
               if (_enrolledExpanded)
-                SliverPadding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                  sliver: _buildCourseGrid(context, _enrolledCourses),
-                ),
+                _buildCourseGrid(context, _enrolledCourses),
             ],
-
             if (_myCourses.isEmpty && _enrolledCourses.isEmpty)
-              const SliverFillRemaining(
+              SliverFillRemaining(
                 hasScrollBody: false,
                 child: Center(
-                  child: Text("No courses yet. Create or Join one!",
-                    style: TextStyle(color: Colors.grey)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                            _loadFailed
+                                ? Icons.wifi_off_outlined
+                                : Icons.school_outlined,
+                            size: 48,
+                            color: Theme.of(context).colorScheme.primary),
+                        const SizedBox(height: 12),
+                        Text(
+                            _loadFailed
+                                ? 'Could not load courses'
+                                : 'No courses yet',
+                            style: Theme.of(context).textTheme.titleLarge),
+                        const SizedBox(height: 6),
+                        Text(
+                            _loadFailed
+                                ? 'Check your connection and try again.'
+                                : 'Create a course or join one to get started.',
+                            textAlign: TextAlign.center),
+                        if (_loadFailed) ...[
+                          const SizedBox(height: 16),
+                          OutlinedButton.icon(
+                            onPressed: _refreshAll,
+                            icon: const Icon(Icons.refresh),
+                            label: const Text('Retry'),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
                 ),
               ),
-
-            const SliverToBoxAdapter(child: SizedBox(height: 100)),
+            if (_myCourses.isNotEmpty || _enrolledCourses.isNotEmpty)
+              const SliverToBoxAdapter(child: SizedBox(height: 100)),
           ],
         ),
       ),

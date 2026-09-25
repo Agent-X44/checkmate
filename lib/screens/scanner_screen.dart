@@ -17,7 +17,6 @@ import '../models/omr/bubble_sheet_template.dart';
 import '../models/omr/template_registry.dart';
 import '../models/omr/templates/standard_50_questions.dart';
 import '../utils/ui_utils.dart';
-import 'ai_analysis_screen.dart';
 import 'sheet_evaluation_screen.dart';
 
 /// Screen responsible for live camera feed and document edge detection.
@@ -904,9 +903,18 @@ class _ScannerScreenState extends State<ScannerScreen> {
         return;
       }
 
-      // 3. Prevent duplicates in same session
+      // 3. Prevent duplicates in same session and in database
       if (_processedSheetIds.contains(rawIdentifier)) {
-        _showErrorSnackBar("Duplicate: This sheet was already scanned.");
+        _showErrorSnackBar(
+            "This paper has already been scanned. Try another paper.");
+        return;
+      }
+
+      final isAlreadyScanned =
+          await ApiService.checkSheetScanned(rawIdentifier);
+      if (isAlreadyScanned) {
+        _showErrorSnackBar(
+            "This paper has already been scanned. Try another paper.");
         return;
       }
 
@@ -960,8 +968,28 @@ class _ScannerScreenState extends State<ScannerScreen> {
             ),
           );
           _scannedResults.add(updatedSheet);
-          _showSuccessSnackBar(
-              "Evaluated: $studentName. Tap 'FINISH SESSION' below to save results!");
+
+          try {
+            final batchData = [
+              {
+                "sheet_id": updatedSheet.qrData?.sheetIdentifier ?? "unknown",
+                "student_id": updatedSheet.qrData?.studentName ?? "unknown",
+                "score": (ApiService.calculateScore(updatedSheet) *
+                        updatedSheet.results.length /
+                        100)
+                    .toInt(),
+                "total": updatedSheet.results.length,
+                "answers": updatedSheet.results.map((r) => r.toMap()).toList(),
+              }
+            ];
+            await ApiService.batchSyncResults(
+              examId: resolvedExamId,
+              results: batchData,
+            );
+            _showSuccessSnackBar("Synced result for: $studentName");
+          } catch (e) {
+            _showErrorSnackBar("Failed to sync result: $e");
+          }
         }
       }
     } catch (e) {
@@ -986,6 +1014,12 @@ class _ScannerScreenState extends State<ScannerScreen> {
           _paperDetected = false;
           _detectionCounter = 0;
         });
+
+        try {
+          _controller?.resumePreview();
+        } catch (e) {
+          debugPrint("Notice: resumePreview: $e");
+        }
       }
     }
   }
@@ -1214,6 +1248,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
               child: CircularProgressIndicator(color: Colors.blueAccent)));
     }
     final size = MediaQuery.of(context).size;
+    final safePadding = MediaQuery.paddingOf(context);
     final cameraValue = _controller!.value;
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -1291,7 +1326,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
           if (_isOmrProcessing)
             Container(
-              color: Colors.black87,
+              color: Colors.black,
               child: Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -1311,9 +1346,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
             ),
 
           Positioned(
-            top: 50,
-            left: 20,
-            right: 20,
+            top: safePadding.top + 12,
+            left: 12,
+            right: 12,
             child: Row(
               children: [
                 Container(
@@ -1326,9 +1361,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
                       style: TextStyle(
                           color: accentColor, fontWeight: FontWeight.bold)),
                 ),
-                const Spacer(),
-                Container(
-                  constraints: const BoxConstraints(maxWidth: 220),
+                const SizedBox(width: 8),
+                Expanded(
+                    child: Container(
                   padding:
                       const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
@@ -1343,7 +1378,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
                         fontSize: 11,
                         fontFamily: 'monospace'),
                   ),
-                ),
+                )),
                 IconButton(
                   icon: const Icon(Icons.close, color: Colors.white),
                   onPressed: () {
@@ -1360,8 +1395,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
           // Flash button on top left
           Positioned(
-            top: 100,
-            left: 20,
+            top: safePadding.top + 66,
+            left: 12,
             child: FloatingActionButton.small(
               heroTag: 'flash',
               onPressed: () async {
@@ -1378,7 +1413,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
           ),
 
           Positioned(
-            bottom: 40,
+            bottom: safePadding.bottom + 24,
             left: 0,
             right: 0,
             child: Column(
@@ -1417,18 +1452,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
                     ),
                   ],
                 ),
-                if (_scannedResults.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 20),
-                    child: TextButton(
-                      onPressed: _finishSession,
-                      child: Text("FINISH SESSION (${_scannedResults.length})",
-                          style: TextStyle(
-                              color: accentColor,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16)),
-                    ),
-                  ),
               ],
             ),
           ),
@@ -1482,6 +1505,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
       }
 
       final XFile photo = await _controller!.takePicture();
+      try {
+        await _controller!.pausePreview();
+      } catch (e) {
+        debugPrint("Notice: pausePreview: $e");
+      }
       final Uint8List bytes = await photo.readAsBytes();
 
       // 1. Dynamically resolve the template from metadata or question count before processing OMR
@@ -1490,6 +1518,19 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
       final rawIdentifier = _lockedSheetQr?.sheetIdentifier ?? '';
       if (rawIdentifier.isNotEmpty && rawIdentifier != 'UNKNOWN') {
+        // Check for duplicate scan
+        final existingGrade = await SupabaseService.client
+            .from('grades')
+            .select('id')
+            .eq('sheet_id', rawIdentifier)
+            .maybeSingle();
+
+        if (existingGrade != null) {
+          _showErrorSnackBar(
+              "This paper has already been scanned. Try another paper.");
+          return;
+        }
+
         try {
           preResolvedMetadata = await ApiService.resolveSheet(rawIdentifier);
           final exam = preResolvedMetadata['exams'];
@@ -1573,17 +1614,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
         _restartStreamIfNeeded();
       }
     }
-  }
-
-  void _finishSession() {
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(
-        builder: (context) => AIAnalysisScreen(
-          sheets: _scannedResults,
-        ),
-      ),
-    );
   }
 }
 

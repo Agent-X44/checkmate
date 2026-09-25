@@ -5,73 +5,12 @@ import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'services/image_processor.dart';
 import 'services/deep_link_service.dart';
 import 'screens/root_auth_wrapper.dart';
+import 'theme/checkmate_theme.dart';
 
 List<CameraDescription> globalCameras = [];
 
-final ThemeData _lightTheme = ThemeData(
-  useMaterial3: true,
-  colorScheme: ColorScheme.fromSeed(
-    seedColor: const Color(0xFF1A237E),
-    primary: const Color(0xFF1A237E),
-    onPrimary: Colors.white,
-    secondary: const Color(0xFFFFEB3B),
-    onSecondary: Colors.black,
-    brightness: Brightness.light,
-    onSurface: Colors.black,
-    onSurfaceVariant: Colors.black54,
-  ),
-  textTheme: const TextTheme(
-    headlineLarge: TextStyle(color: Color(0xFF1A237E), fontWeight: FontWeight.bold),
-    headlineMedium: TextStyle(color: Color(0xFF1A237E), fontWeight: FontWeight.bold),
-    titleLarge: TextStyle(color: Color(0xFF1A237E), fontWeight: FontWeight.bold),
-    bodyLarge: TextStyle(color: Colors.black),
-    bodyMedium: TextStyle(color: Colors.black),
-    bodySmall: TextStyle(color: Colors.black54),
-  ),
-  inputDecorationTheme: const InputDecorationTheme(
-    labelStyle: TextStyle(color: Colors.grey),
-    focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF1A237E))),
-  ),
-  appBarTheme: const AppBarTheme(
-    backgroundColor: Color(0xFF1A237E),
-    foregroundColor: Colors.white,
-    elevation: 0,
-  ),
-);
-
-final ThemeData _darkTheme = ThemeData(
-  useMaterial3: true,
-  colorScheme: ColorScheme.fromSeed(
-    seedColor: const Color(0xFF1A237E),
-    primary: const Color(0xFF1A237E),
-    onPrimary: Colors.white,
-    secondary: const Color(0xFFFFEB3B),
-    onSecondary: Colors.black,
-    brightness: Brightness.dark,
-    onSurface: Colors.white,
-    onSurfaceVariant: Colors.white70,
-  ),
-  textTheme: const TextTheme(
-    headlineLarge: TextStyle(color: Color(0xFFFFEB3B), fontWeight: FontWeight.bold),
-    headlineMedium: TextStyle(color: Color(0xFFFFEB3B), fontWeight: FontWeight.bold),
-    titleLarge: TextStyle(color: Color(0xFFFFEB3B), fontWeight: FontWeight.bold),
-    bodyLarge: TextStyle(color: Colors.white),
-    bodyMedium: TextStyle(color: Colors.white),
-    bodySmall: TextStyle(color: Colors.white70),
-  ),
-  inputDecorationTheme: const InputDecorationTheme(
-    labelStyle: TextStyle(color: Colors.white70),
-    focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFFFFEB3B))),
-  ),
-  appBarTheme: const AppBarTheme(
-    backgroundColor: Color(0xFF121212),
-    foregroundColor: Colors.white,
-    elevation: 0,
-  ),
-);
-
 /// CheckMate: Secure AI Learning Management System
-/// 
+///
 /// Official name: CheckMate
 /// Branding: Blue (Light Mode) / Yellow (Dark Mode)
 /// Standard Corners: 16px
@@ -120,7 +59,7 @@ class _CheckMateAppState extends State<CheckMateApp> {
     try {
       final prefs = await SharedPreferences.getInstance();
       final bool? isDarkMode = prefs.getBool('isDarkMode');
-      
+
       if (mounted) {
         setState(() {
           if (isDarkMode == null) {
@@ -154,8 +93,8 @@ class _CheckMateAppState extends State<CheckMateApp> {
       navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
       themeMode: _themeMode,
-      theme: _lightTheme,
-      darkTheme: _darkTheme,
+      theme: CheckMateTheme.light,
+      darkTheme: CheckMateTheme.dark,
       home: RootAuthWrapper(
         themeMode: _themeMode,
         onThemeChanged: _toggleTheme,

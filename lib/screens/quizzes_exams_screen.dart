@@ -93,6 +93,18 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
     }
   }
 
+  Future<void> _releaseExamResults(String examId) async {
+    try {
+      await ApiService.releaseResults(examId);
+      await _refreshExams();
+      if (mounted) {
+        CheckMateUi.showTopPrompt(context, "Results released!", isError: false);
+      }
+    } catch (e) {
+      if (mounted) CheckMateUi.showTopPrompt(context, "Release failed: $e");
+    }
+  }
+
   Future<void> _generateSheets(String examId, String examTitle,
       {bool hasMultipleSets = false, String? templateId}) async {
     try {
@@ -121,8 +133,6 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
       }
       template ??= AnswerSheetTemplateRegistry.forConfiguration(
           totalQuestions > 0 ? totalQuestions : 50, mcqCount, tfCount);
-      template ??= AnswerSheetTemplateRegistry.forQuestionCount(
-          totalQuestions > 0 ? totalQuestions : 50);
 
       // 3. Fetch enrolled students and generate database-linked QR identifiers
       final sheetData = await SupabaseService.generateAnswerSheetsData(
@@ -584,15 +594,11 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final accentColor = isDark ? Colors.yellow : Colors.blue;
-    final textColor = isDark ? Colors.white : Colors.black;
-    final bgColor = Theme.of(context).scaffoldBackgroundColor;
+    final colors = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Quizzes & Exams', style: TextStyle(color: textColor)),
-        backgroundColor: bgColor,
-        iconTheme: IconThemeData(color: textColor),
+        title: const Text('Quizzes & Exams'),
         actions: [
           if (widget.isOwner)
             IconButton(
@@ -617,19 +623,40 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
             final exams = _exams ?? snapshot.data;
             if (exams == null &&
                 snapshot.connectionState == ConnectionState.waiting) {
-              return Center(
-                  child: CircularProgressIndicator(color: accentColor));
+              return const Center(child: CircularProgressIndicator());
             }
 
             final visibleExams = exams ?? const <Map<String, dynamic>>[];
             if (visibleExams.isEmpty) {
               return ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
-                children: const [
-                  SizedBox(height: 200),
+                children: [
+                  SizedBox(
+                    height: (MediaQuery.sizeOf(context).height * 0.2)
+                        .clamp(24.0, 160.0),
+                  ),
                   Center(
-                    child: Text("No assessments yet. Create one with AI!",
-                        style: TextStyle(color: Colors.grey)),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 320),
+                      child: Column(
+                        children: [
+                          Icon(Icons.library_books_outlined,
+                              size: 48, color: colors.primary),
+                          const SizedBox(height: 16),
+                          const Text("No assessments yet",
+                              style: TextStyle(
+                                  fontSize: 18, fontWeight: FontWeight.w700)),
+                          const SizedBox(height: 6),
+                          Text(
+                            widget.isOwner
+                                ? "Tap + to create a quiz or exam."
+                                : "Your instructor's assessments will appear here.",
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: colors.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
                 ],
               );
@@ -639,28 +666,40 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
               physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.all(16),
               children: [
-                _buildSection(
-                    context,
-                    "Quizzes",
-                    visibleExams
-                        .where((e) => (e['title'] ?? '').contains('[Quiz]'))
-                        .toList()),
-                const SizedBox(height: 24),
-                _buildSection(
-                    context,
-                    "Exams",
-                    visibleExams
-                        .where((e) => (e['title'] ?? '').contains('[Exam]'))
-                        .toList()),
-                const SizedBox(height: 24),
-                _buildSection(
-                    context,
-                    "Other Assessments",
-                    visibleExams
-                        .where((e) =>
-                            !(e['title'] ?? '').contains('[Quiz]') &&
-                            !(e['title'] ?? '').contains('[Exam]'))
-                        .toList()),
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 900),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildSection(
+                            context,
+                            "Quizzes",
+                            visibleExams
+                                .where((e) =>
+                                    (e['title'] ?? '').contains('[Quiz]'))
+                                .toList()),
+                        const SizedBox(height: 24),
+                        _buildSection(
+                            context,
+                            "Exams",
+                            visibleExams
+                                .where((e) =>
+                                    (e['title'] ?? '').contains('[Exam]'))
+                                .toList()),
+                        const SizedBox(height: 24),
+                        _buildSection(
+                            context,
+                            "Other Assessments",
+                            visibleExams
+                                .where((e) =>
+                                    !(e['title'] ?? '').contains('[Quiz]') &&
+                                    !(e['title'] ?? '').contains('[Exam]'))
+                                .toList()),
+                      ],
+                    ),
+                  ),
+                ),
               ],
             );
           },
@@ -682,8 +721,9 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                   await _refreshExams();
                 }
               },
-              backgroundColor: accentColor,
-              foregroundColor: isDark ? Colors.black : Colors.white,
+              backgroundColor: isDark ? colors.secondary : colors.primary,
+              foregroundColor: isDark ? colors.onSecondary : colors.onPrimary,
+              tooltip: 'Create assessment',
               child: const Icon(Icons.add),
             )
           : null,
@@ -772,8 +812,8 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
     if (items.isEmpty) return const SizedBox.shrink();
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final accentColor = isDark ? Colors.yellow : Colors.blue;
-    final textColor = isDark ? Colors.white : Colors.black;
+    final colors = Theme.of(context).colorScheme;
+    final actionColor = isDark ? colors.secondary : colors.primary;
     final isExpanded = _sectionExpanded[title] ?? true;
 
     return Column(
@@ -785,20 +825,22 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
               _sectionExpanded[title] = !isExpanded;
             });
           },
-          borderRadius: BorderRadius.circular(8),
+          borderRadius: BorderRadius.circular(12),
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(title,
-                    style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: textColor)),
+                Expanded(
+                  child: Text(title,
+                      style: const TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.w700)),
+                ),
+                Text('${items.length}',
+                    style: TextStyle(color: colors.onSurfaceVariant)),
+                const SizedBox(width: 4),
                 Icon(
                   isExpanded ? Icons.expand_less : Icons.expand_more,
-                  color: textColor,
+                  color: colors.onSurfaceVariant,
                 ),
               ],
             ),
@@ -807,11 +849,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
         if (isExpanded)
           ...items.map((exam) {
             final isApproved = exam['is_approved'] == true;
-            final status = exam['status'] ?? 'Draft';
-
-            Color statusColor = Colors.orange;
-            if (isApproved) statusColor = Colors.green;
-            if (exam['results_released'] == true) statusColor = accentColor;
+            final isReleased = exam['results_released'] == true;
 
             // Clean title for display by removing tags
             String displayTitle = exam['title'] ?? 'Untitled';
@@ -821,16 +859,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                 .trim();
 
             final hasMultipleSets = exam['has_multiple_sets'] == true;
-            if (hasMultipleSets) {
-              displayTitle += " (Sets A & B)";
-            }
-
             final info = _getExamTemplateInfo(exam);
-            String subtitleText = 'Status: $status';
-            if (!info['isDraftPending'] && (info['totalItems'] as int) > 0) {
-              subtitleText +=
-                  ' • ${info['totalItems']} Items (${info['templateName']})';
-            }
 
             // Calculate analytics if available
             final answerSheets = exam['answer_sheets'] as List? ?? [];
@@ -847,224 +876,250 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                 }
               }
             }
-            if (submissions > 0) {
-              final avg = totalPct / submissions;
-              subtitleText +=
-                  '\n👥 $submissions submitted • ⭐ ${avg.toStringAsFixed(1)}% Avg';
+            final average = submissions > 0 ? totalPct / submissions : 0.0;
+
+            final statusLabel =
+                isReleased ? 'Released' : (isApproved ? 'Approved' : 'Draft');
+            final statusBackground = isReleased
+                ? colors.primary
+                : isApproved
+                    ? colors.secondary
+                    : colors.surfaceContainerHighest;
+            final statusForeground = isReleased
+                ? colors.onPrimary
+                : isApproved
+                    ? colors.onSecondary
+                    : colors.onSurfaceVariant;
+
+            void openResults() {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => ExamResultsScreen(
+                    examId: exam['id'],
+                    examTitle: displayTitle,
+                    classId: widget.courseId,
+                    isOwner: widget.isOwner,
+                  ),
+                ),
+              );
+            }
+
+            void openStudentResult() {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => StudentInsightDetailScreen(
+                    examId: exam['id'],
+                    examTitle: displayTitle,
+                  ),
+                ),
+              );
             }
 
             return Card(
               elevation: 0,
-              margin: const EdgeInsets.only(bottom: 12),
+              margin: const EdgeInsets.only(bottom: 10),
+              color: colors.surfaceContainerLow,
               shape: RoundedRectangleBorder(
-                side: BorderSide(
-                    color:
-                        isDark ? Colors.grey.shade800 : Colors.grey.shade300),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(16),
               ),
-              color: isDark ? Colors.grey.shade900 : Colors.white,
               child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+                padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
                 child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     ListTile(
-                      leading: Icon(
-                        title == "Exams" ? Icons.assignment : Icons.quiz,
-                        color: statusColor,
+                      contentPadding: EdgeInsets.zero,
+                      minLeadingWidth: 40,
+                      leading: Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: colors.secondary.withValues(alpha: isDark ? 0.16 : 0.28),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Icon(
+                          title == 'Exams'
+                              ? Icons.assignment_outlined
+                              : Icons.quiz_outlined,
+                          color: actionColor,
+                        ),
                       ),
                       title: Text(
                         displayTitle,
-                        style: TextStyle(
-                            fontWeight: FontWeight.bold, color: textColor),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                       subtitle: Text(
-                        subtitleText,
+                        info['isDraftPending'] == true
+                            ? 'Questions pending'
+                            : "${info['totalItems']} items • ${info['templateName']}",
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                            color: textColor.withValues(alpha: 0.7),
-                            fontSize: 13),
+                          fontSize: 12,
+                          color: colors.onSurfaceVariant,
+                        ),
                       ),
-                      trailing: isApproved
-                          ? const Icon(Icons.verified, color: Colors.green)
-                          : const Icon(Icons.pending_actions,
-                              color: Colors.orange),
-                      onTap: widget.isOwner
-                          ? () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => ExamResultsScreen(
-                                    examId: exam['id'],
-                                    examTitle: displayTitle,
-                                    classId: widget.courseId,
-                                    isOwner: widget.isOwner,
-                                  ),
+                      trailing: widget.isOwner
+                          ? PopupMenuButton<String>(
+                              tooltip: 'More assessment actions',
+                              icon: Icon(Icons.more_vert,
+                                  color: colors.onSurfaceVariant),
+                              onSelected: (action) {
+                                switch (action) {
+                                  case 'export':
+                                    _exportQuestionnaire(
+                                      exam['id'],
+                                      displayTitle,
+                                      hasMultipleSets: hasMultipleSets,
+                                    );
+                                    break;
+                                  case 'print':
+                                    _generateSheets(
+                                      exam['id'],
+                                      displayTitle,
+                                      hasMultipleSets: hasMultipleSets,
+                                      templateId: exam['template_id']?.toString(),
+                                    );
+                                    break;
+                                  case 'unapprove':
+                                    _unapproveExam(exam['id']);
+                                    break;
+                                  case 'delete':
+                                    _deleteExam(exam['id']);
+                                    break;
+                                }
+                              },
+                              itemBuilder: (context) => [
+                                const PopupMenuItem(
+                                  value: 'export',
+                                  child: Text('Export questionnaire'),
                                 ),
-                              )
-                          : (exam['results_released'] == true
-                              ? () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) =>
-                                          StudentInsightDetailScreen(
-                                        examId: exam['id'],
-                                        examTitle: displayTitle,
-                                      ),
-                                    ),
-                                  )
-                              : null),
+                                const PopupMenuItem(
+                                  value: 'print',
+                                  child: Text('Print answer sheets'),
+                                ),
+                                if (isApproved && !isReleased)
+                                  const PopupMenuItem(
+                                    value: 'unapprove',
+                                    child: Text('Return to draft'),
+                                  ),
+                                PopupMenuItem(
+                                  value: 'delete',
+                                  enabled: _deletingExamId != exam['id'],
+                                  child: const Text('Delete assessment'),
+                                ),
+                              ],
+                            )
+                          : Icon(
+                              isReleased
+                                  ? Icons.chevron_right
+                                  : Icons.lock_outline,
+                              color: colors.onSurfaceVariant,
+                            ),
+                      onTap: widget.isOwner
+                          ? openResults
+                          : (isReleased ? openStudentResult : null),
+                    ),
+                    const SizedBox(height: 10),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 10, vertical: 5),
+                          decoration: BoxDecoration(
+                            color: statusBackground,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            statusLabel,
+                            style: TextStyle(
+                              color: statusForeground,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        if (hasMultipleSets)
+                          Text('Sets A & B',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: colors.onSurfaceVariant)),
+                        if (submissions > 0)
+                          Text(
+                            '$submissions submitted • ${average.toStringAsFixed(1)}% avg',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: colors.onSurfaceVariant,
+                            ),
+                          ),
+                      ],
                     ),
                     if (widget.isOwner) ...[
-                      const Divider(height: 1),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 4),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Row(
-                              children: [
-                                IconButton(
-                                  onPressed: _deletingExamId == exam['id']
-                                      ? null
-                                      : () => _deleteExam(exam['id']),
-                                  icon: _deletingExamId == exam['id']
-                                      ? const SizedBox(
-                                          width: 20,
-                                          height: 20,
-                                          child: CircularProgressIndicator(
-                                              strokeWidth: 2),
-                                        )
-                                      : const Icon(Icons.delete,
-                                          color: Colors.red),
-                                  tooltip: "Delete Assessment",
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(),
-                                ),
-                                const SizedBox(width: 16),
-                                IconButton(
-                                  icon: Icon(Icons.file_download,
-                                      color: accentColor),
-                                  onPressed: () => _exportQuestionnaire(
-                                    exam['id'],
-                                    displayTitle,
-                                    hasMultipleSets:
-                                        exam['has_multiple_sets'] == true,
-                                  ),
-                                  tooltip: "Export Questionnaire (DOCX)",
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(),
-                                ),
-                                const SizedBox(width: 16),
-                                IconButton(
-                                  icon: const Icon(Icons.print,
-                                      color: Colors.green),
-                                  onPressed: () => _generateSheets(
-                                    exam['id'],
-                                    displayTitle,
-                                    hasMultipleSets:
-                                        exam['has_multiple_sets'] == true,
-                                    templateId: exam['template_id']?.toString(),
-                                  ),
-                                  tooltip: "Print Answer Sheets",
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(),
-                                ),
-                              ],
-                            ),
-                            Wrap(
-                              spacing: 4,
-                              children: [
-                                TextButton.icon(
-                                  style: TextButton.styleFrom(
-                                      foregroundColor: accentColor),
-                                  onPressed: () =>
-                                      _reviewExam(exam['id'], displayTitle),
-                                  icon: const Icon(Icons.visibility),
-                                  label: const Text("REVIEW"),
-                                ),
-                                TextButton.icon(
-                                  style: TextButton.styleFrom(
-                                      foregroundColor: Colors.purpleAccent),
-                                  onPressed: () => Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (context) => ExamResultsScreen(
-                                        examId: exam['id'],
-                                        examTitle: displayTitle,
-                                        classId: widget.courseId,
-                                        isOwner: widget.isOwner,
-                                      ),
-                                    ),
-                                  ),
-                                  icon: const Icon(Icons.analytics),
-                                  label: const Text("RESULTS"),
-                                ),
-                                if (!isApproved)
-                                  TextButton.icon(
-                                    style: TextButton.styleFrom(
-                                        foregroundColor: accentColor),
-                                    onPressed: () => _approveExam(exam['id']),
-                                    icon:
-                                        const Icon(Icons.check_circle_outline),
-                                    label: const Text("APPROVE"),
-                                  )
-                                else if (exam['results_released'] != true) ...[
-                                  TextButton.icon(
-                                    style: TextButton.styleFrom(
-                                        foregroundColor: Colors.redAccent),
-                                    onPressed: () => _unapproveExam(exam['id']),
-                                    icon: const Icon(Icons.undo),
-                                    label: const Text("UNAPPROVE"),
-                                  ),
-                                  ElevatedButton.icon(
-                                    onPressed: () async {
-                                      try {
-                                        await ApiService.releaseResults(
-                                            exam['id']);
-                                        await _refreshExams();
-                                        if (context.mounted) {
-                                          CheckMateUi.showTopPrompt(
-                                              context, "Results released!",
-                                              isError: false);
-                                        }
-                                      } catch (e) {
-                                        if (context.mounted) {
-                                          CheckMateUi.showTopPrompt(
-                                              context, "Release failed: $e");
-                                        }
-                                      }
-                                    },
-                                    icon: const Icon(Icons.publish),
-                                    label: const Text("RELEASE RESULTS"),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.blue.shade50,
-                                      foregroundColor: Colors.blue.shade800,
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ],
-                        ),
-                      )
-                    ] else if (!widget.isOwner &&
-                        exam['results_released'] == true) ...[
-                      const Divider(height: 1),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 4),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.end,
-                          children: [
-                            TextButton.icon(
+                      const Divider(height: 24),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          TextButton.icon(
+                            onPressed: () =>
+                                _reviewExam(exam['id'], displayTitle),
+                            icon: const Icon(Icons.visibility_outlined, size: 18),
+                            label: const Text('Review'),
+                            style: TextButton.styleFrom(
+                                foregroundColor: actionColor),
+                          ),
+                          TextButton.icon(
+                            onPressed: openResults,
+                            icon: const Icon(Icons.bar_chart_outlined, size: 18),
+                            label: const Text('Results'),
+                            style: TextButton.styleFrom(
+                                foregroundColor: actionColor),
+                          ),
+                          if (!isApproved)
+                            FilledButton.icon(
+                              onPressed: () => _approveExam(exam['id']),
+                              icon: const Icon(Icons.check, size: 18),
+                              label: const Text('Approve'),
+                              style: FilledButton.styleFrom(
+                                backgroundColor: colors.secondary,
+                                foregroundColor: colors.onSecondary,
+                              ),
+                            )
+                          else if (!isReleased)
+                            FilledButton.icon(
                               onPressed: () =>
-                                  _reviewExam(exam['id'], displayTitle),
-                              icon: const Icon(Icons.assignment_turned_in),
-                              label: const Text("REVIEW ANSWERS"),
+                                  _releaseExamResults(exam['id']),
+                              icon: const Icon(Icons.publish_outlined, size: 18),
+                              label: const Text('Release'),
+                              style: FilledButton.styleFrom(
+                                backgroundColor: colors.secondary,
+                                foregroundColor: colors.onSecondary,
+                              ),
                             ),
-                          ],
-                        ),
-                      )
-                    ]
+                        ],
+                      ),
+                    ] else if (isReleased) ...[
+                      const Divider(height: 24),
+                      TextButton.icon(
+                        onPressed: () =>
+                            _reviewExam(exam['id'], displayTitle),
+                        icon: const Icon(Icons.fact_check_outlined, size: 18),
+                        label: const Text('Review answers'),
+                        style: TextButton.styleFrom(
+                            foregroundColor: actionColor),
+                      ),
+                    ],
                   ],
                 ),
               ),

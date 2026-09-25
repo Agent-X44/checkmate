@@ -873,6 +873,31 @@ async def resolve_sheet(sheet_id: str, user=Depends(get_current_user)):
         logger.error(f"Error resolving sheet {sheet_id}: {e}")
         raise HTTPException(status_code=500, detail="Database resolve error")
 
+@app.get("/check-sheet-scanned/{sheet_id}")
+async def check_sheet_scanned(sheet_id: str):
+    """Check if an answer sheet has already been graded bypassing RLS."""
+    if not supabase:
+        return {"scanned": False}
+    try:
+        uuid.UUID(str(sheet_id))
+        res = supabase.table("grades").select("id").eq("sheet_id", sheet_id).execute()
+        return {"scanned": bool(res.data and len(res.data) > 0)}
+    except Exception:
+        return {"scanned": False}
+
+@app.get("/get-exam-results/{exam_id}")
+async def get_exam_results(exam_id: str):
+    """Fetch all answer sheets with grades and student profiles for an exam bypassing RLS."""
+    if not supabase:
+        raise HTTPException(status_code=500, detail="Database unconfigured")
+    try:
+        uuid.UUID(str(exam_id))
+        res = supabase.table("answer_sheets").select("id, set_type, student_id, profiles(id, name, email), grades(*)").eq("exam_id", exam_id).execute()
+        return res.data or []
+    except Exception as e:
+        logger.error(f"Get exam results error: {e}")
+        return []
+
 @app.post("/batch-save-grades")
 async def batch_sync(sync_data: BatchSyncRequest):
     """BR-07: Controlled session synchronization."""
@@ -883,12 +908,20 @@ async def batch_sync(sync_data: BatchSyncRequest):
             try:
                 # Ensure the sheet_id is a valid UUID before trying to insert to avoid Supabase 22P02 errors
                 uuid.UUID(str(r.sheet_id))
-                supabase.table("grades").upsert({
-                    "sheet_id": r.sheet_id,
-                    "score": r.score,
-                    "total_questions": r.total,
-                    "percentage": (r.score / r.total * 100) if r.total > 0 else 0
-                }).execute()
+                existing = supabase.table("grades").select("id").eq("sheet_id", r.sheet_id).execute()
+                if existing.data and len(existing.data) > 0:
+                    supabase.table("grades").update({
+                        "score": r.score,
+                        "total_questions": r.total,
+                        "percentage": (r.score / r.total * 100) if r.total > 0 else 0
+                    }).eq("id", existing.data[0]["id"]).execute()
+                else:
+                    supabase.table("grades").insert({
+                        "sheet_id": r.sheet_id,
+                        "score": r.score,
+                        "total_questions": r.total,
+                        "percentage": (r.score / r.total * 100) if r.total > 0 else 0
+                    }).execute()
             except (ValueError, TypeError, AttributeError):
                 logger.warning(f"Skipped inserting grade for invalid sheet_id: {r.sheet_id}")
                 

@@ -37,7 +37,8 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
 
     // Real-time polling every 1 second to instantly sync messages between instructor and student views
     _pollTimer = Timer.periodic(const Duration(milliseconds: 1000), (_) async {
-      final saved = await MessagingService.loadPrivateChat(widget.course.id, widget.course.name, _chatKey);
+      final saved = await MessagingService.loadPrivateChat(
+          widget.course.id, widget.course.name, _chatKey);
       if (mounted && saved.length != _chat.messages.length) {
         setState(() {
           _chat.messages.clear();
@@ -55,7 +56,8 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
   }
 
   Future<void> _loadPrivateChat(String chatKey) async {
-    final saved = await MessagingService.loadPrivateChat(widget.course.id, widget.course.name, chatKey);
+    final saved = await MessagingService.loadPrivateChat(
+        widget.course.id, widget.course.name, chatKey);
     if (saved.isNotEmpty && mounted) {
       setState(() {
         _chat.messages.clear();
@@ -67,7 +69,8 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
   void _sendMessage() async {
     if (_controller.text.trim().isEmpty) return;
     final senderId = widget.course.isOwner ? 'instructor' : 'student';
-    final senderName = widget.course.isOwner ? widget.course.instructor : 'Student';
+    final senderName =
+        widget.course.isOwner ? widget.course.instructor : 'Student';
 
     setState(() {
       _chat.messages.add(
@@ -80,11 +83,25 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
       );
       _controller.clear();
     });
-    await MessagingService.savePrivateChat(widget.course.id, widget.course.name, _chatKey, _chat.messages);
+    await MessagingService.savePrivateChat(
+        widget.course.id, widget.course.name, _chatKey, _chat.messages);
   }
 
   String _formatFullDateTime(DateTime dt) {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     final hour = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
     final period = dt.hour >= 12 ? 'PM' : 'AM';
@@ -92,7 +109,8 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
     return '${days[dt.weekday % 7]}, ${months[dt.month - 1]} ${dt.day}, ${dt.year} at $hour:$minute $period';
   }
 
-  void _showMessageOptions(ChatMessage message, bool isDark, Color accentColor, Color textColor) {
+  void _showMessageOptions(
+      ChatMessage message, bool isDark, Color accentColor, Color textColor) {
     final isMe = message.getIsMe(widget.course.isOwner);
 
     showModalBottomSheet(
@@ -119,32 +137,41 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
                 const SizedBox(height: 12),
                 ListTile(
                   leading: Icon(Icons.info_outline, color: accentColor),
-                  title: Text('Message Details', style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
+                  title: Text('Message Details',
+                      style: TextStyle(
+                          color: textColor, fontWeight: FontWeight.bold)),
                   onTap: () {
                     Navigator.pop(context);
-                    _showMessageInfoSheet(message, isDark, accentColor, textColor);
+                    _showMessageInfoSheet(
+                        message, isDark, accentColor, textColor);
                   },
                 ),
                 if (isMe) ...[
                   ListTile(
                     leading: Icon(Icons.edit_outlined, color: textColor),
-                    title: Text('Edit Message', style: TextStyle(color: textColor)),
+                    title: Text('Edit Message',
+                        style: TextStyle(color: textColor)),
                     onTap: () {
                       Navigator.pop(context);
-                      _showEditMessageDialog(message, isDark, accentColor, textColor);
+                      _showEditMessageDialog(
+                          message, isDark, accentColor, textColor);
                     },
                   ),
                   ListTile(
                     leading: const Icon(Icons.undo, color: Colors.red),
-                    title: const Text('Unsend Message', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                    title: const Text('Unsend Message',
+                        style: TextStyle(
+                            color: Colors.red, fontWeight: FontWeight.bold)),
                     onTap: () async {
                       Navigator.pop(context);
                       setState(() {
                         _chat.messages.removeWhere((m) => m.id == message.id);
                       });
-                      await MessagingService.savePrivateChat(widget.course.id, widget.course.name, _chatKey, _chat.messages);
+                      await MessagingService.savePrivateChat(widget.course.id,
+                          widget.course.name, _chatKey, _chat.messages);
                       if (mounted) {
-                        CheckMateUi.showTopPrompt(context, 'Message unsent.', isError: false);
+                        CheckMateUi.showTopPrompt(context, 'Message unsent.',
+                            isError: false);
                       }
                     },
                   ),
@@ -157,7 +184,8 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
     );
   }
 
-  void _showEditMessageDialog(ChatMessage message, bool isDark, Color accentColor, Color textColor) {
+  void _showEditMessageDialog(
+      ChatMessage message, bool isDark, Color accentColor, Color textColor) {
     final editController = TextEditingController(text: message.text);
 
     showDialog(
@@ -165,14 +193,17 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
       builder: (context) {
         return AlertDialog(
           backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text('Edit Message', style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text('Edit Message',
+              style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
           content: TextField(
             controller: editController,
             maxLines: 3,
             style: TextStyle(color: textColor),
             decoration: InputDecoration(
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+              border:
+                  OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
               hintText: 'Edit message...',
               hintStyle: TextStyle(color: textColor.withValues(alpha: 0.5)),
             ),
@@ -180,7 +211,8 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: Text('CANCEL', style: TextStyle(color: textColor.withValues(alpha: 0.7))),
+              child: Text('CANCEL',
+                  style: TextStyle(color: textColor.withValues(alpha: 0.7))),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
@@ -194,13 +226,16 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
                   message.isEdited = true;
                   message.editedTimestamp = DateTime.now();
                 });
-                await MessagingService.savePrivateChat(widget.course.id, widget.course.name, _chatKey, _chat.messages);
+                await MessagingService.savePrivateChat(widget.course.id,
+                    widget.course.name, _chatKey, _chat.messages);
                 if (mounted) {
                   Navigator.pop(context);
-                  CheckMateUi.showTopPrompt(context, 'Message updated!', isError: false);
+                  CheckMateUi.showTopPrompt(context, 'Message updated!',
+                      isError: false);
                 }
               },
-              child: const Text('SAVE', style: TextStyle(fontWeight: FontWeight.bold)),
+              child: const Text('SAVE',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
             ),
           ],
         );
@@ -208,7 +243,8 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
     );
   }
 
-  void _showMessageInfoSheet(ChatMessage message, bool isDark, Color accentColor, Color textColor) {
+  void _showMessageInfoSheet(
+      ChatMessage message, bool isDark, Color accentColor, Color textColor) {
     showModalBottomSheet(
       context: context,
       backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
@@ -228,22 +264,31 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
                   const SizedBox(width: 12),
                   Text(
                     'Direct Message Details',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor),
+                    style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: textColor),
                   ),
                 ],
               ),
               const Divider(height: 24),
               _infoRow('Sent By', message.senderName, textColor, accentColor),
               const SizedBox(height: 12),
-              _infoRow('Date & Time', _formatFullDateTime(message.timestamp), textColor, accentColor),
+              _infoRow('Date & Time', _formatFullDateTime(message.timestamp),
+                  textColor, accentColor),
               if (message.editedTimestamp != null) ...[
                 const SizedBox(height: 12),
-                _infoRow('Edited At', _formatFullDateTime(message.editedTimestamp!), textColor, accentColor),
+                _infoRow(
+                    'Edited At',
+                    _formatFullDateTime(message.editedTimestamp!),
+                    textColor,
+                    accentColor),
               ],
               const SizedBox(height: 12),
               _infoRow('Course', widget.course.name, textColor, accentColor),
               const SizedBox(height: 12),
-              _infoRow('Status', 'Delivered & Encrypted', textColor, Colors.green),
+              _infoRow(
+                  'Status', 'Delivered & Encrypted', textColor, Colors.green),
               const SizedBox(height: 24),
               SizedBox(
                 width: double.infinity,
@@ -251,10 +296,12 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: accentColor,
                     foregroundColor: isDark ? Colors.black : Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                   ),
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('CLOSE', style: TextStyle(fontWeight: FontWeight.bold)),
+                  child: const Text('CLOSE',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -264,16 +311,21 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
     );
   }
 
-  Widget _infoRow(String label, String value, Color textColor, Color accentColor) {
+  Widget _infoRow(
+      String label, String value, Color textColor, Color accentColor) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
           width: 110,
-          child: Text(label, style: TextStyle(fontSize: 13, color: textColor.withValues(alpha: 0.6))),
+          child: Text(label,
+              style: TextStyle(
+                  fontSize: 13, color: textColor.withValues(alpha: 0.6))),
         ),
         Expanded(
-          child: Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: textColor)),
+          child: Text(value,
+              style: TextStyle(
+                  fontSize: 13, fontWeight: FontWeight.bold, color: textColor)),
         ),
       ],
     );
@@ -290,15 +342,18 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
     return Scaffold(
       backgroundColor: bgColor,
       appBar: AppBar(
-        backgroundColor: isDark ? const Color(0xFF121212) : Colors.white,
-        elevation: 0,
-        iconTheme: IconThemeData(color: textColor),
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(widget.student.name, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textColor)),
+            Text(widget.student.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style:
+                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             Text(widget.course.name,
-                style: TextStyle(fontSize: 12, color: textColor.withValues(alpha: 0.7))),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12, color: Colors.white70)),
           ],
         ),
       ),
@@ -308,48 +363,64 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
             Container(
               width: double.infinity,
               padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-              color: isDark ? Colors.amber.shade900.withValues(alpha: 0.3) : Colors.orange.shade50,
+              color: isDark
+                  ? Colors.amber.shade900.withValues(alpha: 0.3)
+                  : Colors.orange.shade50,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   const Icon(Icons.lock_clock, size: 16, color: Colors.orange),
                   const SizedBox(width: 8),
-                  Text(
+                  Expanded(
+                      child: Text(
                     'The instructor has disabled replies for this course.',
                     style: TextStyle(
                         fontSize: 12,
-                        color: isDark ? Colors.amber.shade200 : Colors.orange.shade900,
+                        color: isDark
+                            ? Colors.amber.shade200
+                            : Colors.orange.shade900,
                         fontWeight: FontWeight.bold),
-                  ),
+                  )),
                 ],
               ),
             ),
           Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(16),
-              reverse: true,
-              itemCount: _chat.messages.length,
-              itemBuilder: (context, index) {
-                final message =
-                    _chat.messages[_chat.messages.length - 1 - index];
-                return _buildMessageBubble(message, isDark, accentColor, textColor);
-              },
-            ),
+            child: Center(
+                child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 840),
+              child: ListView.builder(
+                padding: const EdgeInsets.all(16),
+                reverse: true,
+                itemCount: _chat.messages.length,
+                itemBuilder: (context, index) {
+                  final message =
+                      _chat.messages[_chat.messages.length - 1 - index];
+                  return _buildMessageBubble(
+                      message, isDark, accentColor, textColor);
+                },
+              ),
+            )),
           ),
-          if (canSend) _buildInputArea(isDark, accentColor, textColor) else const SizedBox(height: 20),
+          if (canSend)
+            _buildInputArea(isDark, accentColor, textColor)
+          else
+            const SizedBox(height: 20),
         ],
       ),
     );
   }
 
-  Widget _buildMessageBubble(ChatMessage message, bool isDark, Color accentColor, Color textColor) {
+  Widget _buildMessageBubble(
+      ChatMessage message, bool isDark, Color accentColor, Color textColor) {
     final isMe = message.getIsMe(widget.course.isOwner);
 
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: GestureDetector(
-        onTap: () => _showMessageOptions(message, isDark, accentColor, textColor),
+        onTap: () =>
+            _showMessageOptions(message, isDark, accentColor, textColor),
         child: Container(
+          constraints: const BoxConstraints(maxWidth: 560),
           margin: const EdgeInsets.only(bottom: 12),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           decoration: BoxDecoration(
@@ -358,18 +429,19 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
                 : (isDark ? const Color(0xFF1E1E24) : Colors.white),
             border: isMe
                 ? null
-                : Border.all(color: isDark ? Colors.grey.shade800 : Colors.grey.shade300),
+                : Border.all(
+                    color:
+                        isDark ? Colors.grey.shade800 : Colors.grey.shade300),
             borderRadius: BorderRadius.circular(20).copyWith(
-              bottomRight: isMe
-                  ? const Radius.circular(0)
-                  : const Radius.circular(20),
-              bottomLeft: isMe
-                  ? const Radius.circular(20)
-                  : const Radius.circular(0),
+              bottomRight:
+                  isMe ? const Radius.circular(0) : const Radius.circular(20),
+              bottomLeft:
+                  isMe ? const Radius.circular(20) : const Radius.circular(0),
             ),
           ),
           child: Column(
-            crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+            crossAxisAlignment:
+                isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
             children: [
               if (!isMe)
                 Padding(
@@ -386,9 +458,8 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
               Text(
                 message.text,
                 style: TextStyle(
-                  color: isMe
-                      ? (isDark ? Colors.black : Colors.white)
-                      : textColor,
+                  color:
+                      isMe ? (isDark ? Colors.black : Colors.white) : textColor,
                   fontSize: 14,
                 ),
               ),
@@ -441,26 +512,30 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
           ),
         ],
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _controller,
-              style: TextStyle(color: textColor),
-              decoration: InputDecoration(
-                hintText: 'Type a message...',
-                hintStyle: TextStyle(color: textColor.withValues(alpha: 0.5)),
-                border: InputBorder.none,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Center(
+          child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 840),
+        child: Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _controller,
+                style: TextStyle(color: textColor),
+                decoration: InputDecoration(
+                  hintText: 'Type a message...',
+                  hintStyle: TextStyle(color: textColor.withValues(alpha: 0.5)),
+                  border: InputBorder.none,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                ),
               ),
             ),
-          ),
-          IconButton(
-            icon: Icon(Icons.send, color: accentColor),
-            onPressed: _sendMessage,
-          ),
-        ],
-      ),
+            IconButton(
+              icon: Icon(Icons.send, color: accentColor),
+              onPressed: _sendMessage,
+            ),
+          ],
+        ),
+      )),
     );
   }
 }

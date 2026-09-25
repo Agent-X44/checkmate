@@ -40,9 +40,11 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
   void initState() {
     super.initState();
     _bubbles = widget.initialBubbles
-            ?.map((p) => BubblePoint(normalizedPosition: p, radius: _globalRadius))
-            .toList() ?? [];
-    
+            ?.map((p) =>
+                BubblePoint(normalizedPosition: p, radius: _globalRadius))
+            .toList() ??
+        [];
+
     // Default to ONE column only, as requested
     _answerBoxes = List.from(widget.initialAnswerRegions ??
         [
@@ -218,27 +220,32 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
       ]),
       bottomNavigationBar: BottomAppBar(
           color: Colors.grey.shade900,
-          child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Row(children: [
-                Text("ITEMS: ${_bubbles.length}",
-                    style: const TextStyle(color: Colors.yellowAccent)),
-                const Spacer(),
-                ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white),
-                    onPressed: () {
-                      widget.onApply(
-                          _bubbles.map((b) => b.normalizedPosition).toList(),
-                          _answerBoxes,
-                          null,
-                          null,
-                          []);
-                      Navigator.pop(context);
-                    },
-                    child: const Text("SAVE TEMPLATE")),
-              ]))),
+          child: Center(
+              child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 720),
+                  child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(children: [
+                        Text("ITEMS: ${_bubbles.length}",
+                            style: const TextStyle(color: Colors.yellowAccent)),
+                        const Spacer(),
+                        ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                                foregroundColor: Colors.white),
+                            onPressed: () {
+                              widget.onApply(
+                                  _bubbles
+                                      .map((b) => b.normalizedPosition)
+                                      .toList(),
+                                  _answerBoxes,
+                                  null,
+                                  null,
+                                  []);
+                              Navigator.pop(context);
+                            },
+                            child: const Text("SAVE TEMPLATE")),
+                      ]))))),
     );
   }
 
@@ -246,63 +253,69 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
     return Container(
       color: Colors.grey.shade900,
       padding: const EdgeInsets.all(12),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            children: [
-              _modeBtn(0, Icons.radio_button_checked, "Bubbles"),
-              const SizedBox(width: 8),
-              _modeBtn(2, Icons.crop_din, "Boxes"),
-            ],
-          ),
-          if (_designerMode == 0) ...[
-            const SizedBox(height: 8),
+      child: Center(
+          child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 720),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
             Row(
               children: [
-                const Icon(Icons.radio_button_checked,
-                    color: Colors.white, size: 20),
-                const SizedBox(width: 12),
-                const Text("Bubble Size:",
-                    style: TextStyle(color: Colors.white, fontSize: 12)),
-                Expanded(
-                  child: Slider(
-                    value: _globalRadius,
-                    min: 5,
-                    max: 40,
-                    onChanged: (v) {
+                _modeBtn(0, Icons.radio_button_checked, "Bubbles"),
+                const SizedBox(width: 8),
+                _modeBtn(2, Icons.crop_din, "Boxes"),
+              ],
+            ),
+            if (_designerMode == 0) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.radio_button_checked,
+                      color: Colors.white, size: 20),
+                  const SizedBox(width: 12),
+                  const Text("Bubble Size:",
+                      style: TextStyle(color: Colors.white, fontSize: 12)),
+                  Expanded(
+                    child: Slider(
+                      value: _globalRadius,
+                      min: 5,
+                      max: 40,
+                      onChanged: (v) {
+                        setState(() {
+                          _globalRadius = v;
+                          for (int i = 0; i < _bubbles.length; i++) {
+                            _bubbles[i] = _bubbles[i].copyWith(radius: v);
+                          }
+                        });
+                      },
+                    ),
+                  ),
+                  Text(_globalRadius.toStringAsFixed(0),
+                      style:
+                          const TextStyle(color: Colors.white, fontSize: 10)),
+                ],
+              ),
+            ] else if (_designerMode == 2) ...[
+              const SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: () {
                       setState(() {
-                        _globalRadius = v;
-                        for (int i = 0; i < _bubbles.length; i++) {
-                          _bubbles[i] = _bubbles[i].copyWith(radius: v);
-                        }
+                        _answerBoxes
+                            .add(const Rect.fromLTRB(0.1, 0.25, 0.9, 0.95));
                       });
                     },
+                    icon: const Icon(Icons.add_box),
+                    label: const Text("ADD COLUMN"),
                   ),
-                ),
-                Text(_globalRadius.toStringAsFixed(0),
-                    style: const TextStyle(color: Colors.white, fontSize: 10)),
-              ],
-            ),
-          ] else if (_designerMode == 2) ...[
-            const SizedBox(height: 8),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                ElevatedButton.icon(
-                  onPressed: () {
-                    setState(() {
-                      _answerBoxes.add(const Rect.fromLTRB(0.1, 0.25, 0.9, 0.95));
-                    });
-                  },
-                  icon: const Icon(Icons.add_box),
-                  label: const Text("ADD COLUMN"),
-                ),
-              ],
-            ),
+                ],
+              ),
+            ],
           ],
-        ],
-      ),
+        ),
+      )),
     );
   }
 
@@ -334,8 +347,7 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
         .map((r) =>
             "      Rect.fromLTRB(${r.left.toStringAsFixed(3)}, ${r.top.toStringAsFixed(3)}, ${r.right.toStringAsFixed(3)}, ${r.bottom.toStringAsFixed(3)}),")
         .join("\n");
-    final String code =
-        "answerRegions: [\n$boxes\n    ],";
+    final String code = "answerRegions: [\n$boxes\n    ],";
     showDialog(
         context: context,
         builder: (c) => AlertDialog(
@@ -360,9 +372,7 @@ class DesignerPainter extends CustomPainter {
   final List<Rect> answerBoxes;
   final int mode;
   DesignerPainter(
-      {required this.bubbles,
-      required this.answerBoxes,
-      required this.mode});
+      {required this.bubbles, required this.answerBoxes, required this.mode});
   @override
   void paint(Canvas canvas, Size size) {
     final bPaint = Paint()
@@ -416,5 +426,3 @@ class BubblePoint {
           normalizedPosition: normalizedPosition ?? this.normalizedPosition,
           radius: radius ?? this.radius);
 }
-
-

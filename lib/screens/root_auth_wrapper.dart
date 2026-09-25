@@ -10,11 +10,8 @@ class RootAuthWrapper extends StatefulWidget {
   final ThemeMode themeMode;
   final Function(bool) onThemeChanged;
 
-  const RootAuthWrapper({
-    super.key, 
-    required this.themeMode, 
-    required this.onThemeChanged
-  });
+  const RootAuthWrapper(
+      {super.key, required this.themeMode, required this.onThemeChanged});
 
   @override
   State<RootAuthWrapper> createState() => _RootAuthWrapperState();
@@ -76,7 +73,9 @@ class _RootAuthWrapperState extends State<RootAuthWrapper> {
   @override
   Widget build(BuildContext context) {
     if (!_isInitDone) {
-      return const SizedBox.shrink(); // Native splash remains preserved over this brief frame
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
     }
 
     // Dismiss native splash cleanly as soon as target screen renders

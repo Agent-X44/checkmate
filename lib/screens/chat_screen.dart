@@ -25,7 +25,8 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   Future<void> _loadStreamPosts() async {
-    final savedPosts = await MessagingService.loadStreamPosts(widget.course.id, widget.course.name);
+    final savedPosts = await MessagingService.loadStreamPosts(
+        widget.course.id, widget.course.name);
     if (savedPosts.isNotEmpty) {
       if (mounted) {
         setState(() {
@@ -35,7 +36,8 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     } else {
       _initSamplePosts();
-      await MessagingService.saveStreamPosts(widget.course.id, widget.course.name, widget.course.streamPosts);
+      await MessagingService.saveStreamPosts(
+          widget.course.id, widget.course.name, widget.course.streamPosts);
       if (mounted) setState(() {});
     }
   }
@@ -59,7 +61,8 @@ class _ChatScreenState extends State<ChatScreen> {
             id: 'c1',
             authorName: 'Alex Student',
             text: 'Thank you prof! Will review the schedule.',
-            timestamp: DateTime.now().subtract(const Duration(days: 2, hours: 2)),
+            timestamp:
+                DateTime.now().subtract(const Duration(days: 2, hours: 2)),
             isMe: false,
           ),
         ],
@@ -71,7 +74,8 @@ class _ChatScreenState extends State<ChatScreen> {
         authorName: widget.course.instructor,
         authorRole: 'Instructor',
         title: 'New material: General Instructions for Competition',
-        content: 'Please review the attached reference guidelines prior to starting your activity.',
+        content:
+            'Please review the attached reference guidelines prior to starting your activity.',
         timestamp: DateTime.now().subtract(const Duration(days: 6)),
         postType: 'material',
         allowComments: true,
@@ -116,9 +120,11 @@ class _ChatScreenState extends State<ChatScreen> {
       _isComposingAnnouncement = false;
     });
 
-    await MessagingService.saveStreamPosts(widget.course.id, widget.course.name, widget.course.streamPosts);
+    await MessagingService.saveStreamPosts(
+        widget.course.id, widget.course.name, widget.course.streamPosts);
     if (mounted) {
-      CheckMateUi.showTopPrompt(context, 'Announcement posted to Stream!', isError: false);
+      CheckMateUi.showTopPrompt(context, 'Announcement posted to Stream!',
+          isError: false);
     }
   }
 
@@ -139,7 +145,8 @@ class _ChatScreenState extends State<ChatScreen> {
       _commentController.clear();
     });
 
-    await MessagingService.saveStreamPosts(widget.course.id, widget.course.name, widget.course.streamPosts);
+    await MessagingService.saveStreamPosts(
+        widget.course.id, widget.course.name, widget.course.streamPosts);
     if (mounted) {
       Navigator.pop(context); // Close comment sheet
       CheckMateUi.showTopPrompt(context, 'Comment added!', isError: false);
@@ -159,7 +166,20 @@ class _ChatScreenState extends State<ChatScreen> {
     } else if (diff.inDays == 1) {
       dateStr = 'Posted Yesterday';
     } else {
-      const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const months = [
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec'
+      ];
       dateStr = 'Posted ${months[dt.month - 1]} ${dt.day}';
     }
 
@@ -171,7 +191,20 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   String _formatFullDateTime(DateTime dt) {
-    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     final hour = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
     final period = dt.hour >= 12 ? 'PM' : 'AM';
@@ -179,7 +212,8 @@ class _ChatScreenState extends State<ChatScreen> {
     return '${days[dt.weekday % 7]}, ${months[dt.month - 1]} ${dt.day}, ${dt.year} at $hour:$minute $period';
   }
 
-  void _showPostOptionsMenu(StreamPost post, bool isDark, Color accentColor, Color textColor) {
+  void _showPostOptionsMenu(
+      StreamPost post, bool isDark, Color accentColor, Color textColor) {
     final isCanManage = widget.course.isOwner || post.isMe;
 
     showModalBottomSheet(
@@ -206,7 +240,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 const SizedBox(height: 12),
                 ListTile(
                   leading: Icon(Icons.info_outline, color: accentColor),
-                  title: Text('View Post Info', style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
+                  title: Text('View Post Info',
+                      style: TextStyle(
+                          color: textColor, fontWeight: FontWeight.bold)),
                   onTap: () {
                     Navigator.pop(context);
                     _showPostInfoSheet(post, isDark, accentColor, textColor);
@@ -215,19 +251,25 @@ class _ChatScreenState extends State<ChatScreen> {
                 if (isCanManage) ...[
                   ListTile(
                     leading: Icon(Icons.edit_outlined, color: textColor),
-                    title: Text('Edit Announcement', style: TextStyle(color: textColor)),
+                    title: Text('Edit Announcement',
+                        style: TextStyle(color: textColor)),
                     onTap: () {
                       Navigator.pop(context);
-                      _showEditAnnouncementDialog(post, isDark, accentColor, textColor);
+                      _showEditAnnouncementDialog(
+                          post, isDark, accentColor, textColor);
                     },
                   ),
                   ListTile(
                     leading: Icon(
-                      post.allowComments ? Icons.comments_disabled_outlined : Icons.comment_outlined,
+                      post.allowComments
+                          ? Icons.comments_disabled_outlined
+                          : Icons.comment_outlined,
                       color: textColor,
                     ),
                     title: Text(
-                      post.allowComments ? 'Turn Off Class Comments' : 'Turn On Class Comments',
+                      post.allowComments
+                          ? 'Turn Off Class Comments'
+                          : 'Turn On Class Comments',
                       style: TextStyle(color: textColor),
                     ),
                     onTap: () async {
@@ -235,19 +277,25 @@ class _ChatScreenState extends State<ChatScreen> {
                       setState(() {
                         post.allowComments = !post.allowComments;
                       });
-                      await MessagingService.saveStreamPosts(widget.course.id, widget.course.name, widget.course.streamPosts);
+                      await MessagingService.saveStreamPosts(widget.course.id,
+                          widget.course.name, widget.course.streamPosts);
                       if (mounted) {
                         CheckMateUi.showTopPrompt(
                           context,
-                          post.allowComments ? 'Comments enabled for this post.' : 'Comments disabled for this post.',
+                          post.allowComments
+                              ? 'Comments enabled for this post.'
+                              : 'Comments disabled for this post.',
                           isError: false,
                         );
                       }
                     },
                   ),
                   ListTile(
-                    leading: const Icon(Icons.delete_outline, color: Colors.red),
-                    title: const Text('Delete Announcement', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+                    leading:
+                        const Icon(Icons.delete_outline, color: Colors.red),
+                    title: const Text('Delete Announcement',
+                        style: TextStyle(
+                            color: Colors.red, fontWeight: FontWeight.bold)),
                     onTap: () {
                       Navigator.pop(context);
                       _showDeleteConfirmation(post, isDark, textColor);
@@ -262,7 +310,8 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  void _showEditAnnouncementDialog(StreamPost post, bool isDark, Color accentColor, Color textColor) {
+  void _showEditAnnouncementDialog(
+      StreamPost post, bool isDark, Color accentColor, Color textColor) {
     final editController = TextEditingController(text: post.content);
     String? editAttachment = post.attachmentName;
 
@@ -273,8 +322,11 @@ class _ChatScreenState extends State<ChatScreen> {
           builder: (context, setDialogState) {
             return AlertDialog(
               backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              title: Text('Edit Announcement', style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              title: Text('Edit Announcement',
+                  style:
+                      TextStyle(color: textColor, fontWeight: FontWeight.bold)),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -284,32 +336,38 @@ class _ChatScreenState extends State<ChatScreen> {
                       maxLines: 4,
                       style: TextStyle(color: textColor),
                       decoration: InputDecoration(
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12)),
                         hintText: 'Edit post content...',
-                        hintStyle: TextStyle(color: textColor.withValues(alpha: 0.5)),
+                        hintStyle:
+                            TextStyle(color: textColor.withValues(alpha: 0.5)),
                       ),
                     ),
                     if (editAttachment != null) ...[
                       const SizedBox(height: 12),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
                         decoration: BoxDecoration(
                           color: isDark ? Colors.black26 : Colors.grey.shade200,
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: Row(
                           children: [
-                            const Icon(Icons.picture_as_pdf, color: Colors.red, size: 18),
+                            const Icon(Icons.picture_as_pdf,
+                                color: Colors.red, size: 18),
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
                                 editAttachment!,
-                                style: TextStyle(fontSize: 12, color: textColor),
+                                style:
+                                    TextStyle(fontSize: 12, color: textColor),
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
                             IconButton(
-                              icon: Icon(Icons.close, size: 16, color: textColor),
+                              icon:
+                                  Icon(Icons.close, size: 16, color: textColor),
                               onPressed: () {
                                 setDialogState(() {
                                   editAttachment = null;
@@ -326,7 +384,9 @@ class _ChatScreenState extends State<ChatScreen> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
-                  child: Text('CANCEL', style: TextStyle(color: textColor.withValues(alpha: 0.7))),
+                  child: Text('CANCEL',
+                      style:
+                          TextStyle(color: textColor.withValues(alpha: 0.7))),
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
@@ -338,16 +398,21 @@ class _ChatScreenState extends State<ChatScreen> {
                     setState(() {
                       post.content = editController.text.trim();
                       post.attachmentName = editAttachment;
-                      post.attachmentType = editAttachment != null ? 'pdf' : null;
+                      post.attachmentType =
+                          editAttachment != null ? 'pdf' : null;
                       post.editedTimestamp = DateTime.now();
                     });
-                    await MessagingService.saveStreamPosts(widget.course.id, widget.course.name, widget.course.streamPosts);
+                    await MessagingService.saveStreamPosts(widget.course.id,
+                        widget.course.name, widget.course.streamPosts);
                     if (mounted) {
                       Navigator.pop(context);
-                      CheckMateUi.showTopPrompt(context, 'Announcement updated!', isError: false);
+                      CheckMateUi.showTopPrompt(
+                          context, 'Announcement updated!',
+                          isError: false);
                     }
                   },
-                  child: const Text('SAVE', style: TextStyle(fontWeight: FontWeight.bold)),
+                  child: const Text('SAVE',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ],
             );
@@ -363,8 +428,10 @@ class _ChatScreenState extends State<ChatScreen> {
       builder: (context) {
         return AlertDialog(
           backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          title: Text('Delete Announcement?', style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text('Delete Announcement?',
+              style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
           content: Text(
             'This post will be permanently removed from the class stream.',
             style: TextStyle(color: textColor.withValues(alpha: 0.8)),
@@ -372,7 +439,8 @@ class _ChatScreenState extends State<ChatScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context),
-              child: Text('CANCEL', style: TextStyle(color: textColor.withValues(alpha: 0.7))),
+              child: Text('CANCEL',
+                  style: TextStyle(color: textColor.withValues(alpha: 0.7))),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
@@ -383,13 +451,16 @@ class _ChatScreenState extends State<ChatScreen> {
                 setState(() {
                   widget.course.streamPosts.removeWhere((p) => p.id == post.id);
                 });
-                await MessagingService.saveStreamPosts(widget.course.id, widget.course.name, widget.course.streamPosts);
+                await MessagingService.saveStreamPosts(widget.course.id,
+                    widget.course.name, widget.course.streamPosts);
                 if (mounted) {
                   Navigator.pop(context);
-                  CheckMateUi.showTopPrompt(context, 'Announcement deleted.', isError: false);
+                  CheckMateUi.showTopPrompt(context, 'Announcement deleted.',
+                      isError: false);
                 }
               },
-              child: const Text('DELETE', style: TextStyle(fontWeight: FontWeight.bold)),
+              child: const Text('DELETE',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
             ),
           ],
         );
@@ -397,7 +468,8 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  void _showPostInfoSheet(StreamPost post, bool isDark, Color accentColor, Color textColor) {
+  void _showPostInfoSheet(
+      StreamPost post, bool isDark, Color accentColor, Color textColor) {
     showModalBottomSheet(
       context: context,
       backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
@@ -417,26 +489,39 @@ class _ChatScreenState extends State<ChatScreen> {
                   const SizedBox(width: 12),
                   Text(
                     'Post Information',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor),
+                    style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: textColor),
                   ),
                 ],
               ),
               const Divider(height: 24),
-              _infoRow('Posted By', '${post.authorName} (${post.authorRole})', textColor, accentColor),
+              _infoRow('Posted By', '${post.authorName} (${post.authorRole})',
+                  textColor, accentColor),
               const SizedBox(height: 12),
-              _infoRow('Sent Date & Time', _formatFullDateTime(post.timestamp), textColor, accentColor),
+              _infoRow('Sent Date & Time', _formatFullDateTime(post.timestamp),
+                  textColor, accentColor),
               if (post.editedTimestamp != null) ...[
                 const SizedBox(height: 12),
-                _infoRow('Edited At', _formatFullDateTime(post.editedTimestamp!), textColor, accentColor),
+                _infoRow(
+                    'Edited At',
+                    _formatFullDateTime(post.editedTimestamp!),
+                    textColor,
+                    accentColor),
               ],
               const SizedBox(height: 12),
-              _infoRow('Course Stream', widget.course.name, textColor, accentColor),
+              _infoRow(
+                  'Course Stream', widget.course.name, textColor, accentColor),
               const SizedBox(height: 12),
-              _infoRow('Category', post.postType.toUpperCase(), textColor, accentColor),
+              _infoRow('Category', post.postType.toUpperCase(), textColor,
+                  accentColor),
               const SizedBox(height: 12),
-              _infoRow('Comments', post.allowComments ? 'Enabled' : 'Disabled', textColor, post.allowComments ? Colors.green : Colors.red),
+              _infoRow('Comments', post.allowComments ? 'Enabled' : 'Disabled',
+                  textColor, post.allowComments ? Colors.green : Colors.red),
               const SizedBox(height: 12),
-              _infoRow('Sync Status', 'Published on Google Class Stream', textColor, Colors.green),
+              _infoRow('Sync Status', 'Published on Google Class Stream',
+                  textColor, Colors.green),
               const SizedBox(height: 24),
               SizedBox(
                 width: double.infinity,
@@ -444,10 +529,12 @@ class _ChatScreenState extends State<ChatScreen> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: accentColor,
                     foregroundColor: isDark ? Colors.black : Colors.white,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
                   ),
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('CLOSE', style: TextStyle(fontWeight: FontWeight.bold)),
+                  child: const Text('CLOSE',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -457,22 +544,28 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _infoRow(String label, String value, Color textColor, Color accentColor) {
+  Widget _infoRow(
+      String label, String value, Color textColor, Color accentColor) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         SizedBox(
           width: 120,
-          child: Text(label, style: TextStyle(fontSize: 13, color: textColor.withValues(alpha: 0.6))),
+          child: Text(label,
+              style: TextStyle(
+                  fontSize: 13, color: textColor.withValues(alpha: 0.6))),
         ),
         Expanded(
-          child: Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: textColor)),
+          child: Text(value,
+              style: TextStyle(
+                  fontSize: 13, fontWeight: FontWeight.bold, color: textColor)),
         ),
       ],
     );
   }
 
-  void _showCommentsSheet(StreamPost post, bool isDark, Color accentColor, Color textColor) {
+  void _showCommentsSheet(
+      StreamPost post, bool isDark, Color accentColor, Color textColor) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -489,15 +582,25 @@ class _ChatScreenState extends State<ChatScreen> {
             top: 16,
           ),
           child: SizedBox(
-            height: 450,
+            height: (MediaQuery.sizeOf(context).height -
+                    MediaQuery.viewInsetsOf(context).bottom -
+                    MediaQuery.paddingOf(context).top -
+                    32)
+                .clamp(0.0, 450.0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('Class Comments (${post.comments.length})',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textColor)),
+                    Expanded(
+                        child: Text('Class Comments (${post.comments.length})',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: textColor))),
                     IconButton(
                       icon: Icon(Icons.close, color: textColor),
                       onPressed: () => Navigator.pop(context),
@@ -508,8 +611,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 Expanded(
                   child: post.comments.isEmpty
                       ? Center(
-                          child: Text('No class comments yet. Start the conversation!',
-                              style: TextStyle(color: textColor.withValues(alpha: 0.6))),
+                          child: Text(
+                              'No class comments yet. Start the conversation!',
+                              style: TextStyle(
+                                  color: textColor.withValues(alpha: 0.6))),
                         )
                       : ListView.builder(
                           itemCount: post.comments.length,
@@ -517,15 +622,29 @@ class _ChatScreenState extends State<ChatScreen> {
                             final c = post.comments[index];
                             return ListTile(
                               leading: CircleAvatar(
-                                backgroundColor: accentColor.withValues(alpha: 0.2),
+                                backgroundColor:
+                                    accentColor.withValues(alpha: 0.2),
                                 foregroundColor: accentColor,
-                                child: Text(c.authorName[0].toUpperCase(), style: const TextStyle(fontWeight: FontWeight.bold)),
+                                child: Text(c.authorName[0].toUpperCase(),
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold)),
                               ),
-                              title: Text(c.authorName, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: textColor)),
-                              subtitle: Text(c.text, style: TextStyle(color: textColor.withValues(alpha: 0.9))),
+                              title: Text(c.authorName,
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 13,
+                                      color: textColor)),
+                              subtitle: Text(c.text,
+                                  style: TextStyle(
+                                      color: textColor.withValues(alpha: 0.9))),
                               trailing: Text(
-                                _formatFullDateTime(c.timestamp).split('at').last.trim(),
-                                style: TextStyle(fontSize: 10, color: textColor.withValues(alpha: 0.5)),
+                                _formatFullDateTime(c.timestamp)
+                                    .split('at')
+                                    .last
+                                    .trim(),
+                                style: TextStyle(
+                                    fontSize: 10,
+                                    color: textColor.withValues(alpha: 0.5)),
                               ),
                             );
                           },
@@ -542,9 +661,12 @@ class _ChatScreenState extends State<ChatScreen> {
                           style: TextStyle(color: textColor),
                           decoration: InputDecoration(
                             hintText: 'Add class comment...',
-                            hintStyle: TextStyle(color: textColor.withValues(alpha: 0.5)),
-                            border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                            hintStyle: TextStyle(
+                                color: textColor.withValues(alpha: 0.5)),
+                            border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(24)),
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 16, vertical: 10),
                           ),
                         ),
                       ),
@@ -578,25 +700,25 @@ class _ChatScreenState extends State<ChatScreen> {
     final textColor = isDark ? Colors.white : Colors.black;
     final bgColor = isDark ? const Color(0xFF121212) : Colors.grey.shade100;
     final cardBgColor = isDark ? const Color(0xFF1E1E24) : Colors.white;
-    final cardBorderColor = isDark ? Colors.grey.shade800 : Colors.grey.shade300;
+    final cardBorderColor =
+        isDark ? Colors.grey.shade800 : Colors.grey.shade300;
 
     return Scaffold(
       backgroundColor: bgColor,
       appBar: AppBar(
-        backgroundColor: isDark ? const Color(0xFF121212) : Colors.white,
-        elevation: 0,
-        iconTheme: IconThemeData(color: textColor),
         title: Text('${widget.course.name} Stream',
-            style: TextStyle(color: textColor, fontWeight: FontWeight.bold, fontSize: 18)),
+            maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(
-            icon: Icon(Icons.info_outline, color: textColor),
-            onPressed: () => CheckMateUi.showTopPrompt(context, '${widget.course.name} • ${widget.course.instructor}', isError: false),
+            icon: const Icon(Icons.info_outline),
+            onPressed: () => CheckMateUi.showTopPrompt(
+                context, '${widget.course.name} • ${widget.course.instructor}',
+                isError: false),
             tooltip: 'Course Info',
           ),
           if (!widget.course.isOwner)
             IconButton(
-              icon: Icon(Icons.person, color: accentColor),
+              icon: const Icon(Icons.person),
               tooltip: 'Message Professor',
               onPressed: () {
                 Navigator.push(
@@ -621,7 +743,12 @@ class _ChatScreenState extends State<ChatScreen> {
           await _loadStreamPosts();
         },
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: EdgeInsets.symmetric(
+            horizontal: MediaQuery.sizeOf(context).width > 880
+                ? (MediaQuery.sizeOf(context).width - 840) / 2
+                : 16,
+            vertical: 16,
+          ),
           children: [
             // 1. Course Banner Card (Google Classroom Banner Style)
             _buildCourseHeaderCard(isDark, cardBgColor, textColor),
@@ -629,19 +756,22 @@ class _ChatScreenState extends State<ChatScreen> {
 
             // 2. New Announcement Trigger Card / Composer (INSTRUCTORS ONLY)
             if (widget.course.isOwner) ...[
-              _buildNewAnnouncementCard(isDark, cardBgColor, cardBorderColor, textColor, accentColor),
+              _buildNewAnnouncementCard(
+                  isDark, cardBgColor, cardBorderColor, textColor, accentColor),
               const SizedBox(height: 16),
             ],
 
             // 3. Stream Feed Cards List
-            ...widget.course.streamPosts.map((post) => _buildStreamCard(post, isDark, cardBgColor, cardBorderColor, textColor, accentColor)),
+            ...widget.course.streamPosts.map((post) => _buildStreamCard(post,
+                isDark, cardBgColor, cardBorderColor, textColor, accentColor)),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildCourseHeaderCard(bool isDark, Color cardBgColor, Color textColor) {
+  Widget _buildCourseHeaderCard(
+      bool isDark, Color cardBgColor, Color textColor) {
     final gradient = widget.course.adaptiveGradient(context);
     final bannerContentColor = isDark ? const Color(0xFF141318) : Colors.white;
 
@@ -672,7 +802,9 @@ class _ChatScreenState extends State<ChatScreen> {
               fontSize: 28,
               fontWeight: FontWeight.bold,
               color: bannerContentColor,
-              shadows: isDark ? null : const [Shadow(color: Colors.black45, blurRadius: 4)],
+              shadows: isDark
+                  ? null
+                  : const [Shadow(color: Colors.black45, blurRadius: 4)],
             ),
           ),
           const SizedBox(height: 6),
@@ -689,8 +821,8 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildNewAnnouncementCard(
-      bool isDark, Color cardBgColor, Color cardBorderColor, Color textColor, Color accentColor) {
+  Widget _buildNewAnnouncementCard(bool isDark, Color cardBgColor,
+      Color cardBorderColor, Color textColor, Color accentColor) {
     if (_isComposingAnnouncement) {
       return Card(
         color: cardBgColor,
@@ -717,7 +849,8 @@ class _ChatScreenState extends State<ChatScreen> {
                   const SizedBox(width: 12),
                   Text(
                     'Announce something to your class',
-                    style: TextStyle(fontWeight: FontWeight.bold, color: textColor),
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold, color: textColor),
                   ),
                 ],
               ),
@@ -729,7 +862,8 @@ class _ChatScreenState extends State<ChatScreen> {
                 decoration: InputDecoration(
                   hintText: 'Share an update, schedule, or message...',
                   hintStyle: TextStyle(color: textColor.withValues(alpha: 0.5)),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12)),
                   filled: true,
                   fillColor: isDark ? Colors.black12 : Colors.grey.shade50,
                 ),
@@ -737,7 +871,8 @@ class _ChatScreenState extends State<ChatScreen> {
               if (_selectedAttachment != null) ...[
                 const SizedBox(height: 12),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   decoration: BoxDecoration(
                     color: isDark ? Colors.black26 : Colors.grey.shade200,
                     borderRadius: BorderRadius.circular(20),
@@ -745,13 +880,20 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.picture_as_pdf, color: Colors.red, size: 18),
+                      const Icon(Icons.picture_as_pdf,
+                          color: Colors.red, size: 18),
                       const SizedBox(width: 8),
-                      Text(_selectedAttachment!, style: TextStyle(fontSize: 12, color: textColor)),
+                      Flexible(
+                          child: Text(_selectedAttachment!,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style:
+                                  TextStyle(fontSize: 12, color: textColor))),
                       const SizedBox(width: 8),
                       GestureDetector(
                         onTap: () => setState(() => _selectedAttachment = null),
-                        child: Icon(Icons.cancel, size: 16, color: textColor.withValues(alpha: 0.6)),
+                        child: Icon(Icons.cancel,
+                            size: 16, color: textColor.withValues(alpha: 0.6)),
                       ),
                     ],
                   ),
@@ -766,25 +908,31 @@ class _ChatScreenState extends State<ChatScreen> {
                     tooltip: 'Attach File',
                     onPressed: () {
                       setState(() {
-                        _selectedAttachment = 'Schedule_${widget.course.code}_Prelim_Exam.pdf';
+                        _selectedAttachment =
+                            'Schedule_${widget.course.code}_Prelim_Exam.pdf';
                       });
                     },
                   ),
                   Row(
                     children: [
                       TextButton(
-                        onPressed: () => setState(() => _isComposingAnnouncement = false),
-                        child: Text('Cancel', style: TextStyle(color: textColor.withValues(alpha: 0.7))),
+                        onPressed: () =>
+                            setState(() => _isComposingAnnouncement = false),
+                        child: Text('Cancel',
+                            style: TextStyle(
+                                color: textColor.withValues(alpha: 0.7))),
                       ),
                       const SizedBox(width: 8),
                       ElevatedButton(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: accentColor,
                           foregroundColor: isDark ? Colors.black : Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8)),
                         ),
                         onPressed: _postAnnouncement,
-                        child: const Text('Post', style: TextStyle(fontWeight: FontWeight.bold)),
+                        child: const Text('Post',
+                            style: TextStyle(fontWeight: FontWeight.bold)),
                       ),
                     ],
                   ),
@@ -812,14 +960,15 @@ class _ChatScreenState extends State<ChatScreen> {
             children: [
               Icon(Icons.edit_outlined, color: accentColor, size: 20),
               const SizedBox(width: 12),
-              Text(
+              Expanded(
+                  child: Text(
                 'Announce something to your class',
                 style: TextStyle(
                   color: textColor.withValues(alpha: 0.7),
                   fontWeight: FontWeight.w500,
                   fontSize: 14,
                 ),
-              ),
+              )),
             ],
           ),
         ),
@@ -827,8 +976,8 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildStreamCard(
-      StreamPost post, bool isDark, Color cardBgColor, Color cardBorderColor, Color textColor, Color accentColor) {
+  Widget _buildStreamCard(StreamPost post, bool isDark, Color cardBgColor,
+      Color cardBorderColor, Color textColor, Color accentColor) {
     if (post.postType == 'material' || post.postType == 'assignment') {
       return Card(
         margin: const EdgeInsets.only(bottom: 16),
@@ -848,9 +997,14 @@ class _ChatScreenState extends State<ChatScreen> {
                 child: Row(
                   children: [
                     CircleAvatar(
-                      backgroundColor: isDark ? Colors.black38 : Colors.grey.shade200,
+                      backgroundColor:
+                          isDark ? Colors.black38 : Colors.grey.shade200,
                       foregroundColor: textColor,
-                      child: Icon(post.postType == 'material' ? Icons.menu_book : Icons.assignment, color: accentColor),
+                      child: Icon(
+                          post.postType == 'material'
+                              ? Icons.menu_book
+                              : Icons.assignment,
+                          color: accentColor),
                     ),
                     const SizedBox(width: 12),
                     Expanded(
@@ -859,19 +1013,26 @@ class _ChatScreenState extends State<ChatScreen> {
                         children: [
                           Text(
                             post.title ?? 'New Course Activity',
-                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: textColor),
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                                color: textColor),
                           ),
                           const SizedBox(height: 2),
                           Text(
                             _formatPostDate(post),
-                            style: TextStyle(fontSize: 12, color: textColor.withValues(alpha: 0.6)),
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: textColor.withValues(alpha: 0.6)),
                           ),
                         ],
                       ),
                     ),
                     IconButton(
-                      icon: Icon(Icons.more_vert, color: textColor.withValues(alpha: 0.6)),
-                      onPressed: () => _showPostOptionsMenu(post, isDark, accentColor, textColor),
+                      icon: Icon(Icons.more_vert,
+                          color: textColor.withValues(alpha: 0.6)),
+                      onPressed: () => _showPostOptionsMenu(
+                          post, isDark, accentColor, textColor),
                     ),
                   ],
                 ),
@@ -892,11 +1053,14 @@ class _ChatScreenState extends State<ChatScreen> {
                   }
                 },
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                   child: Row(
                     children: [
                       Icon(
-                        post.allowComments ? Icons.add_comment_outlined : Icons.comments_disabled_outlined,
+                        post.allowComments
+                            ? Icons.add_comment_outlined
+                            : Icons.comments_disabled_outlined,
                         size: 16,
                         color: textColor.withValues(alpha: 0.6),
                       ),
@@ -904,11 +1068,14 @@ class _ChatScreenState extends State<ChatScreen> {
                       Text(
                         !post.allowComments
                             ? 'Class comments turned off'
-                            : (post.comments.isEmpty ? 'Add class comment' : '${post.comments.length} class comment(s)'),
+                            : (post.comments.isEmpty
+                                ? 'Add class comment'
+                                : '${post.comments.length} class comment(s)'),
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
-                          color: textColor.withValues(alpha: post.allowComments ? 0.7 : 0.4),
+                          color: textColor.withValues(
+                              alpha: post.allowComments ? 0.7 : 0.4),
                         ),
                       ),
                     ],
@@ -956,18 +1123,25 @@ class _ChatScreenState extends State<ChatScreen> {
                       children: [
                         Text(
                           post.authorName,
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: textColor),
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                              color: textColor),
                         ),
                         Text(
                           _formatPostDate(post),
-                          style: TextStyle(fontSize: 12, color: textColor.withValues(alpha: 0.6)),
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: textColor.withValues(alpha: 0.6)),
                         ),
                       ],
                     ),
                   ),
                   IconButton(
-                    icon: Icon(Icons.more_vert, color: textColor.withValues(alpha: 0.6)),
-                    onPressed: () => _showPostOptionsMenu(post, isDark, accentColor, textColor),
+                    icon: Icon(Icons.more_vert,
+                        color: textColor.withValues(alpha: 0.6)),
+                    onPressed: () => _showPostOptionsMenu(
+                        post, isDark, accentColor, textColor),
                   ),
                 ],
               ),
@@ -987,7 +1161,8 @@ class _ChatScreenState extends State<ChatScreen> {
               Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                   decoration: BoxDecoration(
                     color: isDark ? Colors.black38 : Colors.grey.shade100,
                     border: Border.all(color: cardBorderColor),
@@ -1001,7 +1176,8 @@ class _ChatScreenState extends State<ChatScreen> {
                           color: Colors.red.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(6),
                         ),
-                        child: const Icon(Icons.picture_as_pdf, color: Colors.red, size: 20),
+                        child: const Icon(Icons.picture_as_pdf,
+                            color: Colors.red, size: 20),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
@@ -1009,7 +1185,10 @@ class _ChatScreenState extends State<ChatScreen> {
                           post.attachmentName!,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: textColor),
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                              color: textColor),
                         ),
                       ),
                     ],
@@ -1036,11 +1215,14 @@ class _ChatScreenState extends State<ChatScreen> {
                 }
               },
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 child: Row(
                   children: [
                     Icon(
-                      post.allowComments ? Icons.add_comment_outlined : Icons.comments_disabled_outlined,
+                      post.allowComments
+                          ? Icons.add_comment_outlined
+                          : Icons.comments_disabled_outlined,
                       size: 16,
                       color: textColor.withValues(alpha: 0.6),
                     ),
@@ -1048,11 +1230,14 @@ class _ChatScreenState extends State<ChatScreen> {
                     Text(
                       !post.allowComments
                           ? 'Class comments turned off'
-                          : (post.comments.isEmpty ? 'Add class comment' : '${post.comments.length} class comment(s)'),
+                          : (post.comments.isEmpty
+                              ? 'Add class comment'
+                              : '${post.comments.length} class comment(s)'),
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
-                        color: textColor.withValues(alpha: post.allowComments ? 0.7 : 0.4),
+                        color: textColor.withValues(
+                            alpha: post.allowComments ? 0.7 : 0.4),
                       ),
                     ),
                   ],

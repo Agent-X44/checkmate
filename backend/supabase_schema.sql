@@ -207,3 +207,17 @@ USING (
         AND exam_id IN (SELECT id FROM exams WHERE results_released = true)
     )
 );
+
+-- Instructors can review grades for their own classes before release.
+CREATE POLICY "Instructors view own class grades" ON public.grades
+FOR SELECT TO authenticated
+USING (
+  EXISTS (
+    SELECT 1
+    FROM public.answer_sheets s
+    JOIN public.exams e ON e.id = s.exam_id
+    JOIN public.classes c ON c.id = e.class_id
+    WHERE s.id = grades.sheet_id
+      AND c.instructor_id = auth.uid()
+  )
+);

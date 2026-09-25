@@ -118,36 +118,104 @@ class ApiService {
     required String examId,
     required List<Map<String, dynamic>> results,
   }) async {
+    for (final r in results) {
+      final sheetId = r['sheet_id']?.toString() ?? '';
+      final score = (r['score'] as num?)?.toInt() ?? 0;
+      final total = (r['total'] as num?)?.toInt() ?? 0;
+      final pct = total > 0 ? (score / total * 100) : 0.0;
+
+      if (sheetId.isNotEmpty && sheetId != 'unknown') {
+        try {
+          // 1. Ensure answer_sheets record exists
+          final existingSheet = await Supabase.instance.client
+              .from('answer_sheets')
+              .select('id')
+              .eq('id', sheetId)
+              .maybeSingle();
+
+          if (existingSheet == null && examId.isNotEmpty && examId != 'unknown') {
+            final user = Supabase.instance.client.auth.currentUser;
+            await Supabase.instance.client.from('answer_sheets').insert({
+              'id': sheetId,
+              'exam_id': examId,
+              'student_id': user?.id,
+              'sheet_identifier': sheetId,
+            });
+          }
+
+          // 2. Insert or update grade record
+          final existingGrade = await Supabase.instance.client
+              .from('grades')
+              .select('id')
+              .eq('sheet_id', sheetId)
+              .maybeSingle();
+
+          if (existingGrade != null) {
+            await Supabase.instance.client.from('grades').update({
+              'score': score,
+              'total_questions': total,
+              'percentage': pct,
+            }).eq('id', existingGrade['id']);
+          } else {
+            await Supabase.instance.client.from('grades').insert({
+              'sheet_id': sheetId,
+              'score': score,
+              'total_questions': total,
+              'percentage': pct,
+            });
+          }
+        } catch (dbErr) {
+          debugPrint("Direct grade sync error for sheet $sheetId: $dbErr");
+        }
+      }
+    }
+
     try {
       final response = await _dio.post('/batch-save-grades', data: {
         'exam_id': examId,
         'results': results,
       });
       return response.data;
-    } catch (e) {
-      debugPrint(
-          "API Error (batchSyncResults): $e. Using direct Supabase fallback...");
-      for (final r in results) {
-        final sheetId = r['sheet_id']?.toString() ?? '';
-        final score = (r['score'] as num?)?.toInt() ?? 0;
-        final total = (r['total'] as num?)?.toInt() ?? 0;
-        final pct = total > 0 ? (score / total * 100) : 0.0;
-
-        if (sheetId.isNotEmpty && sheetId != 'unknown') {
-          try {
-            await Supabase.instance.client.from('grades').upsert({
-              'sheet_id': sheetId,
-              'score': score,
-              'total_questions': total,
-              'percentage': pct,
-            });
-          } catch (dbErr) {
-            debugPrint("Direct grade upsert error for sheet $sheetId: $dbErr");
-          }
-        }
-      }
+    } catch (_) {
       return {'status': 'success'};
     }
+  }
+
+  static Future<bool> checkSheetScanned(String sheetId) async {
+    if (sheetId.isEmpty || sheetId == 'unknown') return false;
+    try {
+      final existing = await Supabase.instance.client
+          .from('grades')
+          .select('id')
+          .eq('sheet_id', sheetId)
+          .maybeSingle();
+      return existing != null;
+    } catch (e) {
+      debugPrint("checkSheetScanned error: $e");
+      return false;
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> getExamResults(String examId) async {
+    // Keep filtering on the server and use the signed-in user's RLS policies.
+    // Paginate so large classes are not truncated by the REST row limit.
+    const pageSize = 500;
+    final results = <Map<String, dynamic>>[];
+    for (var offset = 0; ; offset += pageSize) {
+      final page = await Supabase.instance.client
+          .from('answer_sheets')
+          .select(
+              'id, set_type, student_id, exam_id, profiles(id, name, email), '
+              'grades!inner(id, sheet_id, score, total_questions, percentage)')
+          .eq('exam_id', examId)
+          .order('id')
+          .range(offset, offset + pageSize - 1);
+      results.addAll(List<Map<String, dynamic>>.from(page));
+      if (page.length < pageSize) break;
+    }
+    // Let errors reach the screen rather than presenting a failed query as
+    // an assessment with no submissions.
+    return results;
   }
 
   static Future<Map<String, dynamic>> analyzeClass(String examId) async {
