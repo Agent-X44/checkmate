@@ -1,10 +1,9 @@
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import '../models/course.dart';
 import 'api_service.dart';
-
-import 'package:uuid/uuid.dart';
 
 /// Service responsible for Supabase Authentication and Database interactions.
 ///
@@ -504,6 +503,19 @@ class SupabaseService {
         .toList();
   }
 
+  static final math.Random _random = math.Random.secure();
+  static const String _shortIdChars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+
+  /// Generates a short, high-speed 11-character Sheet ID (e.g., "CM-8K9P2X8Q").
+  /// This produces a Version 1 QR code (21x21 grid) with large modules on paper for instant detection.
+  static String generateShortSheetId() {
+    final buffer = StringBuffer('CM-');
+    for (int i = 0; i < 8; i++) {
+      buffer.write(_shortIdChars[_random.nextInt(_shortIdChars.length)]);
+    }
+    return buffer.toString();
+  }
+
   static Future<List<Map<String, String>>> generateAnswerSheetsData(
     String examId,
     String classId, {
@@ -520,15 +532,13 @@ class SupabaseService {
     });
     List<Map<String, String>> sheetData = [];
     final errors = <String>[];
-    const uuid = Uuid();
     var schemaSupportsSets = true;
 
     // Fix: If there are NO students, we still want the instructor to be able to test print!
     // So we generate a dummy "Instructor Key" sheet if the class is empty.
     if (studentsData.isEmpty) {
-      final String dummyId = uuid.v4();
+      final String dummyId = generateShortSheetId();
       final dummySheet = <String, dynamic>{
-        'id': dummyId,
         'exam_id': examId,
         'student_id': currentUser?.id, // Assign to instructor
         'sheet_identifier': dummyId,
@@ -566,7 +576,7 @@ class SupabaseService {
         try {
           final query = _client
               .from('answer_sheets')
-              .select('id, set_type')
+              .select('id, sheet_identifier, set_type')
               .eq('exam_id', examId)
               .eq('student_id', studentId);
           if (schemaSupportsSets) {
@@ -579,7 +589,7 @@ class SupabaseService {
           schemaSupportsSets = false;
           existing = await _client
               .from('answer_sheets')
-              .select('id')
+              .select('id, sheet_identifier')
               .eq('exam_id', examId)
               .eq('student_id', studentId)
               .maybeSingle();
@@ -587,13 +597,12 @@ class SupabaseService {
 
         String sheetIdentifier;
         if (existing != null) {
-          sheetIdentifier = existing['id'].toString();
+          sheetIdentifier =
+              (existing['sheet_identifier'] ?? existing['id']).toString();
         } else {
-          // Generate a new UUID and insert it as the sheet_identifier (and id)
-          sheetIdentifier = uuid.v4();
+          // Generate a short 11-character Sheet ID (CM-8K9P2X8Q) for Version 1 QR codes
+          sheetIdentifier = generateShortSheetId();
           final sheet = <String, dynamic>{
-            'id':
-                sheetIdentifier, // Explicitly set ID so QR code is identical to row UUID
             'exam_id': examId,
             'student_id': studentId,
             'sheet_identifier': sheetIdentifier,

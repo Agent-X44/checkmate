@@ -149,8 +149,12 @@ class PdfGenerator {
                       pw.Container(
                         width: data.alignment.qrSize,
                         height: data.alignment.qrSize,
+                        color: PdfColors.white,
+                        padding: const pw.EdgeInsets.all(3),
                         child: pw.BarcodeWidget(
-                          barcode: pw.Barcode.qrCode(),
+                          barcode: pw.Barcode.qrCode(
+                            errorCorrectLevel: pw.BarcodeQRCorrectionLevel.medium,
+                          ),
                           data: sheetId,
                           drawText: false,
                         ),

@@ -843,13 +843,17 @@ async def resolve_sheet(sheet_id: str, user=Depends(get_current_user)):
         raise HTTPException(status_code=401, detail="Unauthorized")
 
     try:
-        uuid.UUID(str(sheet_id))
-    except (ValueError, TypeError, AttributeError):
-        raise HTTPException(status_code=404, detail="Sheet not found")
+        # 1. Query answer_sheets by sheet_identifier (Short ID format e.g. CM-X8K9P2Q4)
+        res = supabase.table("answer_sheets").select("*, profiles(*), exams(*, classes(*))").eq("sheet_identifier", sheet_id).execute()
+        
+        # 2. Fallback query by UUID id for backwards compatibility with legacy answer sheets
+        if not res.data:
+            try:
+                uuid.UUID(str(sheet_id))
+                res = supabase.table("answer_sheets").select("*, profiles(*), exams(*, classes(*))").eq("id", sheet_id).execute()
+            except (ValueError, TypeError, AttributeError):
+                pass
 
-    try:
-        # Fetch sheet and deeply join profiles, exam and class
-        res = supabase.table("answer_sheets").select("*, profiles(*), exams(*, classes(*))").eq("id", sheet_id).execute()
         if not res.data:
             raise HTTPException(status_code=404, detail="Sheet not found")
             

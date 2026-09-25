@@ -46,8 +46,16 @@ class ApiService {
     return uuidPattern.hasMatch(value.trim());
   }
 
+  static bool _isValidSheetId(String value) {
+    final clean = value.trim();
+    if (clean.isEmpty) return false;
+    final validPattern = RegExp(r'^[a-zA-Z0-9\-]{5,40}$');
+    return validPattern.hasMatch(clean);
+  }
+
   static Future<Map<String, dynamic>> resolveSheet(String identifier) async {
-    if (!_isValidUuid(identifier)) {
+    final cleanId = identifier.trim();
+    if (!_isValidSheetId(cleanId)) {
       throw const FormatException('Invalid sheet ID format.');
     }
 
@@ -58,12 +66,29 @@ class ApiService {
           : null;
 
       final response = await _dio.get(
-        '/resolve-sheet/$identifier',
+        '/resolve-sheet/$cleanId',
         options: dio.Options(headers: headers),
       );
       return response.data;
     } catch (e) {
-      debugPrint("API Error (resolveSheet): $e");
+      debugPrint("API Error (resolveSheet): $e - attempting direct Supabase fallback...");
+      try {
+        final res = await Supabase.instance.client
+            .from('answer_sheets')
+            .select('*, profiles(*), exams(*, classes(*))')
+            .or('sheet_identifier.eq.$cleanId,id.eq.$cleanId')
+            .limit(1)
+            .maybeSingle();
+
+        if (res != null) {
+          final sheetData = Map<String, dynamic>.from(res);
+          final profile = sheetData['profiles'] as Map?;
+          sheetData['student_name'] = profile?['name'] ?? 'Student';
+          return sheetData;
+        }
+      } catch (dbErr) {
+        debugPrint("Direct Supabase resolveSheet fallback error: $dbErr");
+      }
       rethrow;
     }
   }
@@ -129,40 +154,45 @@ class ApiService {
           // 1. Ensure answer_sheets record exists
           final existingSheet = await Supabase.instance.client
               .from('answer_sheets')
-              .select('id')
-              .eq('id', sheetId)
+              .select('id, sheet_identifier')
+              .or('sheet_identifier.eq.$sheetId,id.eq.$sheetId')
+              .limit(1)
               .maybeSingle();
+
+          String targetSheetUuid = existingSheet?['id']?.toString() ?? '';
 
           if (existingSheet == null && examId.isNotEmpty && examId != 'unknown') {
             final user = Supabase.instance.client.auth.currentUser;
-            await Supabase.instance.client.from('answer_sheets').insert({
-              'id': sheetId,
+            final inserted = await Supabase.instance.client.from('answer_sheets').insert({
               'exam_id': examId,
               'student_id': user?.id,
               'sheet_identifier': sheetId,
-            });
+            }).select('id').single();
+            targetSheetUuid = inserted['id']?.toString() ?? sheetId;
           }
 
-          // 2. Insert or update grade record
-          final existingGrade = await Supabase.instance.client
-              .from('grades')
-              .select('id')
-              .eq('sheet_id', sheetId)
-              .maybeSingle();
+          if (targetSheetUuid.isNotEmpty) {
+            // 2. Insert or update grade record
+            final existingGrade = await Supabase.instance.client
+                .from('grades')
+                .select('id')
+                .eq('sheet_id', targetSheetUuid)
+                .maybeSingle();
 
-          if (existingGrade != null) {
-            await Supabase.instance.client.from('grades').update({
-              'score': score,
-              'total_questions': total,
-              'percentage': pct,
-            }).eq('id', existingGrade['id']);
-          } else {
-            await Supabase.instance.client.from('grades').insert({
-              'sheet_id': sheetId,
-              'score': score,
-              'total_questions': total,
-              'percentage': pct,
-            });
+            if (existingGrade != null) {
+              await Supabase.instance.client.from('grades').update({
+                'score': score,
+                'total_questions': total,
+                'percentage': pct,
+              }).eq('id', existingGrade['id']);
+            } else {
+              await Supabase.instance.client.from('grades').insert({
+                'sheet_id': targetSheetUuid,
+                'score': score,
+                'total_questions': total,
+                'percentage': pct,
+              });
+            }
           }
         } catch (dbErr) {
           debugPrint("Direct grade sync error for sheet $sheetId: $dbErr");

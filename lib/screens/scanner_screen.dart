@@ -232,10 +232,14 @@ class _ScannerScreenState extends State<ScannerScreen> {
         final inviteCode =
             QrClassificationService.extractInvitationCodeFromQr(candidateQr);
         if (inviteCode == null) {
-          _lockedSheetQr = candidateQr; // Lock it!
-          _qrLockTime = DateTime.now();
-          _qrFirstMode = false; // Transition directly to edge detection mode
-          _lastQrDebugText = 'LOCKED: ${candidateQr.sheetIdentifier}';
+          if (!_processedSheetIds.contains(candidateQr.sheetIdentifier)) {
+            _lockedSheetQr = candidateQr; // Lock it!
+            _qrLockTime = DateTime.now();
+            _qrFirstMode = false; // Transition directly to edge detection mode
+            _lastQrDebugText = 'LOCKED: ${candidateQr.sheetIdentifier}';
+          } else {
+            _lastQrDebugText = 'Scanned: ${candidateQr.sheetIdentifier}';
+          }
         } else {
           _lastQrDebugText = 'QR: invite candidate $inviteCode';
         }
@@ -949,7 +953,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
         );
 
         if (!mounted) return;
-        if (evaluatedSheet != null) {
+        if (evaluatedSheet == null) {
+          _processedSheetIds.remove(rawIdentifier);
+        } else {
           final resolvedExamId = metadata['exam_id']?.toString() ??
               metadata['exams']?['id']?.toString() ??
               sheet.qrData?.examCode ??
@@ -1008,12 +1014,15 @@ class _ScannerScreenState extends State<ScannerScreen> {
       if (mounted) {
         setState(() {
           _isOmrProcessing = false;
-          _lockedSheetQr =
-              null; // Clear the lock after a complete grading cycle (success or failure)
+          _lockedSheetQr = null; // Dispose locked sheet QR
+          _detectedQrCorners = null; // Dispose QR bounding box
+          _detectedCorners = null; // Dispose paper edge overlay
+          _rawCorners = null;
           _qrLockTime = null;
-          _qrFirstMode = true; // Go back to searching for a QR
+          _qrFirstMode = true; // Go back to searching for next QR
           _paperDetected = false;
           _detectionCounter = 0;
+          _lastQrDebugText = 'Ready for next sheet';
         });
 
         try {
@@ -1210,15 +1219,17 @@ class _ScannerScreenState extends State<ScannerScreen> {
         return;
       }
 
-      // If we haven't locked a QR yet, lock it from the camera frame!
+      // If we haven't locked a QR yet, lock it from the camera frame if not already confirmed!
       if (_lockedSheetQr == null && mounted) {
-        setState(() {
-          _lockedSheetQr = candidate;
-          _qrLockTime = DateTime.now();
-          _qrFirstMode = false;
-          _lastQrDebugText = 'LOCKED: ${candidate.sheetIdentifier}';
-          _detectedQrCorners = normalizedCorners;
-        });
+        if (!_processedSheetIds.contains(candidate.sheetIdentifier)) {
+          setState(() {
+            _lockedSheetQr = candidate;
+            _qrLockTime = DateTime.now();
+            _qrFirstMode = false;
+            _lastQrDebugText = 'LOCKED: ${candidate.sheetIdentifier}';
+            _detectedQrCorners = normalizedCorners;
+          });
+        }
       }
     } catch (e) {
       debugPrint('QR decode failed: $e');
@@ -1359,17 +1370,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
             right: 12,
             child: Row(
               children: [
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                      color: Colors.black87,
-                      borderRadius: BorderRadius.circular(20)),
-                  child: Text("SCANNED: ${_scannedResults.length}",
-                      style: TextStyle(
-                          color: accentColor, fontWeight: FontWeight.bold)),
-                ),
-                const SizedBox(width: 8),
                 Expanded(
                     child: Container(
                   padding:
