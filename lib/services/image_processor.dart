@@ -262,18 +262,10 @@ class ImageProcessor {
       // high-resolution fallback. This is crucial when a QR occupies a large portion of a monitor
       // and the fiber of the phone camera sees glare, scanlines, or partial tilt.
       QrDetectionResult? qrResult = QrDetectionService.detectWithCorners(processedMat, fastMode: false);
-      if (qrResult == null) {
-        qrResult = _scanQrRegion(processedMat);
-      }
-      if (qrResult == null) {
-        qrResult = QrDetectionService.detectWithCorners(smallMat, fastMode: true);
-      }
-      if (qrResult == null) {
-        qrResult = _scanQrRegion(mat);
-      }
-      if (qrResult == null) {
-        qrResult = QrDetectionService.detectWithCorners(mat, fastMode: true);
-      }
+      qrResult ??= _scanQrRegion(processedMat);
+      qrResult ??= QrDetectionService.detectWithCorners(smallMat, fastMode: true);
+      qrResult ??= _scanQrRegion(mat);
+      qrResult ??= QrDetectionService.detectWithCorners(mat, fastMode: true);
       final rawFrameQr = qrResult == null ? QrDetectionService.detectEntireImage(mat) : null;
       final detectedQr = qrResult?.data ?? rawFrameQr;
       final qrCorners = qrResult?.corners ??
@@ -363,8 +355,8 @@ class ImageProcessor {
           return QrDetectionResult(data: QrData.fromRaw(text2), corners: normalized);
         }
       }
-    } catch (_) {
-      debugPrint('LIVE QR ROI scan failed: $_');
+    } catch (e) {
+      debugPrint('LIVE QR ROI scan failed: $e');
     } finally {
       pool.disposeAll();
     }

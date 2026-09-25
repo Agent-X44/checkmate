@@ -193,8 +193,8 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
 
     showDialog(
         context: context,
-        builder: (context) {
-          return StatefulBuilder(builder: (context, setDialogState) {
+        builder: (dialogContext) {
+          return StatefulBuilder(builder: (dialogContext, setDialogState) {
             final isDark = Theme.of(context).brightness == Brightness.dark;
             final textColor = isDark ? Colors.white : Colors.black;
 
@@ -267,8 +267,9 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                         return DropdownMenuItem(value: ans, child: Text(label));
                       }).toList(),
                       onChanged: (val) {
-                        if (val != null)
+                        if (val != null) {
                           setDialogState(() => currentAnswer = val);
+                        }
                       },
                     ),
                   ],
@@ -276,7 +277,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.pop(context),
+                  onPressed: () => Navigator.pop(dialogContext),
                   child: Text('CANCEL',
                       style:
                           TextStyle(color: textColor.withValues(alpha: 0.7))),
@@ -308,15 +309,18 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                       updatedQ['correct_answer'] = currentAnswer;
 
                       onSave(updatedQ);
+                      if (dialogContext.mounted) {
+                        Navigator.pop(dialogContext);
+                      }
                       if (mounted) {
-                        Navigator.pop(context);
                         CheckMateUi.showTopPrompt(context, "Question updated!",
                             isError: false);
                       }
                     } catch (e) {
-                      if (mounted)
+                      if (mounted) {
                         CheckMateUi.showTopPrompt(
                             context, "Failed to update: $e");
+                      }
                     }
                   },
                   child: Text('SAVE',
@@ -481,9 +485,10 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
           isError: false);
       final questions = await SupabaseService.getExamQuestions(examId);
       if (questions.isEmpty) {
-        if (mounted)
+        if (mounted) {
           CheckMateUi.showTopPrompt(
               context, "No questions found for this assessment.");
+        }
         return;
       }
 

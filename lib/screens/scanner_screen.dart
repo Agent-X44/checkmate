@@ -54,9 +54,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
   // Pipeline control flags
   //  - _qrFirstMode: Initial short window where QR detection is prioritized (invitation QR must be handled first)
-  //  - _edgesDetectedOnce: Becomes true once paper edges were confidently detected; only then allow answer-sheet QR handling
   bool _qrFirstMode = true;
-  bool _edgesDetectedOnce = false;
 
   bool get _isProcessing => _isOmrProcessing || _isConfirmationCardOpen;
 
@@ -185,7 +183,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
       // SUPPRESS PAPER DETECTION: This is a Course Invitation QR, NOT an OMR Answer Sheet!
       _detectionCounter = 0;
       _rawCorners = null;
-      _lastQrDebugText = 'QR: course invite ${inviteCode}';
+      _lastQrDebugText = 'QR: course invite $inviteCode';
 
       // Render Google Lens-style yellow bounding box overlay around the Course QR code
       if (message.qrCorners != null && message.qrCorners!.length >= 8) {
@@ -274,7 +272,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
       if (mounted) {
         setState(() {
           _paperDetected = detected;
-          if (detected) _edgesDetectedOnce = true;
 
           if (message.corners != null) {
             _detectedCorners = List.generate(
@@ -354,7 +351,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
         _isConfirmationCardOpen = false;
       }
 
-      if (Navigator.of(bottomSheetContext, rootNavigator: true).canPop()) {
+      if (bottomSheetContext.mounted &&
+          Navigator.of(bottomSheetContext, rootNavigator: true).canPop()) {
         Navigator.of(bottomSheetContext, rootNavigator: true).pop();
       }
 
@@ -937,6 +935,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
           } catch (_) {}
         }
 
+        if (!mounted) return;
+
         // Directly proceed to Pre-processing, Warping/Cropping, and Evaluation with Dev Tools
         final evaluatedSheet = await Navigator.push<ProcessedSheet>(
           context,
@@ -948,6 +948,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
           ),
         );
 
+        if (!mounted) return;
         if (evaluatedSheet != null) {
           final resolvedExamId = metadata['exam_id']?.toString() ??
               metadata['exams']?['id']?.toString() ??
@@ -1036,7 +1037,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
     if (!mounted ||
         _isProcessing ||
         _isolateSendPort == null ||
-        _isIsolateWorking) return;
+        _isIsolateWorking) {
+      return;
+    }
 
     // Frame throttling (100ms interval = max ~10 FPS for CV isolate) keeps RAM & thermal usage stable at ResolutionPreset.high
     final now = DateTime.now();
@@ -1106,7 +1109,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
           _isFlashOn = false;
           // Start in QR-first mode to prioritize course invitation detection
           _qrFirstMode = true;
-          _edgesDetectedOnce = false;
         });
 
         // After a short QR-first window, enable edge detection. If a course invite QR appears in
@@ -1143,7 +1145,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
   Future<void> _tryDecodeQrFromCameraFrame(CameraImage image) async {
     final now = DateTime.now();
     if (_lastQrScanTime != null &&
-        now.difference(_lastQrScanTime!).inMilliseconds < 250) return;
+        now.difference(_lastQrScanTime!).inMilliseconds < 250) {
+      return;
+    }
     _lastQrScanTime = now;
 
     try {
@@ -1169,11 +1173,15 @@ class _ScannerScreenState extends State<ScannerScreen> {
       if (!mounted || barcodes.isEmpty) return;
 
       final rawValue = barcodes.first.rawValue ?? '';
-      if (rawValue.trim().isEmpty) return;
+      if (rawValue.trim().isEmpty) {
+        return;
+      }
 
       final candidate = QrData.fromRaw(rawValue);
       if (candidate.sheetIdentifier.isEmpty ||
-          candidate.sheetIdentifier == 'UNKNOWN') return;
+          candidate.sheetIdentifier == 'UNKNOWN') {
+        return;
+      }
 
       final inviteCode =
           QrClassificationService.extractInvitationCodeFromQr(candidate);

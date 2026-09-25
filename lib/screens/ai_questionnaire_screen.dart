@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import '../services/api_service.dart';
@@ -114,7 +113,9 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
         });
       }
     } catch (e) {
-      CheckMateUi.showTopPrompt(context, 'File pick failed: $e');
+      if (mounted) {
+        CheckMateUi.showTopPrompt(context, 'File pick failed: $e');
+      }
     }
   }
 
@@ -144,6 +145,7 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
     if (_selectedFile != null) {
       List<int> bytes = _selectedFile!.bytes ??
           (await File(_selectedFile!.path!).readAsBytes());
+      if (!mounted) return;
       stream = ApiService.generateExamWithFile(
         topic: _inputController.text,
         classId: widget.classId,
@@ -214,8 +216,9 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
             context, 'Generation Failed: ${event['content']}');
       }
     }, onError: (e) {
-      if (mounted)
+      if (mounted) {
         setState(() => _streamedText += "\n[CRITICAL] Stream Error: $e");
+      }
     });
   }
 
@@ -424,20 +427,25 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
                     borderRadius: BorderRadius.circular(12),
                     child: Padding(
                       padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: RadioListTile<BubbleSheetTemplate>(
-                        title: Text(title,
-                            style: TextStyle(
-                                fontWeight: isSelected
-                                    ? FontWeight.bold
-                                    : FontWeight.normal)),
-                        value: t,
+                      child: RadioGroup<BubbleSheetTemplate>(
                         groupValue: _selectedTemplate,
-                        onChanged: (val) =>
-                            setState(() => _selectedTemplate = val!),
-                        activeColor:
-                            Theme.of(context).brightness == Brightness.dark
-                                ? Colors.yellow
-                                : Theme.of(context).colorScheme.primary,
+                        onChanged: (val) {
+                          if (val != null) {
+                            setState(() => _selectedTemplate = val);
+                          }
+                        },
+                        child: RadioListTile<BubbleSheetTemplate>(
+                          title: Text(title,
+                              style: TextStyle(
+                                  fontWeight: isSelected
+                                      ? FontWeight.bold
+                                      : FontWeight.normal)),
+                          value: t,
+                          activeColor:
+                              Theme.of(context).brightness == Brightness.dark
+                                  ? Colors.yellow
+                                  : Theme.of(context).colorScheme.primary,
+                        ),
                       ),
                     ),
                   ),
@@ -499,7 +507,7 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
                   controller: _terminalScrollController,
                   child: Text(
                     _streamedText,
-                    style: TextStyle(
+                    style: const TextStyle(
                       color: Colors.white70,
                       fontFamily: 'monospace',
                       fontSize: 13,

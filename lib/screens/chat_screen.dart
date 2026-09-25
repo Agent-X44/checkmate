@@ -222,7 +222,7 @@ class _ChatScreenState extends State<ChatScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) {
+      builder: (sheetContext) {
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 16),
@@ -244,7 +244,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       style: TextStyle(
                           color: textColor, fontWeight: FontWeight.bold)),
                   onTap: () {
-                    Navigator.pop(context);
+                    Navigator.pop(sheetContext);
                     _showPostInfoSheet(post, isDark, accentColor, textColor);
                   },
                 ),
@@ -254,7 +254,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     title: Text('Edit Announcement',
                         style: TextStyle(color: textColor)),
                     onTap: () {
-                      Navigator.pop(context);
+                      Navigator.pop(sheetContext);
                       _showEditAnnouncementDialog(
                           post, isDark, accentColor, textColor);
                     },
@@ -273,7 +273,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       style: TextStyle(color: textColor),
                     ),
                     onTap: () async {
-                      Navigator.pop(context);
+                      Navigator.pop(sheetContext);
                       setState(() {
                         post.allowComments = !post.allowComments;
                       });
@@ -297,7 +297,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         style: TextStyle(
                             color: Colors.red, fontWeight: FontWeight.bold)),
                     onTap: () {
-                      Navigator.pop(context);
+                      Navigator.pop(sheetContext);
                       _showDeleteConfirmation(post, isDark, textColor);
                     },
                   ),
@@ -317,9 +317,9 @@ class _ChatScreenState extends State<ChatScreen> {
 
     showDialog(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         return StatefulBuilder(
-          builder: (context, setDialogState) {
+          builder: (dialogContext, setDialogState) {
             return AlertDialog(
               backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
               shape: RoundedRectangleBorder(
@@ -383,7 +383,7 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.pop(context),
+                  onPressed: () => Navigator.pop(dialogContext),
                   child: Text('CANCEL',
                       style:
                           TextStyle(color: textColor.withValues(alpha: 0.7))),
@@ -404,8 +404,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     });
                     await MessagingService.saveStreamPosts(widget.course.id,
                         widget.course.name, widget.course.streamPosts);
+                    if (dialogContext.mounted) {
+                      Navigator.pop(dialogContext);
+                    }
                     if (mounted) {
-                      Navigator.pop(context);
                       CheckMateUi.showTopPrompt(
                           context, 'Announcement updated!',
                           isError: false);
@@ -425,7 +427,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void _showDeleteConfirmation(StreamPost post, bool isDark, Color textColor) {
     showDialog(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         return AlertDialog(
           backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
           shape:
@@ -438,7 +440,7 @@ class _ChatScreenState extends State<ChatScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.pop(dialogContext),
               child: Text('CANCEL',
                   style: TextStyle(color: textColor.withValues(alpha: 0.7))),
             ),
@@ -453,8 +455,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 });
                 await MessagingService.saveStreamPosts(widget.course.id,
                     widget.course.name, widget.course.streamPosts);
+                if (dialogContext.mounted) {
+                  Navigator.pop(dialogContext);
+                }
                 if (mounted) {
-                  Navigator.pop(context);
                   CheckMateUi.showTopPrompt(context, 'Announcement deleted.',
                       isError: false);
                 }

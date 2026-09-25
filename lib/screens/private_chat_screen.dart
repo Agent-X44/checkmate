@@ -119,7 +119,7 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) {
+      builder: (sheetContext) {
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.symmetric(vertical: 16),
@@ -141,7 +141,7 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
                       style: TextStyle(
                           color: textColor, fontWeight: FontWeight.bold)),
                   onTap: () {
-                    Navigator.pop(context);
+                    Navigator.pop(sheetContext);
                     _showMessageInfoSheet(
                         message, isDark, accentColor, textColor);
                   },
@@ -152,7 +152,7 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
                     title: Text('Edit Message',
                         style: TextStyle(color: textColor)),
                     onTap: () {
-                      Navigator.pop(context);
+                      Navigator.pop(sheetContext);
                       _showEditMessageDialog(
                           message, isDark, accentColor, textColor);
                     },
@@ -163,7 +163,7 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
                         style: TextStyle(
                             color: Colors.red, fontWeight: FontWeight.bold)),
                     onTap: () async {
-                      Navigator.pop(context);
+                      Navigator.pop(sheetContext);
                       setState(() {
                         _chat.messages.removeWhere((m) => m.id == message.id);
                       });
@@ -190,7 +190,7 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
 
     showDialog(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         return AlertDialog(
           backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
           shape:
@@ -210,7 +210,7 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context),
+              onPressed: () => Navigator.pop(dialogContext),
               child: Text('CANCEL',
                   style: TextStyle(color: textColor.withValues(alpha: 0.7))),
             ),
@@ -228,8 +228,10 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
                 });
                 await MessagingService.savePrivateChat(widget.course.id,
                     widget.course.name, _chatKey, _chat.messages);
+                if (dialogContext.mounted) {
+                  Navigator.pop(dialogContext);
+                }
                 if (mounted) {
-                  Navigator.pop(context);
                   CheckMateUi.showTopPrompt(context, 'Message updated!',
                       isError: false);
                 }
