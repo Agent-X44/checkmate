@@ -5,6 +5,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:dio/dio.dart';
 import '../services/supabase_service.dart';
+import '../services/data_cache_service.dart';
 import '../utils/ui_utils.dart';
 
 /// Screen for managing, uploading, and downloading course learning materials (PPTX, DOCX, PDF).
@@ -67,6 +68,22 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
   bool _isUploading = false;
   LearningMaterialItem? _pendingUploadItem;
   final Map<String, bool> _downloadingMap = {};
+  List<Map<String, dynamic>> _cachedRawList = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCachedMaterials();
+  }
+
+  Future<void> _loadCachedMaterials() async {
+    final cached = await DataCacheService.getLearningMaterials(widget.courseId);
+    if (cached.isNotEmpty && mounted) {
+      setState(() {
+        _cachedRawList = cached;
+      });
+    }
+  }
 
   Future<void> _pickAndUploadFile() async {
     // Security check: Only instructors can upload
@@ -462,12 +479,18 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
       body: StreamBuilder<List<Map<String, dynamic>>>(
         stream: SupabaseService.streamLearningMaterials(widget.courseId),
         builder: (context, snapshot) {
+          if (snapshot.hasData && snapshot.data != null) {
+            _cachedRawList = snapshot.data!;
+            DataCacheService.saveLearningMaterials(widget.courseId, snapshot.data!);
+          }
+
           if (snapshot.connectionState == ConnectionState.waiting &&
+              _cachedRawList.isEmpty &&
               _pendingUploadItem == null) {
             return const Center(child: CircularProgressIndicator());
           }
 
-          final rawList = snapshot.data ?? [];
+          final rawList = snapshot.hasData ? snapshot.data! : _cachedRawList;
           final streamMaterials =
               rawList.map((m) => LearningMaterialItem.fromMap(m)).toList();
 

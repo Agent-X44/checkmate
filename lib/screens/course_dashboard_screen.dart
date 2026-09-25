@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/course.dart';
 import '../services/supabase_service.dart';
+import '../services/data_cache_service.dart';
 import 'chat_screen.dart';
 import 'learning_materials_screen.dart';
 import 'quizzes_exams_screen.dart';
@@ -36,8 +37,19 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
   }
 
   Future<void> _loadAnalytics() async {
+    // 1. Instant cache retrieval for seamless UX
+    final cached = await DataCacheService.getClassAnalytics(widget.course.id);
+    if (cached != null && mounted) {
+      setState(() {
+        _analytics = cached;
+        _loadingAnalytics = false;
+      });
+    }
+
+    // 2. Fetch fresh network analytics and update cache
     try {
       final data = await SupabaseService.getClassAnalytics(widget.course.id);
+      await DataCacheService.saveClassAnalytics(widget.course.id, data);
       if (mounted) {
         setState(() {
           _analytics = data;
@@ -45,7 +57,9 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
         });
       }
     } catch (_) {
-      if (mounted) setState(() => _loadingAnalytics = false);
+      if (mounted && _analytics == null) {
+        setState(() => _loadingAnalytics = false);
+      }
     }
   }
 

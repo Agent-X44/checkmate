@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/course.dart';
 import '../services/supabase_service.dart';
+import '../services/data_cache_service.dart';
 import 'private_chat_screen.dart';
 
 class StudentsListScreen extends StatefulWidget {
@@ -13,15 +14,40 @@ class StudentsListScreen extends StatefulWidget {
 
 class _StudentsListScreenState extends State<StudentsListScreen> {
   late Future<List<Map<String, dynamic>>> _studentsFuture;
+  List<Map<String, dynamic>>? _students;
 
   @override
   void initState() {
     super.initState();
+    _initStudentsWithCache();
+  }
+
+  Future<void> _initStudentsWithCache() async {
+    // 1. Instant cache load for seamless UX
+    final cached = await DataCacheService.getEnrolledStudents(widget.course.id);
+    if (cached.isNotEmpty && mounted) {
+      setState(() {
+        _students = cached;
+      });
+    }
+
+    // 2. Fetch fresh network data and update cache
     _loadStudents();
   }
 
   void _loadStudents() {
-    _studentsFuture = SupabaseService.getEnrolledStudents(widget.course.id);
+    final future = SupabaseService.getEnrolledStudents(widget.course.id);
+    setState(() => _studentsFuture = future);
+    future.then((fresh) {
+      if (fresh.isNotEmpty) {
+        DataCacheService.saveEnrolledStudents(widget.course.id, fresh);
+      }
+      if (mounted) {
+        setState(() => _students = fresh);
+      }
+    }).catchError((e) {
+      debugPrint("Error fetching enrolled students: $e");
+    });
   }
 
   @override
@@ -36,10 +62,12 @@ class _StudentsListScreenState extends State<StudentsListScreen> {
       body: FutureBuilder<List<Map<String, dynamic>>>(
         future: _studentsFuture,
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
+          final students = snapshot.data ?? _students;
+          if (students == null &&
+              snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
-          if (snapshot.hasError) {
+          if (snapshot.hasError && students == null) {
             return Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -65,8 +93,8 @@ class _StudentsListScreenState extends State<StudentsListScreen> {
             );
           }
 
-          final students = snapshot.data ?? [];
-          if (students.isEmpty) {
+          final studentList = students ?? [];
+          if (studentList.isEmpty) {
             return Center(
               child: Padding(
                 padding: const EdgeInsets.all(24),
@@ -92,19 +120,19 @@ class _StudentsListScreenState extends State<StudentsListScreen> {
               constraints: const BoxConstraints(maxWidth: 820),
               child: ListView.builder(
                 padding: const EdgeInsets.fromLTRB(20, 24, 20, 32),
-                itemCount: students.length + 1,
+                itemCount: studentList.length + 1,
                 itemBuilder: (context, index) {
                   if (index == 0) {
                     return Padding(
                       padding: const EdgeInsets.only(bottom: 16),
                       child: Text(
-                        '${students.length} ${students.length == 1 ? 'student' : 'students'}',
+                        '${studentList.length} ${studentList.length == 1 ? 'student' : 'students'}',
                         style: theme.textTheme.titleLarge
                             ?.copyWith(fontWeight: FontWeight.bold),
                       ),
                     );
                   }
-                  final rawProfile = students[index - 1]['profiles'];
+                  final rawProfile = studentList[index - 1]['profiles'];
                   final String name = rawProfile is Map
                       ? rawProfile['name']?.toString() ?? 'Student'
                       : 'Student';

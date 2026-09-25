@@ -7,6 +7,7 @@ import '../services/supabase_service.dart';
 import '../services/api_service.dart';
 import '../services/pdf_generator.dart';
 import '../services/exam_set_service.dart';
+import '../services/data_cache_service.dart';
 import '../models/omr/bubble_sheet_template.dart';
 import '../models/omr/template_registry.dart';
 import '../utils/ui_utils.dart';
@@ -46,21 +47,32 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
   @override
   void initState() {
     super.initState();
-    _loadExams();
+    _initExamsWithCache();
   }
 
-  void _loadExams() {
-    _examsFuture = SupabaseService.getExams(widget.courseId).then((exams) {
-      if (mounted) setState(() => _exams = exams);
-      return exams;
-    });
+  Future<void> _initExamsWithCache() async {
+    // 1. Instant cache retrieval for seamless UX
+    final cached = await DataCacheService.getExams(widget.courseId);
+    if (cached.isNotEmpty && mounted) {
+      setState(() {
+        _exams = cached;
+      });
+    }
+
+    // 2. Fetch fresh network data and update cache
+    await _refreshExams();
   }
 
   Future<void> _refreshExams() async {
     final future = SupabaseService.getExams(widget.courseId);
     setState(() => _examsFuture = future);
-    final exams = await future;
-    if (mounted) setState(() => _exams = exams);
+    try {
+      final exams = await future;
+      await DataCacheService.saveExams(widget.courseId, exams);
+      if (mounted) setState(() => _exams = exams);
+    } catch (e) {
+      debugPrint("Error loading exams: $e");
+    }
   }
 
   Future<void> _approveExam(String examId) async {
@@ -579,12 +591,17 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
         if (mounted) {
           final current = _exams;
           if (current != null) {
+            final updated =
+                current.where((exam) => exam['id'] != examId).toList();
             setState(() {
-              _exams = current.where((exam) => exam['id'] != examId).toList();
+              _exams = updated;
             });
+            await DataCacheService.saveExams(widget.courseId, updated);
           }
-          CheckMateUi.showTopPrompt(context, "Assessment deleted successfully.",
-              isError: false);
+          if (mounted) {
+            CheckMateUi.showTopPrompt(context, "Assessment deleted successfully.",
+                isError: false);
+          }
         }
       } catch (e) {
         if (mounted) {
