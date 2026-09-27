@@ -522,6 +522,14 @@ class SupabaseService {
     String setType = 'A',
     bool alternateSets = false,
   }) async {
+    final exam = await _client
+        .from('exams')
+        .select('class_id, is_approved')
+        .eq('id', examId)
+        .single();
+    if (exam['class_id'] != classId || exam['is_approved'] != true) {
+      throw StateError('Only approved assessments can generate answer sheets.');
+    }
     final studentsData = await getEnrolledStudents(classId);
     studentsData.sort((a, b) {
       final aName =
@@ -597,8 +605,22 @@ class SupabaseService {
 
         String sheetIdentifier;
         if (existing != null) {
-          sheetIdentifier =
-              (existing['sheet_identifier'] ?? existing['id']).toString();
+          final currentIdentifier =
+              existing['sheet_identifier']?.toString() ?? '';
+          if (RegExp(r'^CM-[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$')
+              .hasMatch(currentIdentifier)) {
+            sheetIdentifier = currentIdentifier;
+          } else {
+            // Replace legacy printed identifiers while preserving database keys.
+            sheetIdentifier = generateShortSheetId();
+            final saved = await _client
+                .from('answer_sheets')
+                .update({'sheet_identifier': sheetIdentifier})
+                .eq('id', existing['id'])
+                .select('sheet_identifier')
+                .single();
+            sheetIdentifier = saved['sheet_identifier'] as String;
+          }
         } else {
           // Generate a short 11-character Sheet ID (CM-8K9P2X8Q) for Version 1 QR codes
           sheetIdentifier = generateShortSheetId();
@@ -650,14 +672,34 @@ class SupabaseService {
         .maybeSingle();
     if (response == null) return null;
 
-    final insight = await _client
-        .from('ai_insights')
-        .select()
-        .eq('exam_id', examId)
-        .eq('student_id', user.id)
-        .maybeSingle();
+    return {'grade': response, 'insight': response['student_insight']};
+  }
 
-    return {'grade': response, 'insight': insight};
+  static Future<Map<String, dynamic>?> getStudentResult(
+    String examId, {
+    required String studentId,
+    required String sheetId,
+  }) async {
+    final response = await _client
+        .from('grades')
+        .select('*, answer_sheets!inner(exam_id, student_id)')
+        .eq('sheet_id', sheetId)
+        .order('created_at', ascending: false)
+        .maybeSingle();
+    if (response == null) return null;
+
+    return {'grade': response, 'insight': response['student_insight']};
+  }
+
+  static Future<Map<String, dynamic>?> getResultBySheetId(String sheetId) async {
+    final response = await _client
+        .from('grades')
+        .select('*, answer_sheets!inner(exam_id, student_id)')
+        .eq('sheet_id', sheetId)
+        .maybeSingle();
+    if (response == null) return null;
+
+    return {'grade': response, 'insight': response['student_insight']};
   }
 
   static Future<Map<String, dynamic>> getClassAnalytics(String classId) async {

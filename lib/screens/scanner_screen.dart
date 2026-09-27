@@ -977,23 +977,12 @@ class _ScannerScreenState extends State<ScannerScreen> {
           _scannedResults.add(updatedSheet);
 
           try {
-            final batchData = [
-              {
-                "sheet_id": updatedSheet.qrData?.sheetIdentifier ?? "unknown",
-                "student_id": updatedSheet.qrData?.studentName ?? "unknown",
-                "score": (ApiService.calculateScore(updatedSheet) *
-                        updatedSheet.results.length /
-                        100)
-                    .toInt(),
-                "total": updatedSheet.results.length,
-                "answers": updatedSheet.results.map((r) => r.toMap()).toList(),
-              }
-            ];
+            final batchData = [updatedSheet.toSyncResult()];
             await ApiService.batchSyncResults(
               examId: resolvedExamId,
               results: batchData,
             );
-            _showSuccessSnackBar("Synced result for: $studentName");
+            _showSuccessSnackBar("Saved & recorded result for: $studentName");
           } catch (e) {
             _showErrorSnackBar("Failed to sync result: $e");
           }
@@ -1526,14 +1515,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
       final rawIdentifier = _lockedSheetQr?.sheetIdentifier ?? '';
       if (rawIdentifier.isNotEmpty && rawIdentifier != 'UNKNOWN') {
-        // Check for duplicate scan
-        final existingGrade = await SupabaseService.client
-            .from('grades')
-            .select('id')
-            .eq('sheet_id', rawIdentifier)
-            .maybeSingle();
+        // Check for duplicate scan safely via ApiService to handle short IDs and UUIDs
+        final isAlreadyScanned =
+            await ApiService.checkSheetScanned(rawIdentifier);
 
-        if (existingGrade != null) {
+        if (isAlreadyScanned) {
           _showErrorSnackBar(
               "This paper has already been scanned. Try another paper.");
           return;

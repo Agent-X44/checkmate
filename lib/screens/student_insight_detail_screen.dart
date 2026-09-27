@@ -10,11 +10,15 @@ import '../services/api_service.dart';
 class StudentInsightDetailScreen extends StatefulWidget {
   final String examId;
   final String examTitle;
+  final String? sheetId;
+  final String? studentId;
 
   const StudentInsightDetailScreen({
     super.key,
     required this.examId,
     required this.examTitle,
+    this.sheetId,
+    this.studentId,
   });
 
   @override
@@ -36,7 +40,13 @@ class _StudentInsightDetailScreenState
 
   Future<void> _loadResult() async {
     try {
-      final res = await SupabaseService.getMyResult(widget.examId);
+      final Map<String, dynamic>? res;
+      if (widget.sheetId != null) {
+        res = await SupabaseService.getResultBySheetId(widget.sheetId!);
+      } else {
+        res = await SupabaseService.getMyResult(widget.examId);
+      }
+      
       if (mounted) {
         setState(() {
           _data = res;
@@ -61,40 +71,24 @@ class _StudentInsightDetailScreenState
     setState(() => _isGeneratingInsight = true);
 
     try {
-      final user = SupabaseService.currentUser;
-      final studentName = user?.userMetadata?['name'] ??
-          user?.email?.split('@')[0] ??
-          'Student';
-      final score = (grade['score'] as num?)?.toInt() ?? 0;
-      final total = (grade['total_questions'] as num?)?.toInt() ?? 0;
+      final sheetId = grade['sheet_id']?.toString() ?? '';
+      if (sheetId.isEmpty) {
+        throw Exception("Missing sheet ID");
+      }
 
       final res = await ApiService.getStudentInsight(
-        studentName: studentName,
-        score: score,
-        total: total,
+        examId: widget.examId,
+        sheetId: sheetId,
+        regenerate: true,
       );
 
       final insightObj = res['insight'];
-      final jsonText = jsonEncode(insightObj);
-
-      // Save to database if user is authenticated
-      if (user != null) {
-        try {
-          await SupabaseService.client.from('ai_insights').upsert({
-            'exam_id': widget.examId,
-            'student_id': user.id,
-            'insight_text': jsonText,
-          });
-        } catch (e) {
-          debugPrint("Failed to persist AI insight: $e");
-        }
-      }
 
       if (mounted) {
         setState(() {
           _data = {
             'grade': grade,
-            'insight': {'insight_text': jsonText},
+            'insight': insightObj,
           };
           _isGeneratingInsight = false;
         });
@@ -296,6 +290,125 @@ class _StudentInsightDetailScreenState
                 ),
               )),
         ],
+      ),
+    );
+  }
+}
+
+class AnswerEvaluationList extends StatelessWidget {
+  final List<Map<String, dynamic>> answers;
+
+  const AnswerEvaluationList({super.key, required this.answers});
+
+  @override
+  Widget build(BuildContext context) {
+    if (answers.isEmpty) {
+      return const Text(
+          'Item answers were not saved with this older result. Only its total score is available. New completed scanning sessions include answers and evaluations.');
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var index = 0; index < answers.length; index++)
+          _buildItem(context, answers[index], index),
+      ],
+    );
+  }
+
+  Widget _buildItem(
+      BuildContext context, Map<String, dynamic> item, int index) {
+    final qNum = item['question_number'] ?? (index + 1);
+    final qText = item['question_text']?.toString() ?? '';
+    final isCorrect = item['isCorrect'] == true;
+    final isAmbiguous = item['isAmbiguous'] == true;
+    final answer = item['answer']?.toString();
+    final correctAnswer = item['correct_answer']?.toString() ?? '';
+    final isTf = item['question_type'] == 'TF';
+    final options = item['options'] is List ? (item['options'] as List) : [];
+
+    String statusText;
+    Color statusColor;
+    if (isCorrect) {
+      statusText = 'Correct';
+      statusColor = Colors.green;
+    } else if (isAmbiguous) {
+      statusText = 'Needs review';
+      statusColor = Colors.orange;
+    } else if (answer == null || answer.isEmpty) {
+      statusText = 'Unanswered';
+      statusColor = Colors.orange;
+    } else {
+      statusText = 'Incorrect';
+      statusColor = Colors.red;
+    }
+
+    String studentAnsText;
+    if (isAmbiguous) {
+      final marks = item['multipleAnswers'] is List
+          ? (item['multipleAnswers'] as List).join(', ')
+          : 'Multiple';
+      studentAnsText = 'Student answer: $marks';
+    } else if (answer == null || answer.isEmpty) {
+      studentAnsText = 'Student answer: None';
+    } else if (isTf) {
+      final tfLabel =
+          answer == 'A' ? 'True' : (answer == 'B' ? 'False' : answer);
+      studentAnsText = 'Student answer: $tfLabel';
+    } else {
+      String optionVal = '';
+      if (options.isNotEmpty && answer.length == 1) {
+        final code = answer.codeUnitAt(0) - 65;
+        if (code >= 0 && code < options.length) {
+          optionVal = '. ${options[code]}';
+        }
+      }
+      studentAnsText = 'Student answer: $answer$optionVal';
+    }
+
+    String correctAnsText = '';
+    if (isTf) {
+      final tfLabel = correctAnswer == 'A'
+          ? 'True'
+          : (correctAnswer == 'B' ? 'False' : correctAnswer);
+      correctAnsText = 'Correct answer: $tfLabel';
+    } else {
+      correctAnsText = 'Correct answer: $correctAnswer';
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text('Question $qNum',
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                Text(statusText,
+                    style: TextStyle(
+                        fontWeight: FontWeight.bold, color: statusColor)),
+              ],
+            ),
+            if (qText.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(qText, style: const TextStyle(fontSize: 14)),
+            ],
+            const SizedBox(height: 8),
+            Text(studentAnsText, style: const TextStyle(fontSize: 13)),
+            if (!isCorrect && correctAnsText.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text(correctAnsText,
+                  style: TextStyle(
+                      fontSize: 13,
+                      color: Colors.green.shade700,
+                      fontWeight: FontWeight.bold)),
+            ],
+          ],
+        ),
       ),
     );
   }

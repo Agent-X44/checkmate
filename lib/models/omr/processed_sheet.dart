@@ -31,6 +31,8 @@ class ProcessedSheet {
   /// The name of the template used for processing.
   final String templateName;
 
+  final List<Map<String, dynamic>> questionDetails;
+
   ProcessedSheet({
     required this.warpedImage,
     required this.thresholdImage,
@@ -40,6 +42,7 @@ class ProcessedSheet {
     this.qrData,
     this.detectedSet,
     required this.templateName,
+    this.questionDetails = const [],
   });
 
   ProcessedSheet copyWith({
@@ -51,6 +54,7 @@ class ProcessedSheet {
     QrData? qrData,
     String? detectedSet,
     String? templateName,
+    List<Map<String, dynamic>>? questionDetails,
   }) {
     return ProcessedSheet(
       warpedImage: warpedImage ?? this.warpedImage,
@@ -61,6 +65,7 @@ class ProcessedSheet {
       qrData: qrData ?? this.qrData,
       detectedSet: detectedSet ?? this.detectedSet,
       templateName: templateName ?? this.templateName,
+      questionDetails: questionDetails ?? this.questionDetails,
     );
   }
 
@@ -71,6 +76,7 @@ class ProcessedSheet {
       'answerRegion': base64Encode(answerRegion),
       'questionImages': questionImages.map((img) => base64Encode(img)).toList(),
       'results': results.map((res) => res.toMap()).toList(),
+      'questionDetails': questionDetails,
       'qrData': qrData?.toMap(),
       'detectedSet': detectedSet,
       'templateName': templateName,
@@ -78,4 +84,35 @@ class ProcessedSheet {
   }
 
   String toJson() => jsonEncode(toMap());
+
+  /// Only JSON evaluation data is synchronized; raw images stay on the device.
+  Map<String, dynamic> toSyncResult() => {
+        'sheet_id': qrData?.sheetIdentifier ?? 'unknown',
+        'score': results.where((result) => result.isCorrect == true).length,
+        'total': results.length,
+        'answers': [
+          for (var index = 0; index < results.length; index++)
+            {
+              ...results[index].toMap(),
+              'question_number': index + 1,
+              if (index < questionDetails.length) ...{
+                'question_id': questionDetails[index]['id'],
+                'question_text': questionDetails[index]['question_text'] ??
+                    questionDetails[index]['questionText'] ??
+                    '',
+                'question_type': questionDetails[index]['question_type'] ??
+                    questionDetails[index]['questionType'] ??
+                    'MCQ',
+                'correct_answer': questionDetails[index]['correct_answer'] ??
+                    questionDetails[index]['correctAnswer'],
+                'topic_tag': questionDetails[index]['topic_tag'] ??
+                    questionDetails[index]['topicTag'] ??
+                    '',
+                'options': questionDetails[index]['options'] is List
+                    ? questionDetails[index]['options']
+                    : <String>[],
+              },
+            },
+        ],
+      };
 }
