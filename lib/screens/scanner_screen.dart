@@ -8,6 +8,7 @@ import 'package:camera/camera.dart';
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import '../services/image_processor.dart';
 import '../services/api_service.dart';
+import '../services/pending_grade_sync_service.dart';
 import '../services/cv/qr_classification_service.dart';
 import '../services/supabase_service.dart';
 import '../services/deep_link_service.dart';
@@ -79,8 +80,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
   Offset? _focusPoint;
   DateTime _lastUIUpdate = DateTime.now();
 
-  // Session Management (BR-07: Results retained on device until Finish)
-  final List<ProcessedSheet> _scannedResults = [];
+  // Locally evaluated sheets are queued as JSON, then synced independently.
+  int _pendingSyncCount = 0;
+  bool _isSyncingPending = false;
   final Set<String> _processedSheetIds = {};
 
   Isolate? _isolate;
@@ -95,7 +97,32 @@ class _ScannerScreenState extends State<ScannerScreen> {
   @override
   void initState() {
     super.initState();
+    unawaited(_restoreAndSyncPending());
     if (widget.isActive) _startCapture();
+  }
+
+  Future<void> _restoreAndSyncPending() async {
+    try {
+      final queued = await PendingGradeSyncService.pending();
+      _processedSheetIds
+          .addAll(queued.map((e) => e['result']['sheet_id'].toString()));
+      if (mounted) setState(() => _pendingSyncCount = queued.length);
+      await _retryPending();
+    } catch (error) {
+      debugPrint('Could not restore pending grade sync: $error');
+    }
+  }
+
+  Future<void> _retryPending() async {
+    if (_isSyncingPending) return;
+    if (mounted) setState(() => _isSyncingPending = true);
+    try {
+      await PendingGradeSyncService.syncPending();
+      final remaining = await PendingGradeSyncService.pending();
+      if (mounted) setState(() => _pendingSyncCount = remaining.length);
+    } finally {
+      if (mounted) setState(() => _isSyncingPending = false);
+    }
   }
 
   void _startCapture() async {
@@ -957,9 +984,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
           _processedSheetIds.remove(rawIdentifier);
         } else {
           final resolvedExamId = metadata['exam_id']?.toString() ??
-              metadata['exams']?['id']?.toString() ??
-              sheet.qrData?.examCode ??
-              'unknown';
+              metadata['exams']?['id']?.toString();
+          if (resolvedExamId == null || resolvedExamId.isEmpty) {
+            throw StateError('The sheet did not resolve to an assessment.');
+          }
           final updatedSheet = evaluatedSheet.copyWith(
             qrData: QrData(
               studentName: studentName,
@@ -974,21 +1002,28 @@ class _ScannerScreenState extends State<ScannerScreen> {
               templateName: sheet.qrData?.templateName,
             ),
           );
-          _scannedResults.add(updatedSheet);
-
-          try {
-            final batchData = [updatedSheet.toSyncResult()];
-            await ApiService.batchSyncResults(
-              examId: resolvedExamId,
-              results: batchData,
-            );
-            _showSuccessSnackBar("Saved & recorded result for: $studentName");
-          } catch (e) {
-            _showErrorSnackBar("Failed to sync result: $e");
+          // Save the reviewed item results before attempting the network call.
+          // Each result carries its own resolved assessment, so mixed sets and
+          // shuffled assessment sheets can be scanned in any order.
+          await PendingGradeSyncService.enqueue(
+            examId: resolvedExamId,
+            result: updatedSheet.toSyncResult(),
+          );
+          if (mounted) setState(() => _pendingSyncCount++);
+          await _retryPending();
+          if (mounted) {
+            if (_pendingSyncCount == 0) {
+              _showSuccessSnackBar(
+                  'Saved result for $studentName. Ready for the next sheet.');
+            } else {
+              _showErrorSnackBar(
+                  'Result stored on this device. Tap Retry sync when online.');
+            }
           }
         }
       }
     } catch (e) {
+      _processedSheetIds.remove(sheet.qrData?.sheetIdentifier);
       if (mounted) {
         String errorMsg = "Invalid paper, please try again.";
         if (e.toString().contains("404")) {
@@ -1415,6 +1450,18 @@ class _ScannerScreenState extends State<ScannerScreen> {
             right: 0,
             child: Column(
               children: [
+                if (_pendingSyncCount > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: FilledButton.icon(
+                      onPressed: _isSyncingPending ? null : _retryPending,
+                      icon: Icon(
+                          _isSyncingPending ? Icons.sync : Icons.cloud_upload),
+                      label: Text(_isSyncingPending
+                          ? 'Syncing saved sheets…'
+                          : 'Retry sync ($_pendingSyncCount pending)'),
+                    ),
+                  ),
                 if (_paperDetected && !_isProcessing)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 20.0),
@@ -1515,7 +1562,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
       final rawIdentifier = _lockedSheetQr?.sheetIdentifier ?? '';
       if (rawIdentifier.isNotEmpty && rawIdentifier != 'UNKNOWN') {
-        // Check for duplicate scan safely via ApiService to handle short IDs and UUIDs
+        // Check for duplicate scan safely via ApiService to resolve the printed sheet code
         final isAlreadyScanned =
             await ApiService.checkSheetScanned(rawIdentifier);
 

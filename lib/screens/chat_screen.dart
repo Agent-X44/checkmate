@@ -16,140 +16,74 @@ class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _announcementController = TextEditingController();
   final TextEditingController _commentController = TextEditingController();
   bool _isComposingAnnouncement = false;
-  String? _selectedAttachment;
+  bool _newPostAllowComments = true;
+  bool _isLoadingPosts = true;
+  bool _isPosting = false;
+  bool _loadFailed = false;
 
   @override
   void initState() {
     super.initState();
+    widget.course.streamPosts.clear();
     _loadStreamPosts();
   }
 
   Future<void> _loadStreamPosts() async {
-    final savedPosts = await MessagingService.loadStreamPosts(
-        widget.course.id, widget.course.name);
-    if (savedPosts.isNotEmpty) {
-      if (mounted) {
-        setState(() {
-          widget.course.streamPosts.clear();
-          widget.course.streamPosts.addAll(savedPosts);
-        });
-      }
-    } else {
-      _initSamplePosts();
-      await MessagingService.saveStreamPosts(
-          widget.course.id, widget.course.name, widget.course.streamPosts);
-      if (mounted) setState(() {});
+    try {
+      final posts = await MessagingService.loadStreamPosts(widget.course.id);
+      if (!mounted) return;
+      setState(() {
+        widget.course.streamPosts
+          ..clear()
+          ..addAll(posts);
+        _isLoadingPosts = false;
+        _loadFailed = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingPosts = false;
+        _loadFailed = true;
+      });
+      CheckMateUi.showTopPrompt(context, 'Could not load announcements: $e');
     }
-  }
-
-  void _initSamplePosts() {
-    if (widget.course.streamPosts.isNotEmpty) return;
-
-    widget.course.streamPosts.addAll([
-      StreamPost(
-        id: 'post_1',
-        authorName: widget.course.instructor,
-        authorRole: 'Instructor',
-        content:
-            'Good Evening,\nAttached is the schedule per batch of your examination tomorrow, Tuesday. See the attached file so you can plan your travel ahead.',
-        timestamp: DateTime.now().subtract(const Duration(days: 2, hours: 3)),
-        postType: 'announcement',
-        attachmentName: 'Schedule for ${widget.course.name} Prelim Exam.pdf',
-        attachmentType: 'pdf',
-        comments: [
-          ClassComment(
-            id: 'c1',
-            authorName: 'Alex Student',
-            text: 'Thank you prof! Will review the schedule.',
-            timestamp:
-                DateTime.now().subtract(const Duration(days: 2, hours: 2)),
-            isMe: false,
-          ),
-        ],
-        allowComments: true,
-        isMe: widget.course.isOwner,
-      ),
-      StreamPost(
-        id: 'post_2',
-        authorName: widget.course.instructor,
-        authorRole: 'Instructor',
-        title: 'New material: General Instructions for Competition',
-        content:
-            'Please review the attached reference guidelines prior to starting your activity.',
-        timestamp: DateTime.now().subtract(const Duration(days: 6)),
-        postType: 'material',
-        allowComments: true,
-        isMe: widget.course.isOwner,
-      ),
-      StreamPost(
-        id: 'post_3',
-        authorName: widget.course.instructor,
-        authorRole: 'Instructor',
-        content:
-            'Good afternoon, everyone.\nPlease form groups with a maximum of five (5) members for our final course activities. You may also choose to work individually or in smaller groups.',
-        timestamp: DateTime.now().subtract(const Duration(days: 10)),
-        postType: 'announcement',
-        allowComments: true,
-        isMe: widget.course.isOwner,
-      ),
-    ]);
   }
 
   Future<void> _postAnnouncement() async {
     final text = _announcementController.text.trim();
-    if (text.isEmpty) return;
-
-    setState(() {
-      widget.course.streamPosts.insert(
-        0,
-        StreamPost(
-          id: DateTime.now().millisecondsSinceEpoch.toString(),
-          authorName: widget.course.instructor,
-          authorRole: 'Instructor',
-          content: text,
-          timestamp: DateTime.now(),
-          postType: 'announcement',
-          attachmentName: _selectedAttachment,
-          attachmentType: _selectedAttachment != null ? 'pdf' : null,
-          allowComments: true,
-          isMe: true,
-        ),
-      );
-      _announcementController.clear();
-      _selectedAttachment = null;
-      _isComposingAnnouncement = false;
-    });
-
-    await MessagingService.saveStreamPosts(
-        widget.course.id, widget.course.name, widget.course.streamPosts);
-    if (mounted) {
-      CheckMateUi.showTopPrompt(context, 'Announcement posted to Stream!',
+    if (!widget.course.isOwner || text.isEmpty || _isPosting) return;
+    setState(() => _isPosting = true);
+    try {
+      await MessagingService.createAnnouncement(
+          widget.course.id, text, _newPostAllowComments);
+      await _loadStreamPosts();
+      if (!mounted) return;
+      setState(() {
+        _announcementController.clear();
+        _newPostAllowComments = true;
+        _isComposingAnnouncement = false;
+      });
+      CheckMateUi.showTopPrompt(context, 'Announcement posted.',
           isError: false);
+    } catch (e) {
+      if (mounted) CheckMateUi.showTopPrompt(context, 'Could not post: $e');
+    } finally {
+      if (mounted) setState(() => _isPosting = false);
     }
   }
 
   Future<void> _addComment(StreamPost post) async {
     final text = _commentController.text.trim();
-    if (text.isEmpty) return;
-
-    setState(() {
-      post.comments.add(
-        ClassComment(
-          id: DateTime.now().millisecondsSinceEpoch.toString(),
-          authorName: widget.course.isOwner ? widget.course.instructor : 'Me',
-          text: text,
-          timestamp: DateTime.now(),
-          isMe: true,
-        ),
-      );
+    if (text.isEmpty || !post.allowComments) return;
+    try {
+      await MessagingService.addAnnouncementComment(post.id, text);
       _commentController.clear();
-    });
-
-    await MessagingService.saveStreamPosts(
-        widget.course.id, widget.course.name, widget.course.streamPosts);
-    if (mounted) {
-      Navigator.pop(context); // Close comment sheet
+      await _loadStreamPosts();
+      if (!mounted) return;
+      Navigator.pop(context);
       CheckMateUi.showTopPrompt(context, 'Comment added!', isError: false);
+    } catch (e) {
+      if (mounted) CheckMateUi.showTopPrompt(context, 'Could not comment: $e');
     }
   }
 
@@ -214,7 +148,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
   void _showPostOptionsMenu(
       StreamPost post, bool isDark, Color accentColor, Color textColor) {
-    final isCanManage = widget.course.isOwner || post.isMe;
+    final isCanManage = widget.course.isOwner;
 
     showModalBottomSheet(
       context: context,
@@ -274,19 +208,24 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                     onTap: () async {
                       Navigator.pop(sheetContext);
-                      setState(() {
-                        post.allowComments = !post.allowComments;
-                      });
-                      await MessagingService.saveStreamPosts(widget.course.id,
-                          widget.course.name, widget.course.streamPosts);
-                      if (mounted) {
+                      final allowComments = !post.allowComments;
+                      try {
+                        await MessagingService.setAnnouncementCommentsAllowed(
+                            widget.course.id, post.id, allowComments);
+                        await _loadStreamPosts();
+                        if (!mounted) return;
                         CheckMateUi.showTopPrompt(
                           context,
-                          post.allowComments
+                          allowComments
                               ? 'Comments enabled for this post.'
                               : 'Comments disabled for this post.',
                           isError: false,
                         );
+                      } catch (e) {
+                        if (mounted) {
+                          CheckMateUi.showTopPrompt(
+                              context, 'Could not change comments: $e');
+                        }
                       }
                     },
                   ),
@@ -313,112 +252,67 @@ class _ChatScreenState extends State<ChatScreen> {
   void _showEditAnnouncementDialog(
       StreamPost post, bool isDark, Color accentColor, Color textColor) {
     final editController = TextEditingController(text: post.content);
-    String? editAttachment = post.attachmentName;
 
     showDialog(
       context: context,
       builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (dialogContext, setDialogState) {
-            return AlertDialog(
-              backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16)),
-              title: Text('Edit Announcement',
-                  style:
-                      TextStyle(color: textColor, fontWeight: FontWeight.bold)),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: editController,
-                      maxLines: 4,
-                      style: TextStyle(color: textColor),
-                      decoration: InputDecoration(
-                        border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12)),
-                        hintText: 'Edit post content...',
-                        hintStyle:
-                            TextStyle(color: textColor.withValues(alpha: 0.5)),
-                      ),
-                    ),
-                    if (editAttachment != null) ...[
-                      const SizedBox(height: 12),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 12, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: isDark ? Colors.black26 : Colors.grey.shade200,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.picture_as_pdf,
-                                color: Colors.red, size: 18),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                editAttachment!,
-                                style:
-                                    TextStyle(fontSize: 12, color: textColor),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            IconButton(
-                              icon:
-                                  Icon(Icons.close, size: 16, color: textColor),
-                              onPressed: () {
-                                setDialogState(() {
-                                  editAttachment = null;
-                                });
-                              },
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: Text('CANCEL',
-                      style:
-                          TextStyle(color: textColor.withValues(alpha: 0.7))),
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: accentColor,
-                    foregroundColor: isDark ? Colors.black : Colors.white,
+        return AlertDialog(
+          backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text('Edit Announcement',
+              style: TextStyle(color: textColor, fontWeight: FontWeight.bold)),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: editController,
+                  maxLines: 4,
+                  style: TextStyle(color: textColor),
+                  decoration: InputDecoration(
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    hintText: 'Edit post content...',
+                    hintStyle:
+                        TextStyle(color: textColor.withValues(alpha: 0.5)),
                   ),
-                  onPressed: () async {
-                    if (editController.text.trim().isEmpty) return;
-                    setState(() {
-                      post.content = editController.text.trim();
-                      post.attachmentName = editAttachment;
-                      post.attachmentType =
-                          editAttachment != null ? 'pdf' : null;
-                      post.editedTimestamp = DateTime.now();
-                    });
-                    await MessagingService.saveStreamPosts(widget.course.id,
-                        widget.course.name, widget.course.streamPosts);
-                    if (dialogContext.mounted) {
-                      Navigator.pop(dialogContext);
-                    }
-                    if (mounted) {
-                      CheckMateUi.showTopPrompt(
-                          context, 'Announcement updated!',
-                          isError: false);
-                    }
-                  },
-                  child: const Text('SAVE',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ],
-            );
-          },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: Text('CANCEL',
+                  style: TextStyle(color: textColor.withValues(alpha: 0.7))),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: accentColor,
+                foregroundColor: isDark ? Colors.black : Colors.white,
+              ),
+              onPressed: () async {
+                if (editController.text.trim().isEmpty) return;
+                try {
+                  await MessagingService.updateAnnouncement(
+                      widget.course.id, post.id, editController.text.trim());
+                  await _loadStreamPosts();
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                  if (mounted) {
+                    CheckMateUi.showTopPrompt(context, 'Announcement updated!',
+                        isError: false);
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    CheckMateUi.showTopPrompt(context, 'Could not update: $e');
+                  }
+                }
+              },
+              child: const Text('SAVE',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+          ],
         );
       },
     );
@@ -450,17 +344,19 @@ class _ChatScreenState extends State<ChatScreen> {
                 foregroundColor: Colors.white,
               ),
               onPressed: () async {
-                setState(() {
-                  widget.course.streamPosts.removeWhere((p) => p.id == post.id);
-                });
-                await MessagingService.saveStreamPosts(widget.course.id,
-                    widget.course.name, widget.course.streamPosts);
-                if (dialogContext.mounted) {
-                  Navigator.pop(dialogContext);
-                }
-                if (mounted) {
-                  CheckMateUi.showTopPrompt(context, 'Announcement deleted.',
-                      isError: false);
+                try {
+                  await MessagingService.deleteAnnouncement(
+                      widget.course.id, post.id);
+                  await _loadStreamPosts();
+                  if (dialogContext.mounted) Navigator.pop(dialogContext);
+                  if (mounted) {
+                    CheckMateUi.showTopPrompt(context, 'Announcement deleted.',
+                        isError: false);
+                  }
+                } catch (e) {
+                  if (mounted) {
+                    CheckMateUi.showTopPrompt(context, 'Could not delete: $e');
+                  }
                 }
               },
               child: const Text('DELETE',
@@ -524,8 +420,8 @@ class _ChatScreenState extends State<ChatScreen> {
               _infoRow('Comments', post.allowComments ? 'Enabled' : 'Disabled',
                   textColor, post.allowComments ? Colors.green : Colors.red),
               const SizedBox(height: 12),
-              _infoRow('Sync Status', 'Published on Google Class Stream',
-                  textColor, Colors.green),
+              _infoRow('Sync Status', 'Saved to course stream', textColor,
+                  Colors.green),
               const SizedBox(height: 24),
               SizedBox(
                 width: double.infinity,
@@ -616,7 +512,9 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: post.comments.isEmpty
                       ? Center(
                           child: Text(
-                              'No class comments yet. Start the conversation!',
+                              post.allowComments
+                                  ? 'No class comments yet. Start the conversation!'
+                                  : 'Comments are turned off for this announcement.',
                               style: TextStyle(
                                   color: textColor.withValues(alpha: 0.6))),
                         )
@@ -654,34 +552,35 @@ class _ChatScreenState extends State<ChatScreen> {
                           },
                         ),
                 ),
-                const Divider(),
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8.0),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: _commentController,
-                          style: TextStyle(color: textColor),
-                          decoration: InputDecoration(
-                            hintText: 'Add class comment...',
-                            hintStyle: TextStyle(
-                                color: textColor.withValues(alpha: 0.5)),
-                            border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(24)),
-                            contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 16, vertical: 10),
+                if (post.allowComments) const Divider(),
+                if (post.allowComments)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 8.0),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _commentController,
+                            style: TextStyle(color: textColor),
+                            decoration: InputDecoration(
+                              hintText: 'Add class comment...',
+                              hintStyle: TextStyle(
+                                  color: textColor.withValues(alpha: 0.5)),
+                              border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(24)),
+                              contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 10),
+                            ),
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      IconButton(
-                        icon: Icon(Icons.send, color: accentColor),
-                        onPressed: () => _addComment(post),
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: Icon(Icons.send, color: accentColor),
+                          onPressed: () => _addComment(post),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
               ],
             ),
           ),
@@ -765,9 +664,31 @@ class _ChatScreenState extends State<ChatScreen> {
               const SizedBox(height: 16),
             ],
 
-            // 3. Stream Feed Cards List
-            ...widget.course.streamPosts.map((post) => _buildStreamCard(post,
-                isDark, cardBgColor, cardBorderColor, textColor, accentColor)),
+            if (_isLoadingPosts)
+              const Center(child: CircularProgressIndicator())
+            else if (_loadFailed && widget.course.streamPosts.isEmpty)
+              TextButton.icon(
+                onPressed: _loadStreamPosts,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Could not load announcements. Retry'),
+              )
+            else if (widget.course.streamPosts.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 32),
+                child: Center(
+                  child: Text('No announcements yet.',
+                      style:
+                          TextStyle(color: textColor.withValues(alpha: 0.7))),
+                ),
+              )
+            else
+              ...widget.course.streamPosts.map((post) => _buildStreamCard(
+                  post,
+                  isDark,
+                  cardBgColor,
+                  cardBorderColor,
+                  textColor,
+                  accentColor)),
           ],
         ),
       ),
@@ -872,51 +793,20 @@ class _ChatScreenState extends State<ChatScreen> {
                   fillColor: isDark ? Colors.black12 : Colors.grey.shade50,
                 ),
               ),
-              if (_selectedAttachment != null) ...[
-                const SizedBox(height: 12),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: isDark ? Colors.black26 : Colors.grey.shade200,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.picture_as_pdf,
-                          color: Colors.red, size: 18),
-                      const SizedBox(width: 8),
-                      Flexible(
-                          child: Text(_selectedAttachment!,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style:
-                                  TextStyle(fontSize: 12, color: textColor))),
-                      const SizedBox(width: 8),
-                      GestureDetector(
-                        onTap: () => setState(() => _selectedAttachment = null),
-                        child: Icon(Icons.cancel,
-                            size: 16, color: textColor.withValues(alpha: 0.6)),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text('Allow class comments',
+                    style: TextStyle(color: textColor)),
+                value: _newPostAllowComments,
+                activeTrackColor: accentColor,
+                onChanged: _isPosting
+                    ? null
+                    : (value) => setState(() => _newPostAllowComments = value),
+              ),
               const SizedBox(height: 12),
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  IconButton(
-                    icon: Icon(Icons.attach_file, color: accentColor),
-                    tooltip: 'Attach File',
-                    onPressed: () {
-                      setState(() {
-                        _selectedAttachment =
-                            'Schedule_${widget.course.code}_Prelim_Exam.pdf';
-                      });
-                    },
-                  ),
                   Row(
                     children: [
                       TextButton(
@@ -934,7 +824,7 @@ class _ChatScreenState extends State<ChatScreen> {
                           shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(8)),
                         ),
-                        onPressed: _postAnnouncement,
+                        onPressed: _isPosting ? null : _postAnnouncement,
                         child: const Text('Post',
                             style: TextStyle(fontWeight: FontWeight.bold)),
                       ),
@@ -1205,19 +1095,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
             // Class Comment Footer
             InkWell(
-              onTap: () {
-                if (post.allowComments) {
-                  _showCommentsSheet(post, isDark, accentColor, textColor);
-                } else {
-                  CheckMateUi.showTopPrompt(
-                    context,
-                    widget.course.isOwner
-                        ? 'Comments are turned off. Enable them from post options.'
-                        : 'Class comments are disabled for this announcement.',
-                    isError: false,
-                  );
-                }
-              },
+              onTap: () =>
+                  _showCommentsSheet(post, isDark, accentColor, textColor),
               child: Padding(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1233,7 +1112,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     const SizedBox(width: 8),
                     Text(
                       !post.allowComments
-                          ? 'Class comments turned off'
+                          ? 'Class comments turned off (${post.comments.length})'
                           : (post.comments.isEmpty
                               ? 'Add class comment'
                               : '${post.comments.length} class comment(s)'),

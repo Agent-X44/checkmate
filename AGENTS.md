@@ -11,8 +11,8 @@ The system strictly enforces the following business rules as its core functional
 | **BR-04** | **Personalized Answer Sheet Generation** | The system shall generate personalized printable answer sheets containing student/assessment info and a unique Sheet ID (QR) for automatic identification. |
 | **BR-05** | **Automated Sheet Identification** | The system shall automatically resolve the identity and assessment information of a scanned answer sheet using its unique Sheet ID before OMR grading. |
 | **BR-06** | **Local Edge OMR Processing** | The system shall perform local OMR image processing and grading on the smartphone, including answer detection and flagging ambiguities, without uploading raw images to the backend. |
-| **BR-07** | **Instructor-Controlled Scanning Session** | The system shall allow instructors to conduct an individual scanning session and synchronize the accumulated local grading results only after the session is completed ("FINISH SESSION"). |
-| **BR-08** | **Session Synchronization Gate** | The system shall synchronize and persist locally graded results before aggregating assessment data and initiating AI-based class performance analysis. |
+| **BR-07** | **Automatic Reviewed-Sheet Synchronization** | After instructor review of each locally graded sheet, the system shall queue and synchronize that sheet automatically using its resolved assessment ID, regardless of scanning order or printed set. Failed saves remain queued for retry. |
+| **BR-08** | **Result Synchronization Gate** | The system shall persist locally graded results before including them in assessment aggregation or AI-based performance analysis. |
 | **BR-09** | **Class-Wide AI Performance Analysis** | The system shall analyze finalized class assessment results using AI to provide topic-level summaries, identify common misconceptions, and generate teaching recommendations. |
 | **BR-10** | **Comprehensible Narrative AI Insights** | The system shall generate personalized AI feedback based on the student's results and course content, providing supportive explanations and actionable improvement steps. |
 | **BR-11** | **Controlled Result Release** | The system shall allow instructors to review results and AI analysis and explicitly finalize and release results before students can access them. |
@@ -31,7 +31,7 @@ The system strictly enforces the following business rules as its core functional
 3.  **Privacy (BR-12):** Row Level Security (RLS) ensures students only see their own released results.
 4.  **OpenCV Location:** ALL OpenCV processing happens locally in Flutter (`opencv_dart`). Do NOT write Python OpenCV code.
 2.  **Deterministic Grading:** AI is strictly forbidden from being used for raw OMR grading. Grading must be deterministic (pixel density analysis).
-3.  **Data Syncing:** Results are held locally during a scanning session. A "Finish Session" action triggers a single batch sync to the FastAPI backend (BR-07).
+3.  **Data Syncing:** Reviewed item results are stored as JSON on the device and automatically sent one sheet at a time to FastAPI. Failed uploads remain in a per-user local queue for retry (BR-07).
 4.  **Scope Limitation:** The grading system strictly uses Optical Mark Recognition (OMR). No handwritten text recognition (OCR).
 
 ## Core Workflows (Compliant)
@@ -47,6 +47,6 @@ The system strictly enforces the following business rules as its core functional
 *   **Local Grading:** App processes ROI bubbles and flags ambiguities locally.
 
 ### 3. Synchronization & Analysis (BR-08, BR-09, BR-10)
-*   Instructor clicks "Finish Session".
-*   App uploads all results in a single JSON batch to `/batch-save-grades`.
-*   Backend triggers AI to generate topic-level summaries and personalized student insights.
+*   After the instructor confirms a sheet, the app queues its deterministic item results and sends it to `/batch-save-grades` under that sheet's resolved assessment ID.
+*   The backend persists each result before including it in class, sheet-specific, or student-history analysis. AI analysis reads saved item outcomes and question metadata; it never grades OMR marks.
+*   The instructor reviews class and individual analysis and explicitly releases results before student access.

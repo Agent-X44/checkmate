@@ -11,7 +11,7 @@ import '../models/omr/processed_sheet.dart';
 /// - BR-02: MCQ/TF Quiz support
 /// - BR-03: Instructor validation/approval of exams
 /// - BR-05: Sheet resolution (Metadata to Student ID)
-/// - BR-07: Batch sync to backend
+/// - BR-07: Automatic per-sheet sync through the batch-save endpoint
 /// - BR-08: Persistence before analysis
 /// - BR-09: Class-wide pedagogical insights (AI)
 /// - BR-10: Personalized student recommendations (AI)
@@ -49,7 +49,7 @@ class ApiService {
   static bool _isValidSheetId(String value) {
     final clean = value.trim();
     if (clean.isEmpty) return false;
-    final validPattern = RegExp(r'^[a-zA-Z0-9\-]{5,40}$');
+    final validPattern = RegExp(r'^CM-[A-Z0-9]{8}$');
     return validPattern.hasMatch(clean);
   }
 
@@ -71,22 +71,14 @@ class ApiService {
       );
       return response.data;
     } catch (e) {
-      debugPrint("API Error (resolveSheet): $e - attempting direct Supabase fallback...");
+      debugPrint(
+          "API Error (resolveSheet): $e - attempting direct Supabase fallback...");
       try {
-        final isUuid = _isValidUuid(cleanId);
-        final query = Supabase.instance.client
+        final res = await Supabase.instance.client
             .from('answer_sheets')
-            .select('*, profiles(*), exams(*, classes(*))');
-
-        final res = isUuid
-            ? await query
-                .or('sheet_identifier.eq.$cleanId,id.eq.$cleanId')
-                .limit(1)
-                .maybeSingle()
-            : await query
-                .eq('sheet_identifier', cleanId)
-                .limit(1)
-                .maybeSingle();
+            .select('*, profiles(*), exams(*, classes(*))')
+            .eq('sheet_identifier', cleanId)
+            .maybeSingle();
 
         if (res != null) {
           final sheetData = Map<String, dynamic>.from(res);
@@ -151,110 +143,26 @@ class ApiService {
     required String examId,
     required List<Map<String, dynamic>> results,
   }) async {
-    for (final r in results) {
-      final sheetId = r['sheet_id']?.toString() ?? '';
-      final score = (r['score'] as num?)?.toInt() ?? 0;
-      final total = (r['total'] as num?)?.toInt() ?? 0;
-      final pct = total > 0 ? (score / total * 100) : 0.0;
-      final answersJson = r['answers'] ?? [];
-
-      if (sheetId.isNotEmpty && sheetId != 'unknown') {
-        try {
-          // 1. Ensure answer_sheets record exists
-          final isUuid = _isValidUuid(sheetId);
-          final query = Supabase.instance.client
-              .from('answer_sheets')
-              .select('id, sheet_identifier');
-
-          final existingSheet = isUuid
-              ? await query
-                  .or('sheet_identifier.eq.$sheetId,id.eq.$sheetId')
-                  .limit(1)
-                  .maybeSingle()
-              : await query
-                  .eq('sheet_identifier', sheetId)
-                  .limit(1)
-                  .maybeSingle();
-
-          String targetSheetUuid = existingSheet?['id']?.toString() ?? '';
-
-          if (existingSheet == null && examId.isNotEmpty && examId != 'unknown') {
-            final user = Supabase.instance.client.auth.currentUser;
-            final inserted = await Supabase.instance.client.from('answer_sheets').insert({
-              'exam_id': examId,
-              'student_id': user?.id,
-              'sheet_identifier': sheetId,
-            }).select('id').single();
-            targetSheetUuid = inserted['id']?.toString() ?? sheetId;
-          }
-
-          if (targetSheetUuid.isNotEmpty) {
-            r['sheet_id'] = targetSheetUuid; // Update payload for backend sync
-
-            // 2. Insert or update grade record INCLUDING itemized answers payload
-            final existingGrade = await Supabase.instance.client
-                .from('grades')
-                .select('id')
-                .eq('sheet_id', targetSheetUuid)
-                .maybeSingle();
-
-            if (existingGrade != null) {
-              await Supabase.instance.client.from('grades').update({
-                'score': score,
-                'total_questions': total,
-                'percentage': pct,
-                'answers': answersJson,
-              }).eq('id', existingGrade['id']);
-            } else {
-              await Supabase.instance.client.from('grades').insert({
-                'sheet_id': targetSheetUuid,
-                'score': score,
-                'total_questions': total,
-                'percentage': pct,
-                'answers': answersJson,
-              });
-            }
-          }
-        } catch (dbErr) {
-          debugPrint("Direct grade sync error for sheet $sheetId: $dbErr");
-        }
-      }
+    final response = await _dio.post(
+      '/batch-save-grades',
+      options: _authenticatedOptions(),
+      data: {'exam_id': examId, 'results': results},
+    );
+    final data = Map<String, dynamic>.from(response.data);
+    if (data['status'] != 'success' || data['saved_count'] != results.length) {
+      throw StateError('The entire scanning session could not be saved.');
     }
-
-    try {
-      final response = await _dio.post(
-        '/batch-save-grades',
-        options: _authenticatedOptions(),
-        data: {'exam_id': examId, 'results': results},
-      );
-      final data = Map<String, dynamic>.from(response.data);
-      if (data['status'] == 'success') {
-        return data;
-      }
-    } catch (e) {
-      debugPrint("API Error (/batch-save-grades): $e - direct Supabase save succeeded");
-    }
-
-    return {'status': 'success', 'saved_count': results.length};
+    return data;
   }
 
   static Future<bool> checkSheetScanned(String sheetId) async {
     if (sheetId.isEmpty || sheetId == 'unknown') return false;
     try {
-      final isUuid = _isValidUuid(sheetId);
-      final query = Supabase.instance.client
+      final existingSheet = await Supabase.instance.client
           .from('answer_sheets')
-          .select('id');
-
-      final existingSheet = isUuid
-          ? await query
-              .or('sheet_identifier.eq.$sheetId,id.eq.$sheetId')
-              .limit(1)
-              .maybeSingle()
-          : await query
-              .eq('sheet_identifier', sheetId)
-              .limit(1)
-              .maybeSingle();
+          .select('id')
+          .eq('sheet_identifier', sheetId.trim())
+          .maybeSingle();
 
       if (existingSheet == null) return false;
 
@@ -270,12 +178,13 @@ class ApiService {
     }
   }
 
-  static Future<List<Map<String, dynamic>>> getExamResults(String examId) async {
+  static Future<List<Map<String, dynamic>>> getExamResults(
+      String examId) async {
     // Keep filtering on the server and use the signed-in user's RLS policies.
     // Paginate so large classes are not truncated by the REST row limit.
     const pageSize = 500;
     final results = <Map<String, dynamic>>[];
-    for (var offset = 0; ; offset += pageSize) {
+    for (var offset = 0;; offset += pageSize) {
       final page = await Supabase.instance.client
           .from('answer_sheets')
           .select(
@@ -294,7 +203,8 @@ class ApiService {
 
   static Future<Map<String, dynamic>> analyzeClass(String examId) async {
     try {
-      final response = await _dio.post('/analyze-class', data: {
+      final response = await _dio
+          .post('/analyze-class', options: _authenticatedOptions(), data: {
         'exam_id': examId,
         'class_id': '',
       });
@@ -327,24 +237,26 @@ class ApiService {
         );
         return Map<String, dynamic>.from(response.data);
       }
-      final response = await _dio.post('/student-insight', data: {
-        'student_name': studentName ?? 'Student',
-        'score': score ?? 0,
-        'total': total ?? 0,
-        'errors': errors,
-      });
-      return Map<String, dynamic>.from(response.data);
+      throw ArgumentError(
+          'A saved exam ID and sheet ID are required for personal analysis.');
     } catch (e) {
       debugPrint("API Error (getStudentInsight): $e");
       rethrow;
     }
   }
 
-  static Future<Map<String, dynamic>> getStudentOverallAnalysis() async {
+  static Future<Map<String, dynamic>> getStudentOverallAnalysis({
+    String? studentId,
+    String? classId,
+  }) async {
     try {
       final response = await _dio.get(
         '/student-overall-analysis',
         options: _authenticatedOptions(),
+        queryParameters: {
+          if (studentId != null) 'student_id': studentId,
+          if (classId != null) 'class_id': classId,
+        },
       );
       return Map<String, dynamic>.from(response.data);
     } catch (e) {
@@ -363,7 +275,8 @@ class ApiService {
   static Future<List<Map<String, dynamic>>> getExamQuestions(
       String examId) async {
     try {
-      final response = await _dio.get('/get-exam-questions/$examId');
+      final response = await _dio.get('/get-exam-questions/$examId',
+          options: _authenticatedOptions());
       return List<Map<String, dynamic>>.from(response.data);
     } catch (e) {
       debugPrint("API Error (getExamQuestions): $e");
@@ -442,14 +355,8 @@ class ApiService {
   }
 
   static Future<void> releaseResults(String examId) async {
-    try {
-      await _dio.post('/release-results/$examId');
-    } catch (e) {
-      debugPrint(
-          "API Error (releaseResults): $e. Using direct Supabase fallback...");
-      await Supabase.instance.client.from('exams').update(
-          {'results_released': true, 'status': 'Published'}).eq('id', examId);
-    }
+    await _dio.post('/release-results/$examId',
+        options: _authenticatedOptions());
   }
 
   static Future<Uint8List> exportToDocx(

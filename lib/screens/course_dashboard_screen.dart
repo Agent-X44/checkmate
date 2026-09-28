@@ -71,8 +71,8 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
     final dark = theme.brightness == Brightness.dark;
     final accent = dark ? colors.secondary : colors.primary;
     final gradient = widget.course.adaptiveGradient(context);
-    final darkInk = dark ||
-        gradient.any((color) => color.computeLuminance() > 0.35);
+    final darkInk =
+        dark || gradient.any((color) => color.computeLuminance() > 0.35);
     final headerInk = darkInk ? const Color(0xFF141318) : Colors.white;
 
     return Scaffold(
@@ -197,7 +197,9 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
                                 ),
                               ),
                             ),
-                            Divider(height: 1, indent: 66,
+                            Divider(
+                                height: 1,
+                                indent: 66,
                                 color: colors.outlineVariant),
                             _buildActionRow(
                               context,
@@ -216,7 +218,9 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
                                 ),
                               ),
                             ),
-                            Divider(height: 1, indent: 66,
+                            Divider(
+                                height: 1,
+                                indent: 66,
                                 color: colors.outlineVariant),
                             _buildActionRow(
                               context,
@@ -238,32 +242,36 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
                       ),
                       if (isTeacherView) ...[
                         const SizedBox(height: 22),
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 380),
-                          child: SizedBox(
-                            width: double.infinity,
-                            child: FilledButton.icon(
-                              style: FilledButton.styleFrom(
-                                backgroundColor: accent,
-                                foregroundColor: dark
-                                    ? colors.onSecondary
-                                    : colors.onPrimary,
-                                padding: const EdgeInsets.symmetric(vertical: 15),
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                              ),
-                              onPressed: () => Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => ScannerScreen(
-                                    cameras: globalCameras,
-                                    isActive: true,
+                        Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 380),
+                            child: SizedBox(
+                              width: double.infinity,
+                              child: FilledButton.icon(
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: accent,
+                                  foregroundColor: dark
+                                      ? colors.onSecondary
+                                      : colors.onPrimary,
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 15),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
                                   ),
                                 ),
+                                onPressed: () => Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => ScannerScreen(
+                                      cameras: globalCameras,
+                                      isActive: true,
+                                    ),
+                                  ),
+                                ),
+                                icon:
+                                    const Icon(Icons.document_scanner_outlined),
+                                label: const Text('Scan new answer sheet'),
                               ),
-                              icon: const Icon(Icons.document_scanner_outlined),
-                              label: const Text('Scan new answer sheet'),
                             ),
                           ),
                         ),
@@ -326,10 +334,10 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
         builder: (context, constraints) {
           final stacked = constraints.maxWidth < 300 ||
               MediaQuery.textScalerOf(context).scale(1) > 1.3;
-          final first = _buildMetricItem(
-              context, firstLabel, firstValue, firstIcon);
-          final second = _buildMetricItem(
-              context, secondLabel, secondValue, secondIcon);
+          final first =
+              _buildMetricItem(context, firstLabel, firstValue, firstIcon);
+          final second =
+              _buildMetricItem(context, secondLabel, secondValue, secondIcon);
           if (stacked) {
             return Column(
               children: [
@@ -361,9 +369,8 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
       BuildContext context, String label, String value, IconData icon) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final accent = theme.brightness == Brightness.dark
-        ? colors.secondary
-        : colors.primary;
+    final accent =
+        theme.brightness == Brightness.dark ? colors.secondary : colors.primary;
     return Row(
       children: [
         Icon(icon, size: 23, color: accent),
@@ -397,9 +404,8 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
       IconData icon, VoidCallback onTap) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final accent = theme.brightness == Brightness.dark
-        ? colors.secondary
-        : colors.primary;
+    final accent =
+        theme.brightness == Brightness.dark ? colors.secondary : colors.primary;
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
       leading: CircleAvatar(
@@ -411,10 +417,10 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
         title,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
-        style: theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+        style:
+            theme.textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
       ),
-      subtitle: Text(subtitle,
-          maxLines: 2, overflow: TextOverflow.ellipsis),
+      subtitle: Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
       trailing: Icon(Icons.chevron_right, color: colors.onSurfaceVariant),
       onTap: onTap,
     );

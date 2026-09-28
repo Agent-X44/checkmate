@@ -221,6 +221,36 @@ class SupabaseService {
         .eq('class_id', classId);
   }
 
+  /// Remove a student's class membership without deleting their account or grades.
+  static Future<void> unenrollStudent(String classId, String studentId) async {
+    final user = currentUser;
+    if (user == null) throw StateError('Sign in to manage students.');
+    if (studentId == user.id) {
+      throw StateError('The course owner cannot be unenrolled as a student.');
+    }
+
+    final ownedClass = await _client
+        .from('classes')
+        .select('id')
+        .eq('id', classId)
+        .eq('instructor_id', user.id)
+        .maybeSingle();
+    if (ownedClass == null) {
+      throw StateError('Only the course owner can unenroll students.');
+    }
+
+    final removed = await _client
+        .from('enrollments')
+        .delete()
+        .eq('class_id', classId)
+        .eq('user_id', studentId)
+        .eq('role', 'Student')
+        .select('id');
+    if ((removed as List).isEmpty) {
+      throw StateError('This student is no longer enrolled in the course.');
+    }
+  }
+
   static String normalizeJoinCode(String value) {
     return value.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').trim().toUpperCase();
   }
@@ -494,7 +524,8 @@ class SupabaseService {
     final response = await _client
         .from('enrollments')
         .select('user_id, profiles(id, name)')
-        .eq('class_id', classId);
+        .eq('class_id', classId)
+        .eq('role', 'Student');
 
     // Filter out any null profiles just in case
     return (response as List)
@@ -691,7 +722,8 @@ class SupabaseService {
     return {'grade': response, 'insight': response['student_insight']};
   }
 
-  static Future<Map<String, dynamic>?> getResultBySheetId(String sheetId) async {
+  static Future<Map<String, dynamic>?> getResultBySheetId(
+      String sheetId) async {
     final response = await _client
         .from('grades')
         .select('*, answer_sheets!inner(exam_id, student_id)')

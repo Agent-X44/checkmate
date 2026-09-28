@@ -1,4 +1,6 @@
--- Checkmate LMS Supabase Schema (Security Hardened)
+-- Fresh-database starting schema. For an existing project, run the additive
+-- migrations in SCHEMA_ALIGNMENT.md instead of rerunning this file.
+BEGIN;
 
 -- 1. Profiles (Linked to auth.users)
 CREATE TABLE profiles (
@@ -38,6 +40,7 @@ CREATE TABLE enrollments (
     user_id UUID REFERENCES profiles(id),
     class_id UUID REFERENCES classes(id),
     role TEXT CHECK (role IN ('Instructor', 'Student')),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
     UNIQUE(user_id, class_id)
 );
 
@@ -79,28 +82,15 @@ CREATE TABLE answer_sheets (
     status TEXT DEFAULT 'Pending',
     scanned_at TIMESTAMPTZ
 );
-BEGIN;
-
-DELETE FROM public.ai_insights;
-DELETE FROM public.grades;
-DELETE FROM public.answer_sheets;
-DELETE FROM public.questions;
-DELETE FROM public.exams;
-DELETE FROM public.learning_materials;
-DELETE FROM public.enrollments;
-DELETE FROM public.classes;
-
--- Optional, only if you want to wipe profile records too:
--- DELETE FROM public.profiles;
-
-COMMIT;
--- 7. Grades (Final score per sheet)
+-- 7. Grades (score and itemized local OMR evaluations per sheet)
 CREATE TABLE grades (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     sheet_id UUID REFERENCES answer_sheets(id) ON DELETE CASCADE,
     score INT,
     total_questions INT,
     percentage FLOAT,
+    answers JSONB NOT NULL DEFAULT '[]'::jsonb,
+    student_insight JSONB,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -114,7 +104,7 @@ CREATE TABLE ai_insights (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 9. Learning Materials (Enforces BR-13)
+-- 9. Learning Materials (BR-01)
 CREATE TABLE learning_materials (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     class_id UUID REFERENCES classes(id) ON DELETE CASCADE,
@@ -126,13 +116,40 @@ CREATE TABLE learning_materials (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 10. Course announcements and class comments (Course Stream in the UML)
+CREATE TABLE class_announcements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    author_id UUID NOT NULL REFERENCES profiles(id),
+    content TEXT NOT NULL CHECK (length(btrim(content)) > 0),
+    allow_comments BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ
+);
+CREATE INDEX class_announcements_class_created_idx
+    ON class_announcements (class_id, created_at DESC);
+
+CREATE TABLE announcement_comments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    announcement_id UUID NOT NULL REFERENCES class_announcements(id) ON DELETE CASCADE,
+    author_id UUID NOT NULL REFERENCES profiles(id),
+    content TEXT NOT NULL CHECK (length(btrim(content)) > 0),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX announcement_comments_post_created_idx
+    ON announcement_comments (announcement_id, created_at);
+
 -- --- ROW LEVEL SECURITY (RLS) ---
 
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE classes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE exams ENABLE ROW LEVEL SECURITY;
+ALTER TABLE questions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE grades ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ai_insights ENABLE ROW LEVEL SECURITY;
 ALTER TABLE learning_materials ENABLE ROW LEVEL SECURITY;
+ALTER TABLE class_announcements ENABLE ROW LEVEL SECURITY;
+ALTER TABLE announcement_comments ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "View learning materials" ON learning_materials FOR SELECT
 USING (
@@ -221,3 +238,82 @@ USING (
       AND c.instructor_id = auth.uid()
   )
 );
+
+-- The answer key is restricted to the course owner. Students receive their
+-- own item evaluations through released grades, never from questions directly.
+CREATE POLICY "Instructors manage own questions" ON questions
+FOR ALL TO authenticated
+USING (EXISTS (
+  SELECT 1 FROM exams e JOIN classes c ON c.id = e.class_id
+  WHERE e.id = questions.exam_id AND c.instructor_id = auth.uid()
+))
+WITH CHECK (EXISTS (
+  SELECT 1 FROM exams e JOIN classes c ON c.id = e.class_id
+  WHERE e.id = questions.exam_id AND c.instructor_id = auth.uid()
+));
+
+CREATE POLICY "Instructors manage own AI insights" ON ai_insights
+FOR ALL TO authenticated
+USING (EXISTS (
+  SELECT 1 FROM exams e JOIN classes c ON c.id = e.class_id
+  WHERE e.id = ai_insights.exam_id AND c.instructor_id = auth.uid()
+))
+WITH CHECK (EXISTS (
+  SELECT 1 FROM exams e JOIN classes c ON c.id = e.class_id
+  WHERE e.id = ai_insights.exam_id AND c.instructor_id = auth.uid()
+));
+
+CREATE POLICY "Students read own released AI insights" ON ai_insights
+FOR SELECT TO authenticated
+USING (student_id = auth.uid() AND EXISTS (
+  SELECT 1 FROM exams e
+  WHERE e.id = ai_insights.exam_id AND e.results_released = TRUE
+));
+
+CREATE POLICY "Class members read announcements" ON class_announcements
+FOR SELECT TO authenticated USING (
+  EXISTS (SELECT 1 FROM classes c
+          WHERE c.id = class_id AND c.instructor_id = auth.uid())
+  OR EXISTS (SELECT 1 FROM enrollments e
+             WHERE e.class_id = class_id AND e.user_id = auth.uid()
+               AND e.role = 'Student')
+);
+CREATE POLICY "Instructor creates announcements" ON class_announcements
+FOR INSERT TO authenticated WITH CHECK (
+  author_id = auth.uid()
+  AND EXISTS (SELECT 1 FROM classes c
+              WHERE c.id = class_id AND c.instructor_id = auth.uid())
+);
+CREATE POLICY "Instructor updates announcements" ON class_announcements
+FOR UPDATE TO authenticated
+USING (author_id = auth.uid() AND EXISTS (
+  SELECT 1 FROM classes c
+  WHERE c.id = class_id AND c.instructor_id = auth.uid()))
+WITH CHECK (author_id = auth.uid() AND EXISTS (
+  SELECT 1 FROM classes c
+  WHERE c.id = class_id AND c.instructor_id = auth.uid()));
+CREATE POLICY "Instructor deletes announcements" ON class_announcements
+FOR DELETE TO authenticated USING (
+  author_id = auth.uid() AND EXISTS (
+    SELECT 1 FROM classes c
+    WHERE c.id = class_id AND c.instructor_id = auth.uid())
+);
+CREATE POLICY "Class members read announcement comments" ON announcement_comments
+FOR SELECT TO authenticated USING (
+  EXISTS (SELECT 1 FROM class_announcements a WHERE a.id = announcement_id)
+);
+CREATE POLICY "Class members add enabled comments" ON announcement_comments
+FOR INSERT TO authenticated WITH CHECK (
+  author_id = auth.uid()
+  AND EXISTS (
+    SELECT 1 FROM class_announcements a
+    WHERE a.id = announcement_id AND a.allow_comments
+      AND (EXISTS (SELECT 1 FROM classes c
+                   WHERE c.id = a.class_id AND c.instructor_id = auth.uid())
+           OR EXISTS (SELECT 1 FROM enrollments e
+                      WHERE e.class_id = a.class_id
+                        AND e.user_id = auth.uid() AND e.role = 'Student'))
+  )
+);
+
+COMMIT;

@@ -238,38 +238,44 @@ class _LoginScreenState extends State<LoginScreen>
     return Scaffold(
       body: SafeArea(
         child: LayoutBuilder(
-          builder: (context, constraints) => SingleChildScrollView(
-            padding: EdgeInsets.symmetric(
-              horizontal: constraints.maxWidth < 360 ? 20 : 28,
-            ),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minHeight: constraints.maxHeight),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 440),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 28),
-                    child: AnimatedBuilder(
-                      animation: _shakeAnimation,
-                      builder: (context, child) => Transform.translate(
-                        offset: Offset(
-                          sin(_shakeAnimation.value * pi * 4) * 8,
-                          0,
+          builder: (context, constraints) {
+            final compact = constraints.maxHeight < 720;
+            return SingleChildScrollView(
+              padding: EdgeInsets.symmetric(
+                horizontal: constraints.maxWidth < 360 ? 20 : 28,
+              ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: Align(
+                  alignment: const Alignment(0, -0.28),
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 440),
+                    child: Padding(
+                      padding:
+                          EdgeInsets.symmetric(vertical: compact ? 16 : 28),
+                      child: AnimatedBuilder(
+                        animation: _shakeAnimation,
+                        builder: (context, child) => Transform.translate(
+                          offset: Offset(
+                            sin(_shakeAnimation.value * pi * 4) * 8,
+                            0,
+                          ),
+                          child: child,
                         ),
-                        child: child,
-                      ),
-                      child: _buildAuthForm(
-                        theme: theme,
-                        isDark: isDark,
-                        accentColor: accentColor,
-                        buttonTextColor: buttonTextColor,
+                        child: _buildAuthForm(
+                          theme: theme,
+                          isDark: isDark,
+                          accentColor: accentColor,
+                          buttonTextColor: buttonTextColor,
+                          compact: compact,
+                        ),
                       ),
                     ),
                   ),
                 ),
               ),
-            ),
-          ),
+            );
+          },
         ),
       ),
     );
@@ -280,6 +286,7 @@ class _LoginScreenState extends State<LoginScreen>
     required bool isDark,
     required Color accentColor,
     required Color buttonTextColor,
+    required bool compact,
   }) {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -288,21 +295,22 @@ class _LoginScreenState extends State<LoginScreen>
         Center(
           child: Image.asset(
             'assets/checkmate.png',
-            width: 96,
-            height: 96,
+            width: compact ? 76 : 96,
+            height: compact ? 76 : 96,
             color: accentColor,
             fit: BoxFit.contain,
           ),
         ),
-        const SizedBox(height: 12),
+        SizedBox(height: compact ? 8 : 12),
         Text(
           'CheckMate LMS',
           textAlign: TextAlign.center,
           style: theme.textTheme.headlineMedium?.copyWith(color: accentColor),
         ),
-        const SizedBox(height: 32),
+        SizedBox(height: compact ? 16 : 24),
         Text(
           _isLoginMode ? 'Welcome back' : 'Create your account',
+          textAlign: TextAlign.center,
           style: theme.textTheme.headlineSmall?.copyWith(
             color: theme.colorScheme.onSurface,
             fontWeight: FontWeight.w800,
@@ -314,11 +322,12 @@ class _LoginScreenState extends State<LoginScreen>
           _isLoginMode
               ? 'Sign in to continue to your classes.'
               : 'Get started with your classes and assessments.',
+          textAlign: TextAlign.center,
           style: theme.textTheme.bodyMedium?.copyWith(
             color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
           ),
         ),
-        const SizedBox(height: 28),
+        SizedBox(height: compact ? 20 : 28),
         if (!_isLoginMode) ...[
           _buildField(
             controller: _nameController,
@@ -327,7 +336,7 @@ class _LoginScreenState extends State<LoginScreen>
             hasError: _nameError,
             accentColor: accentColor,
           ),
-          const SizedBox(height: 16),
+          SizedBox(height: compact ? 12 : 16),
         ],
         _buildField(
           controller: _emailController,
@@ -337,7 +346,7 @@ class _LoginScreenState extends State<LoginScreen>
           accentColor: accentColor,
           keyboardType: TextInputType.emailAddress,
         ),
-        const SizedBox(height: 16),
+        SizedBox(height: compact ? 12 : 16),
         _buildField(
           controller: _passwordController,
           label: 'Password',
@@ -391,7 +400,7 @@ class _LoginScreenState extends State<LoginScreen>
             ],
           ),
         ],
-        const SizedBox(height: 24),
+        SizedBox(height: compact ? 18 : 24),
         ElevatedButton(
           onPressed: _isLoading ? null : _handleAuth,
           style: ElevatedButton.styleFrom(
@@ -414,7 +423,7 @@ class _LoginScreenState extends State<LoginScreen>
                       fontWeight: FontWeight.w700, fontSize: 16),
                 ),
         ),
-        const SizedBox(height: 24),
+        SizedBox(height: compact ? 18 : 24),
         Row(
           children: [
             const Expanded(child: Divider()),
@@ -425,7 +434,7 @@ class _LoginScreenState extends State<LoginScreen>
             const Expanded(child: Divider()),
           ],
         ),
-        const SizedBox(height: 24),
+        SizedBox(height: compact ? 18 : 24),
         OutlinedButton.icon(
           onPressed: _isLoading ? null : _handleGoogleSignIn,
           style: OutlinedButton.styleFrom(
@@ -435,7 +444,7 @@ class _LoginScreenState extends State<LoginScreen>
           icon: Icon(Icons.login, size: 20, color: accentColor),
           label: const Text('Continue with Google'),
         ),
-        const SizedBox(height: 20),
+        SizedBox(height: compact ? 14 : 20),
         TextButton(
           onPressed: () {
             setState(() {

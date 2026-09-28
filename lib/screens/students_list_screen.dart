@@ -3,6 +3,7 @@ import '../models/course.dart';
 import '../services/supabase_service.dart';
 import '../services/data_cache_service.dart';
 import 'private_chat_screen.dart';
+import 'student_overall_analysis_screen.dart';
 
 class StudentsListScreen extends StatefulWidget {
   final Course course;
@@ -15,39 +16,95 @@ class StudentsListScreen extends StatefulWidget {
 class _StudentsListScreenState extends State<StudentsListScreen> {
   late Future<List<Map<String, dynamic>>> _studentsFuture;
   List<Map<String, dynamic>>? _students;
+  final Set<String> _removingStudentIds = {};
+  int _requestGeneration = 0;
 
   @override
   void initState() {
     super.initState();
+    _studentsFuture = _fetchStudents();
     _initStudentsWithCache();
   }
 
   Future<void> _initStudentsWithCache() async {
     // 1. Instant cache load for seamless UX
     final cached = await DataCacheService.getEnrolledStudents(widget.course.id);
-    if (cached.isNotEmpty && mounted) {
+    if (cached.isNotEmpty && mounted && _students == null) {
       setState(() {
         _students = cached;
       });
     }
+  }
 
-    // 2. Fetch fresh network data and update cache
-    _loadStudents();
+  Future<List<Map<String, dynamic>>> _fetchStudents() async {
+    final requestGeneration = ++_requestGeneration;
+    final fresh = await SupabaseService.getEnrolledStudents(widget.course.id);
+    if (requestGeneration == _requestGeneration) {
+      await DataCacheService.saveEnrolledStudents(widget.course.id, fresh);
+      if (mounted && requestGeneration == _requestGeneration) {
+        setState(() => _students = fresh);
+      }
+    }
+    return fresh;
   }
 
   void _loadStudents() {
-    final future = SupabaseService.getEnrolledStudents(widget.course.id);
-    setState(() => _studentsFuture = future);
-    future.then((fresh) {
-      if (fresh.isNotEmpty) {
-        DataCacheService.saveEnrolledStudents(widget.course.id, fresh);
-      }
+    setState(() => _studentsFuture = _fetchStudents());
+  }
+
+  Future<void> _unenrollStudent(String studentId, String name) async {
+    if (!widget.course.isOwner || _removingStudentIds.contains(studentId)) {
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Unenroll $name?'),
+        content: const Text(
+          'The student will lose access to this course. Existing grades and results will remain saved. They can rejoin with the course code.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            style: TextButton.styleFrom(
+              foregroundColor: Theme.of(dialogContext).colorScheme.error,
+            ),
+            child: const Text('Unenroll'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    _requestGeneration++; // Ignore a student-list request started before removal.
+    setState(() => _removingStudentIds.add(studentId));
+    try {
+      await SupabaseService.unenrollStudent(widget.course.id, studentId);
+      if (!mounted) return;
+      final remaining = (_students ?? <Map<String, dynamic>>[])
+          .where((student) => student['user_id']?.toString() != studentId)
+          .toList();
+      setState(() => _students = remaining);
+      await DataCacheService.saveEnrolledStudents(widget.course.id, remaining);
+      if (!mounted) return;
+      _loadStudents();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$name was unenrolled.')),
+      );
+    } catch (e) {
       if (mounted) {
-        setState(() => _students = fresh);
+        _loadStudents();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not unenroll $name: $e')),
+        );
       }
-    }).catchError((e) {
-      debugPrint("Error fetching enrolled students: $e");
-    });
+    } finally {
+      if (mounted) setState(() => _removingStudentIds.remove(studentId));
+    }
   }
 
   @override
@@ -62,7 +119,7 @@ class _StudentsListScreenState extends State<StudentsListScreen> {
       body: FutureBuilder<List<Map<String, dynamic>>>(
         future: _studentsFuture,
         builder: (context, snapshot) {
-          final students = snapshot.data ?? _students;
+          final students = _students ?? snapshot.data;
           if (students == null &&
               snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -133,6 +190,8 @@ class _StudentsListScreenState extends State<StudentsListScreen> {
                     );
                   }
                   final rawProfile = studentList[index - 1]['profiles'];
+                  final studentId =
+                      studentList[index - 1]['user_id']?.toString();
                   final String name = rawProfile is Map
                       ? rawProfile['name']?.toString() ?? 'Student'
                       : 'Student';
@@ -164,7 +223,55 @@ class _StudentsListScreenState extends State<StudentsListScreen> {
                           style: const TextStyle(fontWeight: FontWeight.bold)),
                       subtitle: const Text('Enrolled student'),
                       trailing: widget.course.isOwner
-                          ? Icon(Icons.message_outlined, color: accent)
+                          ? Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.message_outlined, color: accent),
+                                PopupMenuButton<String>(
+                                  tooltip: 'Manage $name',
+                                  enabled: studentId != null &&
+                                      !_removingStudentIds.contains(studentId),
+                                  icon: _removingStudentIds.contains(studentId)
+                                      ? const SizedBox.square(
+                                          dimension: 20,
+                                          child: CircularProgressIndicator(
+                                              strokeWidth: 2),
+                                        )
+                                      : Icon(Icons.more_vert, color: accent),
+                                  onSelected: (action) {
+                                    if (action == 'unenroll' &&
+                                        studentId != null) {
+                                      _unenrollStudent(studentId, name);
+                                    } else if (action == 'analysis' &&
+                                        studentId != null) {
+                                      Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (_) =>
+                                                StudentOverallAnalysisScreen(
+                                              studentId: studentId,
+                                              classId: widget.course.id,
+                                              studentName: name,
+                                            ),
+                                          ));
+                                    }
+                                  },
+                                  itemBuilder: (context) => [
+                                    const PopupMenuItem(
+                                      value: 'analysis',
+                                      child: Text('Performance analysis'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'unenroll',
+                                      child: Text(
+                                        'Unenroll student',
+                                        style: TextStyle(color: colors.error),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            )
                           : null,
                       onTap: widget.course.isOwner
                           ? () {

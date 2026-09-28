@@ -167,6 +167,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
       await PdfGenerator.generateAndPrint(
         template,
         sheetData: sheetData,
+        hasMultipleSets: hasMultipleSets,
       );
     } catch (e) {
       if (mounted) {
@@ -207,11 +208,16 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
         context: context,
         builder: (dialogContext) {
           return StatefulBuilder(builder: (dialogContext, setDialogState) {
-            final isDark = Theme.of(context).brightness == Brightness.dark;
-            final textColor = isDark ? Colors.white : Colors.black;
+            final theme = Theme.of(dialogContext);
+            final colors = theme.colorScheme;
+            final isDark = theme.brightness == Brightness.dark;
+            final actionColor = isDark ? colors.secondary : colors.primary;
+            final onActionColor =
+                isDark ? colors.onSecondary : colors.onPrimary;
+            final textColor = colors.onSurface;
 
             return AlertDialog(
-              backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
+              backgroundColor: colors.surface,
               title: Text('Edit Question',
                   style:
                       TextStyle(color: textColor, fontWeight: FontWeight.bold)),
@@ -227,8 +233,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                       decoration: InputDecoration(
                         labelText: 'Question Text',
                         border: const OutlineInputBorder(),
-                        labelStyle:
-                            TextStyle(color: textColor.withValues(alpha: 0.7)),
+                        labelStyle: TextStyle(color: colors.onSurfaceVariant),
                       ),
                     ),
                     const SizedBox(height: 16),
@@ -268,8 +273,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                             fontWeight: FontWeight.bold, color: textColor)),
                     DropdownButton<String>(
                       value: currentAnswer,
-                      dropdownColor:
-                          isDark ? const Color(0xFF1E1E24) : Colors.white,
+                      dropdownColor: colors.surface,
                       style: TextStyle(color: textColor),
                       items:
                           (isTF ? ['A', 'B'] : ['A', 'B', 'C', 'D']).map((ans) {
@@ -291,12 +295,13 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                 TextButton(
                   onPressed: () => Navigator.pop(dialogContext),
                   child: Text('CANCEL',
-                      style:
-                          TextStyle(color: textColor.withValues(alpha: 0.7))),
+                      style: TextStyle(color: colors.onSurfaceVariant)),
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                      backgroundColor: isDark ? Colors.yellow : Colors.blue),
+                    backgroundColor: actionColor,
+                    foregroundColor: onActionColor,
+                  ),
                   onPressed: () async {
                     if (textController.text.trim().isEmpty) return;
 
@@ -335,10 +340,8 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                       }
                     }
                   },
-                  child: Text('SAVE',
-                      style: TextStyle(
-                          color: isDark ? Colors.black : Colors.white,
-                          fontWeight: FontWeight.bold)),
+                  child: const Text('SAVE',
+                      style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ],
             );
@@ -347,6 +350,10 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
   }
 
   Future<void> _reviewExam(String examId, String title) async {
+    final theme = Theme.of(context);
+    final reviewAccent = theme.brightness == Brightness.dark
+        ? theme.colorScheme.secondary
+        : theme.colorScheme.primary;
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -426,9 +433,8 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                                             ),
                                             if (widget.isOwner)
                                               IconButton(
-                                                icon: const Icon(
-                                                    Icons.edit_note,
-                                                    color: Colors.orange),
+                                                icon: Icon(Icons.edit_note,
+                                                    color: reviewAccent),
                                                 tooltip: "Edit Question",
                                                 padding: EdgeInsets.zero,
                                                 constraints:
@@ -447,25 +453,31 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                                         ),
                                         const SizedBox(height: 8),
                                         if (isTF) ...[
-                                          const Text("A. True",
+                                          Text("A. True",
                                               style: TextStyle(
-                                                  color: Colors.grey)),
-                                          const Text("B. False",
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurfaceVariant)),
+                                          Text("B. False",
                                               style: TextStyle(
-                                                  color: Colors.grey)),
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurfaceVariant)),
                                         ] else ...[
                                           ...List.generate(options.length, (i) {
                                             return Text(
                                                 "${String.fromCharCode(65 + i)}. ${options[i]}",
-                                                style: const TextStyle(
-                                                    color: Colors.grey));
+                                                style: TextStyle(
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurfaceVariant));
                                           }),
                                         ],
                                         const SizedBox(height: 8),
                                         Text(
                                           "Correct Answer: ${q['correct_answer']}",
-                                          style: const TextStyle(
-                                              color: Colors.green,
+                                          style: TextStyle(
+                                              color: reviewAccent,
                                               fontWeight: FontWeight.bold),
                                         ),
                                       ],
@@ -577,7 +589,8 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
               child: const Text("Cancel")),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            style: TextButton.styleFrom(
+                foregroundColor: Theme.of(context).colorScheme.error),
             child: const Text("Delete"),
           ),
         ],
@@ -599,7 +612,8 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
             await DataCacheService.saveExams(widget.courseId, updated);
           }
           if (mounted) {
-            CheckMateUi.showTopPrompt(context, "Assessment deleted successfully.",
+            CheckMateUi.showTopPrompt(
+                context, "Assessment deleted successfully.",
                 isError: false);
           }
         }
@@ -630,7 +644,9 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => const AnswerSheetDesignScreen(),
+                    builder: (context) => AnswerSheetDesignScreen(
+                      courseId: widget.courseId,
+                    ),
                   ),
                 );
               },
@@ -663,7 +679,9 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                       child: Column(
                         children: [
                           Icon(Icons.library_books_outlined,
-                              size: 48, color: colors.primary),
+                              size: 48,
+                              color:
+                                  isDark ? colors.secondary : colors.primary),
                           const SizedBox(height: 16),
                           const Text("No assessments yet",
                               style: TextStyle(
@@ -836,6 +854,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final colors = Theme.of(context).colorScheme;
     final actionColor = isDark ? colors.secondary : colors.primary;
+    final onActionColor = isDark ? colors.onSecondary : colors.onPrimary;
     final isExpanded = _sectionExpanded[title] ?? true;
 
     return Column(
@@ -903,14 +922,14 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
             final statusLabel =
                 isReleased ? 'Released' : (isApproved ? 'Approved' : 'Draft');
             final statusBackground = isReleased
-                ? colors.primary
+                ? actionColor
                 : isApproved
-                    ? colors.secondary
+                    ? actionColor
                     : colors.surfaceContainerHighest;
             final statusForeground = isReleased
-                ? colors.onPrimary
+                ? onActionColor
                 : isApproved
-                    ? colors.onSecondary
+                    ? onActionColor
                     : colors.onSurfaceVariant;
 
             void openResults() {
@@ -958,7 +977,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                         width: 40,
                         height: 40,
                         decoration: BoxDecoration(
-                          color: colors.secondary.withValues(alpha: isDark ? 0.16 : 0.28),
+                          color: actionColor.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Icon(
@@ -1007,7 +1026,8 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                                       exam['id'],
                                       displayTitle,
                                       hasMultipleSets: hasMultipleSets,
-                                      templateId: exam['template_id']?.toString(),
+                                      templateId:
+                                          exam['template_id']?.toString(),
                                     );
                                     break;
                                   case 'unapprove':
@@ -1096,14 +1116,16 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                           TextButton.icon(
                             onPressed: () =>
                                 _reviewExam(exam['id'], displayTitle),
-                            icon: const Icon(Icons.visibility_outlined, size: 18),
+                            icon:
+                                const Icon(Icons.visibility_outlined, size: 18),
                             label: const Text('Review'),
                             style: TextButton.styleFrom(
                                 foregroundColor: actionColor),
                           ),
                           TextButton.icon(
                             onPressed: openResults,
-                            icon: const Icon(Icons.bar_chart_outlined, size: 18),
+                            icon:
+                                const Icon(Icons.bar_chart_outlined, size: 18),
                             label: const Text('Results'),
                             style: TextButton.styleFrom(
                                 foregroundColor: actionColor),
@@ -1114,19 +1136,19 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                               icon: const Icon(Icons.check, size: 18),
                               label: const Text('Approve'),
                               style: FilledButton.styleFrom(
-                                backgroundColor: colors.secondary,
-                                foregroundColor: colors.onSecondary,
+                                backgroundColor: actionColor,
+                                foregroundColor: onActionColor,
                               ),
                             )
                           else if (!isReleased)
                             FilledButton.icon(
-                              onPressed: () =>
-                                  _releaseExamResults(exam['id']),
-                              icon: const Icon(Icons.publish_outlined, size: 18),
+                              onPressed: () => _releaseExamResults(exam['id']),
+                              icon:
+                                  const Icon(Icons.publish_outlined, size: 18),
                               label: const Text('Release'),
                               style: FilledButton.styleFrom(
-                                backgroundColor: colors.secondary,
-                                foregroundColor: colors.onSecondary,
+                                backgroundColor: actionColor,
+                                foregroundColor: onActionColor,
                               ),
                             ),
                         ],
@@ -1134,12 +1156,11 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                     ] else if (isReleased) ...[
                       const Divider(height: 24),
                       TextButton.icon(
-                        onPressed: () =>
-                            _reviewExam(exam['id'], displayTitle),
+                        onPressed: () => _reviewExam(exam['id'], displayTitle),
                         icon: const Icon(Icons.fact_check_outlined, size: 18),
                         label: const Text('Review answers'),
-                        style: TextButton.styleFrom(
-                            foregroundColor: actionColor),
+                        style:
+                            TextButton.styleFrom(foregroundColor: actionColor),
                       ),
                     ],
                   ],

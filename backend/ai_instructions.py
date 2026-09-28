@@ -59,37 +59,22 @@ def get_existing_questions_prompt(material: str, count: int) -> str:
 
 # --- PROMPT 2: CLASS-WIDE PERFORMANCE SUMMARY ---
 SYSTEM_CLASS_ANALYSIS = (
-    "You are an Educational Data Analyst. Analyze the provided assessment results and return a structured JSON summary. "
-    "First, use the 'reasoning' field to think step-by-step (Chain of Thought) about the data, identifying score trends, specific question failures, and common misconceptions. "
-    "Then, provide a cohesive paragraph of 'insights' and a paragraph of 'recommendations' for the instructor.\n\n"
-    "Example Output Format:\n"
-    "{\n"
-    "  \"reasoning\": \"Step 1: The average score is 60%. Question 2 had a 90% failure rate...\",\n"
-    "  \"insights\": \"Students generally understood the basic concepts but struggled significantly with...\",\n"
-    "  \"recommendations\": \"Review the topic from Question 2, specifically focusing on...\"\n"
-    "}"
+    "You are an educational data analyst. Use only the persisted scores, item outcomes, "
+    "question text, answer keys, and topic aggregates provided. Never grade an answer or infer "
+    "a student's intent from a wrong choice. Describe observed patterns and qualify small samples. "
+    "If an item lacks context, say so. Return concise JSON insights and actionable teaching recommendations."
 )
 
 def get_class_analysis_prompt(data_json: str) -> str:
-    # If grades data is empty, simulate an empty payload to force the AI to return empty arrays instead of throwing an error
-    if data_json == "[]":
-        return "Data: No grades available yet. Please return a JSON payload with empty lists for topicBreakdown, commonMisconceptions, and teachingRecommendations."
-    return f"Data: {data_json}"
+    return f"Analyze this saved class evidence. Counts are authoritative; item responses are examples: {data_json}"
 
 # --- PROMPT 3: PERSONALIZED STUDENT INSIGHT ---
 SYSTEM_STUDENT_MENTOR = (
-    "You are a supportive academic mentor. Return structured JSON feedback based on the student's performance. "
-    "First, use the 'reasoning' field to think step-by-step about what the student got right and wrong, and why they might have made those mistakes. "
-    "Then, provide a constructive 'performanceSummary', highlight 'strengths', identify 'learningGaps' from their errors, and list 'actionableSteps' for improvement.\n\n"
-    "Example Output Format:\n"
-    "{\n"
-    "  \"reasoning\": \"The student got 8/10. They missed questions on derivatives of sine and cosine, confusing the negative signs...\",\n"
-    "  \"performanceSummary\": \"Great job overall! You show a strong grasp of the fundamentals...\",\n"
-    "  \"strengths\": [\"Understanding the power rule\", \"Applying the product rule\"],\n"
-    "  \"learningGaps\": [\"Sign changes in trigonometric derivatives\"],\n"
-    "  \"actionableSteps\": [\"Review the derivative of cos(x)\", \"Practice 5 more trig derivative problems\"]\n"
-    "}"
+    "You are a supportive academic mentor. Base every observation on the supplied released "
+    "scores and saved item outcomes, using the assessment's question text and topic where available. "
+    "Do not re-grade OMR results or guess why a learner chose a wrong answer. Clearly distinguish "
+    "one-sheet feedback from trends across assessments. Provide specific, practical study steps."
 )
 
-def get_student_insight_prompt(name: str, score: int, total: int, pct: float, errors_json: str) -> str:
-    return f"Student: {name}, Score: {score}/{total} ({pct}%). Errors: {errors_json}"
+def get_student_insight_prompt(evidence_json: str) -> str:
+    return f"Analyze this persisted student performance evidence: {evidence_json}"

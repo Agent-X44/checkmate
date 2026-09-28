@@ -3,9 +3,11 @@ import '../models/omr/bubble_sheet_template.dart';
 import '../models/omr/template_registry.dart';
 import '../widgets/answer_sheet_painter.dart';
 import '../services/pdf_generator.dart';
+import '../services/supabase_service.dart';
 
 class AnswerSheetDesignScreen extends StatefulWidget {
-  const AnswerSheetDesignScreen({super.key});
+  final String courseId;
+  const AnswerSheetDesignScreen({super.key, required this.courseId});
 
   @override
   State<AnswerSheetDesignScreen> createState() =>
@@ -17,7 +19,85 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
 
   late BubbleSheetTemplate _selectedTemplate;
   bool _isDebugAlignment = false;
-  String _selectedStudent = "JOHN DOE";
+  String _selectedStudent = 'Student';
+  bool _isExporting = false;
+  bool _previewHasMultipleSets = false;
+
+  Future<void> _exportSheets({required bool allStudents}) async {
+    setState(() => _isExporting = true);
+    try {
+      final exams = (await SupabaseService.getExams(widget.courseId))
+          .where((exam) => exam['is_approved'] == true)
+          .toList();
+      if (!mounted) return;
+      if (exams.isEmpty) {
+        throw StateError(
+            'Approve an assessment before exporting answer sheets.');
+      }
+      final exam = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: const Text('Select approved assessment'),
+          children: exams
+              .map((exam) => SimpleDialogOption(
+                    onPressed: () => Navigator.pop(context, exam),
+                    child: Text(exam['title']?.toString() ?? 'Assessment'),
+                  ))
+              .toList(),
+        ),
+      );
+      if (exam == null) return;
+      final hasMultipleSets = exam['has_multiple_sets'] == true;
+      setState(() => _previewHasMultipleSets = hasMultipleSets);
+      var sheets = await SupabaseService.generateAnswerSheetsData(
+        exam['id'].toString(),
+        widget.courseId,
+        alternateSets: hasMultipleSets,
+      );
+      if (!mounted) return;
+      if (sheets.isEmpty) {
+        throw StateError('No answer sheets could be created.');
+      }
+      if (!allStudents) {
+        final selected = await showDialog<Map<String, String>>(
+          context: context,
+          builder: (context) => SimpleDialog(
+            title: const Text('Select student'),
+            children: sheets
+                .map((sheet) => SimpleDialogOption(
+                      onPressed: () => Navigator.pop(context, sheet),
+                      child: Text(sheet['name'] ?? 'Student'),
+                    ))
+                .toList(),
+          ),
+        );
+        if (selected == null) return;
+        sheets = [selected];
+        if (mounted) setState(() => _selectedStudent = selected['name']!);
+      }
+      await PdfGenerator.generateAndPrint(
+        _selectedTemplate,
+        alignment: PdfAlignment(
+          nameTop: _nameTop,
+          nameLeft: _nameLeft,
+          nameScale: _nameScale,
+          qrTop: _qrTop,
+          qrRight: _qrRight,
+          qrSize: _qrSize,
+        ),
+        sheetData: sheets,
+        hasMultipleSets: hasMultipleSets,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Answer-sheet export failed: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isExporting = false);
+    }
+  }
 
   // Alignment Debug Values
   double _nameTop = 115.8;
@@ -88,14 +168,26 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
                       if (_isDebugAlignment) ...[
                         Positioned(
                           top: (_nameTop - 20) * 0.5,
-                          left: (_nameLeft - 85) * 0.5,
+                          left: _previewHasMultipleSets
+                              ? (_nameLeft - 85) * 0.5
+                              : 6,
+                          right: _previewHasMultipleSets
+                              ? null
+                              : (_qrRight + _qrSize + 12) * 0.5,
                           child: Transform.scale(
                             scale: _nameScale * 0.5,
-                            alignment: Alignment.topLeft,
+                            alignment: _previewHasMultipleSets
+                                ? Alignment.topLeft
+                                : Alignment.center,
                             child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                              crossAxisAlignment: _previewHasMultipleSets
+                                  ? CrossAxisAlignment.start
+                                  : CrossAxisAlignment.center,
                               children: [
                                 Row(
+                                  mainAxisAlignment: _previewHasMultipleSets
+                                      ? MainAxisAlignment.start
+                                      : MainAxisAlignment.center,
                                   children: [
                                     const Text(
                                       'Name: ',
@@ -124,22 +216,24 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 15),
-                                Row(
-                                  children: [
-                                    const Text(
-                                      'Set: ',
-                                      style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.black,
+                                if (_previewHasMultipleSets) ...[
+                                  const SizedBox(height: 15),
+                                  Row(
+                                    children: [
+                                      const Text(
+                                        'Set: ',
+                                        style: TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.black,
+                                        ),
                                       ),
-                                    ),
-                                    _miniCheckbox('1', false),
-                                    const SizedBox(width: 20),
-                                    _miniCheckbox('2', false),
-                                  ],
-                                ),
+                                      _miniCheckbox('1', false),
+                                      const SizedBox(width: 20),
+                                      _miniCheckbox('2', false),
+                                    ],
+                                  ),
+                                ],
                               ],
                             ),
                           ),
@@ -162,7 +256,7 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
                               ),
                               const SizedBox(height: 2.5),
                               const Text(
-                                'Sheet ID: CM50-A-0001',
+                                'Sheet ID: CM-8K9P2X8Q',
                                 style: TextStyle(
                                   fontSize: 4.5,
                                   fontWeight: FontWeight.bold,
@@ -256,24 +350,8 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
                                       fontWeight: FontWeight.bold,
                                       color: textColor.withValues(alpha: 0.6)),
                                 ),
-                                DropdownButton<String>(
-                                  dropdownColor: isDark
-                                      ? Colors.grey.shade900
-                                      : Colors.white,
-                                  value: _selectedStudent,
-                                  items: ["JOHN DOE", "JANE DOE"]
-                                      .map((s) => DropdownMenuItem(
-                                          value: s,
-                                          child: Text(s,
-                                              style: TextStyle(
-                                                  fontSize: 12,
-                                                  color: textColor))))
-                                      .toList(),
-                                  onChanged: (v) =>
-                                      setState(() => _selectedStudent = v!),
-                                  underline: Container(),
-                                  iconEnabledColor: textColor,
-                                ),
+                                Text(_selectedStudent,
+                                    style: TextStyle(color: textColor)),
                               ],
                             ),
                           ),
@@ -460,25 +538,12 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
               width: double.infinity,
               height: 50,
               child: ElevatedButton.icon(
-                onPressed: () async {
-                  await PdfGenerator.generateAndPrint(
-                    _selectedTemplate,
-                    alignment: PdfAlignment(
-                      nameTop: _nameTop,
-                      nameLeft: _nameLeft,
-                      nameScale: _nameScale,
-                      qrTop: _qrTop,
-                      qrRight: _qrRight,
-                      qrSize: _qrSize,
-                    ),
-                    sheetData: [
-                      {'name': _selectedStudent, 'qrCode': 'CM-TEST-1234'}
-                    ],
-                  );
-                },
+                onPressed: _isExporting
+                    ? null
+                    : () => _exportSheets(allStudents: false),
                 icon: Icon(Icons.person,
                     color: isDark ? Colors.black : Colors.white),
-                label: Text('EXPORT ONLY $_selectedStudent',
+                label: Text('EXPORT ONE STUDENT',
                     style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 12,
@@ -494,23 +559,9 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
               width: double.infinity,
               height: 55,
               child: ElevatedButton.icon(
-                onPressed: () async {
-                  await PdfGenerator.generateAndPrint(
-                    _selectedTemplate,
-                    alignment: PdfAlignment(
-                      nameTop: _nameTop,
-                      nameLeft: _nameLeft,
-                      nameScale: _nameScale,
-                      qrTop: _qrTop,
-                      qrRight: _qrRight,
-                      qrSize: _qrSize,
-                    ),
-                    sheetData: [
-                      {'name': "JOHN DOE", 'qrCode': 'CM-BATCH-0001'},
-                      {'name': "JANE DOE", 'qrCode': 'CM-BATCH-0002'}
-                    ], // The list of all students
-                  );
-                },
+                onPressed: _isExporting
+                    ? null
+                    : () => _exportSheets(allStudents: true),
                 icon: Icon(Icons.group,
                     color: isDark ? Colors.black : Colors.white),
                 label: Text('GENERATE FOR ALL STUDENTS',

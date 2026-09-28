@@ -18,6 +18,7 @@ class SessionInsightsScreen extends StatefulWidget {
 class _SessionInsightsScreenState extends State<SessionInsightsScreen> {
   bool _isLoading = true;
   bool _isReleasing = false;
+  String? _error;
   Map<String, dynamic>? _insights;
   Timer? _pollingTimer;
 
@@ -44,11 +45,16 @@ class _SessionInsightsScreenState extends State<SessionInsightsScreen> {
         setState(() {
           _insights = data;
           _isLoading = false;
+          _error = null;
         });
       }
     } catch (e) {
-      debugPrint("Initial load failed, retrying in 5s...");
-      _startPolling();
+      if (mounted) {
+        setState(() {
+          _error = 'Could not load saved class results.';
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -97,52 +103,70 @@ class _SessionInsightsScreenState extends State<SessionInsightsScreen> {
                               color: Colors.grey.shade600, fontSize: 12)),
                     ],
                   )))
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Center(
-                  child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 800),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildInsightCard(
-                        "PEDAGOGICAL INSIGHTS",
-                        _insights?['analysis']?['insights'] ??
-                            "Analysis unavailable.",
-                        Icons.psychology),
-                    const SizedBox(height: 20),
-                    _buildInsightCard(
-                        "TEACHING RECOMMENDATIONS",
-                        _insights?['analysis']?['recommendations'] ??
-                            "Review flagged questions manually.",
-                        Icons.school),
-                    const SizedBox(height: 40),
-                    const Text("CONTROLLED RELEASE",
-                        style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey,
-                            fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 10),
-                    ElevatedButton(
-                      onPressed: _isReleasing ? null : _releaseResults,
-                      style: ElevatedButton.styleFrom(
-                        minimumSize: const Size(double.infinity, 60),
-                        backgroundColor: Theme.of(context).colorScheme.primary,
-                        foregroundColor:
-                            Theme.of(context).colorScheme.onPrimary,
-                      ),
-                      child: _isReleasing
-                          ? CircularProgressIndicator(
-                              color: Theme.of(context).colorScheme.onPrimary)
-                          : const Text("RELEASE RESULTS TO STUDENTS",
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                  fontSize: 16, fontWeight: FontWeight.bold)),
+          : _error != null || _insights?['status'] == 'no_results'
+              ? Center(
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Text(_error ??
+                      'No saved results are available for analysis yet.'),
+                  const SizedBox(height: 12),
+                  OutlinedButton(
+                      onPressed: () {
+                        setState(() => _isLoading = true);
+                        _loadInsights();
+                      },
+                      child: const Text('Retry')),
+                ]))
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Center(
+                      child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 800),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _buildInsightCard(
+                            "PEDAGOGICAL INSIGHTS",
+                            _insights?['analysis']?['insights'] ??
+                                "Analysis unavailable.",
+                            Icons.psychology),
+                        const SizedBox(height: 20),
+                        _buildInsightCard(
+                            "TEACHING RECOMMENDATIONS",
+                            _insights?['analysis']?['recommendations'] ??
+                                "Review flagged questions manually.",
+                            Icons.school),
+                        const SizedBox(height: 20),
+                        _buildEvidence(),
+                        const SizedBox(height: 40),
+                        const Text("CONTROLLED RELEASE",
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                                fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 10),
+                        ElevatedButton(
+                          onPressed: _isReleasing ? null : _releaseResults,
+                          style: ElevatedButton.styleFrom(
+                            minimumSize: const Size(double.infinity, 60),
+                            backgroundColor:
+                                Theme.of(context).colorScheme.primary,
+                            foregroundColor:
+                                Theme.of(context).colorScheme.onPrimary,
+                          ),
+                          child: _isReleasing
+                              ? CircularProgressIndicator(
+                                  color:
+                                      Theme.of(context).colorScheme.onPrimary)
+                              : const Text("RELEASE RESULTS TO STUDENTS",
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold)),
+                        ),
+                      ],
                     ),
-                  ],
+                  )),
                 ),
-              )),
-            ),
     );
   }
 
@@ -173,6 +197,74 @@ class _SessionInsightsScreenState extends State<SessionInsightsScreen> {
             ),
             const Divider(height: 30),
             Text(content, style: const TextStyle(fontSize: 16, height: 1.5)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEvidence() {
+    final metrics = _insights?['metrics'];
+    if (metrics is! Map) return const SizedBox.shrink();
+    final topics = metrics['topics'] is Map
+        ? Map<String, dynamic>.from(metrics['topics'])
+        : <String, dynamic>{};
+    final questions = metrics['questions'] is List
+        ? List<Map<String, dynamic>>.from((metrics['questions'] as List)
+            .map((item) => Map<String, dynamic>.from(item)))
+        : <Map<String, dynamic>>[];
+    questions.sort((a, b) {
+      final missedA =
+          ((a['total'] as num?) ?? 0) - ((a['correct'] as num?) ?? 0);
+      final missedB =
+          ((b['total'] as num?) ?? 0) - ((b['correct'] as num?) ?? 0);
+      return missedB.compareTo(missedA);
+    });
+    final colorScheme = Theme.of(context).colorScheme;
+    return Card(
+      color: colorScheme.surfaceContainerLow,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('SAVED RESULT EVIDENCE',
+                style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text('Based on ${_insights?['sample_count'] ?? 0} saved sheets · '
+                'Average ${metrics['average_percentage'] ?? 0}%'),
+            if (topics.isNotEmpty) ...[
+              const Divider(height: 24),
+              const Text('Topics',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              ...topics.entries.map((entry) {
+                final counts =
+                    entry.value is Map ? entry.value as Map : const {};
+                return Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                      '${entry.key}: ${counts['correct'] ?? 0}/${counts['total'] ?? 0} correct'),
+                );
+              }),
+            ],
+            if (questions.isNotEmpty) ...[
+              const Divider(height: 24),
+              const Text('Most missed questions',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+              ...questions
+                  .where((q) =>
+                      ((q['total'] as num?) ?? 0) >
+                      ((q['correct'] as num?) ?? 0))
+                  .take(8)
+                  .map((q) => ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(q['question_text']?.toString() ??
+                            'Question ${q['question_id'] ?? ''}'),
+                        subtitle: Text(
+                            '${q['correct'] ?? 0}/${q['total'] ?? 0} correct'
+                            ' · ${q['topic_tag'] ?? 'Unspecified topic'}'),
+                      )),
+            ],
           ],
         ),
       ),

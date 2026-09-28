@@ -46,7 +46,7 @@ class _StudentInsightDetailScreenState
       } else {
         res = await SupabaseService.getMyResult(widget.examId);
       }
-      
+
       if (mounted) {
         setState(() {
           _data = res;
@@ -56,8 +56,7 @@ class _StudentInsightDetailScreenState
         // If grade exists but insight is null, generate it on-the-fly via AI
         final grade = res?['grade'];
         final insight = res?['insight'];
-        if (grade != null &&
-            (insight == null || insight['insight_text'] == null)) {
+        if (grade != null && insight == null) {
           _generateInsightOnTheFly(grade);
         }
       }
@@ -66,7 +65,8 @@ class _StudentInsightDetailScreenState
     }
   }
 
-  Future<void> _generateInsightOnTheFly(Map<String, dynamic> grade) async {
+  Future<void> _generateInsightOnTheFly(Map<String, dynamic> grade,
+      {bool regenerate = false}) async {
     if (_isGeneratingInsight) return;
     setState(() => _isGeneratingInsight = true);
 
@@ -79,16 +79,14 @@ class _StudentInsightDetailScreenState
       final res = await ApiService.getStudentInsight(
         examId: widget.examId,
         sheetId: sheetId,
-        regenerate: true,
+        regenerate: regenerate,
       );
-
-      final insightObj = res['insight'];
 
       if (mounted) {
         setState(() {
           _data = {
             'grade': grade,
-            'insight': insightObj,
+            'insight': res,
           };
           _isGeneratingInsight = false;
         });
@@ -102,11 +100,18 @@ class _StudentInsightDetailScreenState
   @override
   Widget build(BuildContext context) {
     final grade = _data?['grade'];
-    final insightRaw = _data?['insight']?['insight_text'];
+    final savedInsight = _data?['insight'];
+    final insightRaw =
+        savedInsight is Map ? savedInsight['insight_text'] : null;
 
     // Parse structured JSON from AI if possible
     Map<String, dynamic>? insightJson;
-    if (insightRaw != null) {
+    if (savedInsight is Map && savedInsight['insight'] is Map) {
+      insightJson = Map<String, dynamic>.from(savedInsight['insight']);
+    } else if (savedInsight is Map &&
+        savedInsight['performanceSummary'] is String) {
+      insightJson = Map<String, dynamic>.from(savedInsight);
+    } else if (insightRaw is String) {
       try {
         insightJson = jsonDecode(insightRaw);
       } catch (_) {
@@ -137,7 +142,30 @@ class _StudentInsightDetailScreenState
                         const Divider(),
                         const SizedBox(height: 12),
                         if (insightJson != null)
-                          _buildStructuredInsight(insightJson)
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (savedInsight is Map &&
+                                  savedInsight['source'] == 'summary') ...[
+                                const Text(
+                                    'Evidence summary · AI is unavailable.'),
+                                const SizedBox(height: 8),
+                                OutlinedButton.icon(
+                                  onPressed: _isGeneratingInsight ||
+                                          grade == null
+                                      ? null
+                                      : () => _generateInsightOnTheFly(
+                                            Map<String, dynamic>.from(grade),
+                                            regenerate: true,
+                                          ),
+                                  icon: const Icon(Icons.refresh),
+                                  label: const Text('Retry AI feedback'),
+                                ),
+                                const SizedBox(height: 12),
+                              ],
+                              _buildStructuredInsight(insightJson),
+                            ],
+                          )
                         else if (_isGeneratingInsight)
                           const Padding(
                             padding: EdgeInsets.symmetric(vertical: 24),
@@ -154,7 +182,7 @@ class _StudentInsightDetailScreenState
                           )
                         else
                           Text(
-                              insightRaw ??
+                              insightRaw?.toString() ??
                                   "Your AI-powered pedagogical feedback is being generated. Check back soon!",
                               style:
                                   const TextStyle(fontSize: 15, height: 1.5)),
