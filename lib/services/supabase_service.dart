@@ -2,8 +2,11 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:uuid/data.dart';
+import 'package:uuid/uuid.dart';
 import '../models/course.dart';
 import 'api_service.dart';
+import '../utils/choice_label.dart';
 
 /// Service responsible for Supabase Authentication and Database interactions.
 ///
@@ -13,6 +16,37 @@ import 'api_service.dart';
 class SupabaseService {
   static final SupabaseClient _client = Supabase.instance.client;
   static SupabaseClient get client => _client;
+
+  static String _storedQuestionText(dynamic question) {
+    final text = (question['questionText'] ?? question['text'] ?? '').toString();
+    final options = question['options'];
+    if (question['questionType'] == 'MCQ' && options is List && options.length == 4) {
+      return '$text\n${List.generate(4, (i) => '${String.fromCharCode(65 + i)}. ${stripChoiceLabel(options[i], i)}').join('\n')}';
+    }
+    return text;
+  }
+
+  static Map<String, dynamic> _restoredQuestion(Map<String, dynamic> source) {
+    final question = Map<String, dynamic>.from(source);
+    final lines = (question['question_text'] ?? '').toString().split('\n');
+    if (question['question_type'] == 'MCQ' && lines.length >= 5) {
+      final optionLines = lines.sublist(lines.length - 4);
+      final options = <String>[];
+      for (var i = 0; i < 4; i++) {
+        final match = RegExp('^${String.fromCharCode(65 + i)}[.)]\\s*(.+)')
+            .firstMatch(optionLines[i].trim());
+        if (match == null) break;
+        options.add(stripChoiceLabel(match.group(1)!, i));
+      }
+      if (options.length == 4) {
+        question['question_text'] = lines.take(lines.length - 4).join('\n').trim();
+        question['options'] = options;
+      }
+    } else if (question['question_type'] == 'TF') {
+      question['options'] = ['True', 'False'];
+    }
+    return question;
+  }
 
   // --- AUTHENTICATION ---
 
@@ -422,15 +456,19 @@ class SupabaseService {
 
       // 2. Insert Questions into Supabase
       if (questions.isNotEmpty) {
-        final inserts = questions
-            .map((q) => {
+        final baseMillis = DateTime.now().millisecondsSinceEpoch;
+        const uuid = Uuid();
+        final inserts = questions.asMap().entries
+            .map((entry) => {
+                  // Time-ordered IDs preserve the printed question order when
+                  // fetched from Supabase, without a database migration.
+                  'id': uuid.v7(config: V7Options(baseMillis + entry.key, null)),
                   'exam_id': examId,
-                  'question_text':
-                      (q['questionText'] ?? q['text'] ?? '').toString(),
+                  'question_text': _storedQuestionText(entry.value),
                   'correct_answer':
-                      (q['correctAnswer'] ?? q['answer'] ?? 'A').toString(),
-                  'question_type': (q['questionType'] ?? 'MCQ').toString(),
-                  'topic_tag': (q['topicTag'] ?? title).toString(),
+                      (entry.value['correctAnswer'] ?? entry.value['answer'] ?? 'A').toString(),
+                  'question_type': (entry.value['questionType'] ?? 'MCQ').toString(),
+                  'topic_tag': (entry.value['topicTag'] ?? title).toString(),
                 })
             .toList();
 
@@ -446,6 +484,7 @@ class SupabaseService {
         assessmentType: assessmentType,
         questions: questions,
         hasMultipleSets: hasMultipleSets,
+        templateId: templateId,
       );
     }
   }
@@ -500,8 +539,16 @@ class SupabaseService {
     } catch (e) {
       debugPrint("ApiService getExamQuestions fallback ($e)...");
       final response =
-          await _client.from('questions').select().eq('exam_id', examId);
-      return List<Map<String, dynamic>>.from(response);
+          await _client.from('questions').select().eq('exam_id', examId).order('id');
+      final questions = List<Map<String, dynamic>>.from(response);
+      questions.sort((a, b) {
+        final typeOrder = (a['question_type'] == 'MCQ' ? 0 : 1)
+            .compareTo(b['question_type'] == 'MCQ' ? 0 : 1);
+        return typeOrder != 0
+            ? typeOrder
+            : a['id'].toString().compareTo(b['id'].toString());
+      });
+      return questions.map(_restoredQuestion).toList();
     }
   }
 

@@ -123,6 +123,7 @@ class ApiService {
     required String assessmentType,
     required List<dynamic> questions,
     bool hasMultipleSets = false,
+    String? templateId,
   }) async {
     try {
       final response = await _dio.post('/save-draft', data: {
@@ -131,6 +132,7 @@ class ApiService {
         'assessment_type': assessmentType,
         'questions': questions,
         'has_multiple_sets': hasMultipleSets,
+        if (templateId != null) 'template_id': templateId,
       });
       return response.data;
     } catch (e) {

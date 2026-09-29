@@ -10,14 +10,14 @@ MAINTENANCE NOTES:
 """
 
 import asyncio
-import asyncio
 import os
 import json
 import logging
 import uuid
+import time
 import re
 from io import BytesIO
-from fastapi import FastAPI, HTTPException, Body, Depends, UploadFile, File, Form, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Body, Depends, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, Field
@@ -33,22 +33,18 @@ from export_service import ExportService
 # AI Service and instructions
 from ai_service import (
     generate_structured_response,
-    AssessmentResponse,
     ClassAnalysisResponse,
     StudentInsightResponse,
     StudentOverviewResponse,
     HF_MODEL_FAST,
     HF_MODEL_REASONING,
-    client as hf_client,
-    parse_json_safely
+    client as hf_client
 )
+from assessment_generation import AssessmentValidationError, clean_option_label, generate_verified_questions, validate_distribution
 from result_analysis import class_summary, enrich_answers, grade_context, question_counts, student_summary, student_overview_summary, topic_counts
 from ai_instructions import (
-    SYSTEM_ASSESSMENT_DESIGN,
     SYSTEM_CLASS_ANALYSIS,
     SYSTEM_STUDENT_MENTOR,
-    get_assessment_prompt,
-    get_existing_questions_prompt,
     get_class_analysis_prompt,
     get_student_insight_prompt
 )
@@ -111,8 +107,6 @@ async def get_current_user(credentials = Depends(security)):
     except:
         return None
 
-import httpx
-import re
 
 def extract_text_from_file(file: UploadFile, content_bytes: bytes) -> str:
     """Extracts raw text from PDF, DOCX, PPTX, or TXT files."""
@@ -144,77 +138,6 @@ def extract_text_from_file(file: UploadFile, content_bytes: bytes) -> str:
     # Truncate text if it's too massively large (to save tokens)
     return text[:20000]
 
-def parse_plaintext_questions(text: str, default_topic: str) -> list[dict]:
-    """Parses plain text stream into structured question dicts instantly with 0 latency."""
-    blocks = re.split(r'\n(?=\d+\.\s+)', text.strip())
-    questions = []
-    
-    for block in blocks:
-        block = block.strip()
-        if not block:
-            continue
-            
-        lines = [l.strip() for l in block.split('\n') if l.strip()]
-        if not lines:
-            continue
-            
-        q_text = ""
-        options = []
-        correct_answer = "A"
-        
-        for line in lines:
-            clean_line = re.sub(r'^\d+\.\s*', '', line)
-            opt_match = re.match(r'^[A-Da-d][\.\)]\s+(.*)', clean_line)
-            # Answer pattern can be "ANSWER: B" or "ANSWER: T"
-            ans_match = re.search(r'ANSWER:\s*([A-Da-dTtFf])', clean_line, re.IGNORECASE)
-            
-            if opt_match:
-                options.append(opt_match.group(1).strip())
-            elif ans_match:
-                correct_answer = ans_match.group(1).upper()
-            else:
-                if not options and not ans_match:
-                    if q_text:
-                        q_text += " " + clean_line
-                    else:
-                        q_text = clean_line
-
-        if q_text:
-            is_tf = False
-            
-            # Smart TF Detection: If the answer is T/F, or there are no options, or the first two options are True/False
-            if correct_answer in ['T', 'F'] or len(options) == 0:
-                is_tf = True
-            elif len(options) >= 2:
-                opt_a = options[0].strip().lower()
-                opt_b = options[1].strip().lower()
-                if ('true' in opt_a and 'false' in opt_b) or ('false' in opt_a and 'true' in opt_b):
-                    is_tf = True
-
-            if is_tf:
-                # Map T->A (True) and F->B (False)
-                mapped_answer = "A" if correct_answer in ['T', 'A'] else "B"
-                questions.append({
-                    "part": 2,
-                    "questionType": "TF",
-                    "questionText": q_text,
-                    "options": ["True", "False"],
-                    "correctAnswer": mapped_answer,
-                    "topicTag": default_topic
-                })
-            elif len(options) >= 2:
-                # We do NOT append options to questionText anymore to avoid duplicating them in the UI and DOCX
-                questions.append({
-                    "part": 1,
-                    "questionType": "MCQ",
-                    "questionText": q_text,
-                    "options": options,
-                    "correctAnswer": correct_answer if correct_answer in ['A', 'B', 'C', 'D'] else 'A',
-                    "topicTag": default_topic
-                })
-            
-    return questions
-
 def select_template(mcq_count: int, tf_count: int) -> str:
     total = mcq_count + tf_count
     if mcq_count == 15 and tf_count == 15:
@@ -231,45 +154,6 @@ def select_template(mcq_count: int, tf_count: int) -> str:
         return "standard_50_v1"
     # fallback
     return "standard_50_v1"
-
-async def stream_openrouter_raw(
-    prompt: str,
-    system_msg: str,
-    max_tokens: int = 10000,
-    model_override: str | None = None,
-):
-    """Raw httpx streaming generator for OpenRouter to prevent SDK buffering."""
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/checkmate-lms",
-        "X-Title": "CheckMate LMS"
-    }
-    payload = {
-        "model": model_override or HF_MODEL_FAST,
-        "messages": [
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.3,
-        "max_tokens": max_tokens,
-        "stream": True
-    }
-    
-    async with httpx.AsyncClient(timeout=180.0) as client:
-        async with client.stream("POST", "https://openrouter.ai/api/v1/chat/completions", json=payload, headers=headers) as response:
-            async for line in response.aiter_lines():
-                if line.startswith("data: "):
-                    data_str = line[6:].strip()
-                    if data_str == "[DONE]":
-                        break
-                    try:
-                        data_json = json.loads(data_str)
-                        delta = data_json.get("choices", [{}])[0].get("delta", {}).get("content", "")
-                        if delta:
-                            yield delta
-                    except Exception:
-                        pass
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 
@@ -294,8 +178,8 @@ class ExamRequest(BaseModel):
     class_id: str
     assessment_type: str = "Quiz"
     include_mcq: bool = True
-    include_tf: bool = True
-    mcq_count: int = 5
+    include_tf: bool = False
+    mcq_count: int | None = None
     tf_count: int = 0
 
 class SaveDraftRequest(BaseModel):
@@ -327,17 +211,6 @@ class StudentInsightRequest(BaseModel):
 
 # --- AI HELPER FUNCTIONS ---
 
-async def stream_ai_logic(prompt: str, system_msg: str):
-    """Debug-only streaming path using raw httpx to prevent SDK buffering."""
-    yield "LOG: Initializing Pipeline...\n\n"
-    try:
-        async for chunk in stream_openrouter_raw(prompt, system_msg):
-            yield chunk
-        yield "\n\nLOG: Complete.\n"
-    except Exception as e:
-        logger.error(f"Streaming Error: {e}")
-        yield f"\nERROR: Connection Lost ({str(e)})\n"
-
 # --- ENDPOINTS ---
 
 @app.get("/")
@@ -351,252 +224,146 @@ async def status():
         "database": "connected" if supabase else "disconnected"
     }
 
+def _assessment_event(event_type: str, **payload) -> str:
+    return f"data: {json.dumps({'type': event_type, **payload}, ensure_ascii=False)}\n\n"
+
+
+def _verified_question_text(question: dict, number: int) -> str:
+    lines = [f"\n{number}. {question['questionText']}"]
+    for index, option in enumerate(question["options"]):
+        lines.append(f"{chr(65 + index)}) {option}")
+    return "\n".join(lines) + "\n"
+
+
+def _ordered_question_id(index: int, base_millis: int) -> str:
+    """UUIDv7 with an increasing millisecond prefix to retain printed order."""
+    value = bytearray(uuid.uuid4().bytes)
+    value[:6] = (base_millis + index).to_bytes(6, "big")
+    value[6] = (value[6] & 0x0F) | 0x70
+    value[8] = (value[8] & 0x3F) | 0x80
+    return str(uuid.UUID(bytes=bytes(value)))
+
+
+def _stored_question_text(question: dict) -> str:
+    text = str(question.get("questionText") or question.get("question_text") or question.get("text") or "")
+    options = question.get("options") or []
+    if (question.get("questionType") or question.get("question_type")) == "MCQ" and len(options) == 4:
+        return text + "\n" + "\n".join(
+            f"{chr(65 + index)}. {clean_option_label(option, index)}"
+            for index, option in enumerate(options))
+    return text
+
+
+def _restored_question(row: dict) -> dict:
+    question = dict(row)
+    lines = str(question.get("question_text") or "").splitlines()
+    if question.get("question_type") == "MCQ" and len(lines) >= 5:
+        matches = [re.fullmatch(rf"{chr(65 + index)}[.)]\s*(.+)", line.strip())
+                   for index, line in enumerate(lines[-4:])]
+        if all(matches):
+            question["question_text"] = "\n".join(lines[:-4]).strip()
+            question["options"] = [clean_option_label(match.group(1), index)
+                                   for index, match in enumerate(matches)]
+    elif question.get("question_type") == "TF":
+        question["options"] = ["True", "False"]
+    return question
+
+
 @app.post("/generate-exam")
 async def generate_exam(request: ExamRequest):
-    """BR-02: AI-Assisted Assessment Generation."""
-    logger.info(f"Generating Exam: {request.topic} ({request.question_count} questions)")
-    prompt = get_assessment_prompt(request.material or request.topic, request.question_count)
+    """Return a fully checked preview; the instructor explicitly saves the draft."""
     try:
-        exam_id = "temp-dev-id"
-        template_id = select_template(request.mcq_count, request.tf_count)
-        
-        try:
-            uuid.UUID(str(request.class_id))
-            if supabase:
-                try:
-                    res = supabase.table("exams").insert({
-                        "class_id": request.class_id,
-                        "title": f"[{request.assessment_type}] {request.topic}",
-                        "is_approved": False,
-                        "template_id": template_id,
-                        "total_questions": request.question_count,
-                        "mcq_count": request.mcq_count,
-                        "tf_count": request.tf_count,
-                    }).execute()
-                    if res.data: exam_id = res.data[0]['id']
-                except Exception as db_err:
-                    logger.warning(f"Failed to create exam record: {db_err}")
-        except (ValueError, TypeError, AttributeError):
-            logger.warning(f"Skipping DB insert for invalid class_id: {request.class_id!r}")
+        mcq_count = request.mcq_count if request.mcq_count is not None else request.question_count - request.tf_count
+        validate_distribution(request.question_count, mcq_count,
+                              request.tf_count, request.include_mcq, request.include_tf)
+        material = request.material or request.topic
+        questions = await generate_verified_questions(material, mcq_count,
+                                                      request.tf_count)
+        return {"exam_id": "temp-dev-id", "questions": questions}
+    except AssessmentValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Assessment generation failed")
+        raise HTTPException(status_code=502, detail=f"AI processing failed: {exc}") from exc
 
-        # AI Execution
-        structured_response = await generate_structured_response(
-            system_prompt=SYSTEM_ASSESSMENT_DESIGN,
-            user_prompt=prompt,
-            schema_class=AssessmentResponse,
-            model_override=HF_MODEL_FAST
-        )
-        
-        final_list = [q.model_dump() for q in structured_response.questions[:request.question_count]]
-
-        # Persist questions
-        if supabase and exam_id != "temp-dev-id":
-            try:
-                inserts = [{
-                    "exam_id": exam_id,
-                    "question_text": str(q.get('questionText', q.get('text', ''))),
-                    "correct_answer": str(q.get('correctAnswer', 'A')),
-                    "question_type": str(q.get('questionType', 'MCQ')),
-                    "topic_tag": str(q.get('topicTag', request.topic))
-                } for q in final_list]
-                supabase.table("questions").insert(inserts).execute()
-            except Exception as q_err:
-                logger.warning(f"Failed to persist questions: {q_err}")
-
-        return {"exam_id": exam_id, "questions": final_list}
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        logger.error(f"Generate exam error: {e}")
-        raise HTTPException(status_code=500, detail=f"AI Processing Failed: {str(e)}")
 
 @app.post("/generate-exam-stream")
 async def generate_exam_stream(
-    topic: str = Form(...),
+    topic: str = Form("Uploaded material"),
     class_id: str = Form(...),
     question_count: int = Form(5),
-    assessment_type: str = Form('Quiz'),
+    assessment_type: str = Form("Quiz"),
     include_mcq: bool = Form(True),
-    include_tf: bool = Form(True),
+    include_tf: bool = Form(False),
     mcq_count: int = Form(5),
     tf_count: int = Form(0),
     source_mode: str = Form("topic"),
     has_multiple_sets: bool = Form(False),
     file: UploadFile | None = File(None),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
-    """Plain-text streaming with optional File Upload."""
-    if question_count < 1 or question_count > 50:
-        raise HTTPException(status_code=422, detail="question_count must be between 1 and 50.")
-    
-    task_key = f"{class_id}_{topic}_{assessment_type}_{source_mode}"
+    """Stream progress while generating and auditing exact, structured questions."""
+    try:
+        validate_distribution(question_count, mcq_count, tf_count,
+                              include_mcq, include_tf)
+    except AssessmentValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    task_key = (class_id, topic, assessment_type, source_mode, mcq_count, tf_count)
     if task_key in active_generations:
         async def duplicate_generator():
-            yield f"data: {json.dumps({'type': 'error', 'content': 'The AI is already generating this exam in the background. Please check your Drafts in a minute.'})}\n\n"
+            yield _assessment_event("error", content="This assessment is already generating. Wait for it to finish before retrying.")
         return StreamingResponse(duplicate_generator(), media_type="text/event-stream")
 
-    # Read file synchronously to keep bytes in memory (prevents disconnect closure issues)
     filename = file.filename if file else None
     content_bytes = await file.read() if file else None
     if content_bytes and len(content_bytes) > 10 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Uploaded files must be 10 MB or smaller.")
 
     queue = asyncio.Queue()
+    active_generations.add(task_key)
+
+    async def report(message):
+        # Keep operational details out of the student-facing live preview.
+        if message.startswith("Generating"):
+            phase = "Writing the next questions"
+        elif message.startswith("Checking"):
+            phase = "Preparing more questions"
+        elif message.startswith("Accepted"):
+            phase = "Preparing more questions"
+        else:
+            phase = "Refining the assessment"
+        await queue.put(_assessment_event("progress", content=phase))
+
+    async def show_question(question, number):
+        await queue.put(_assessment_event("question", number=number, question=question))
+        # Older app builds only understand token events. They still receive each
+        # verified question in real time, never an unchecked model proposal.
+        await queue.put(_assessment_event("token", content=_verified_question_text(question, number)))
+
+    async def show_draft(text, kind):
+        await queue.put(_assessment_event("draft", questionType=kind, text=text))
 
     async def generation_worker():
-        active_generations.add(task_key)
         try:
-            material_text = topic
+            material = topic
             if filename:
-                opening_message = f"LOG: Uploading {filename}...\n"
-                await queue.put(f"data: {json.dumps({'type': 'token', 'content': opening_message})}\n\n")
-                
-                await queue.put(f"data: {json.dumps({'type': 'token', 'content': 'LOG: Decoding file...' + chr(10)})}\n\n")
-                class MockUploadFile:
-                    def __init__(self, name):
-                        self.filename = name
-                    def read(self):
-                        pass
-                extracted = extract_text_from_file(MockUploadFile(filename), content_bytes) # type: ignore
-                if extracted.strip():
-                    material_text = f"Context from file '{filename}':\n{extracted}\n\nAdditional Topic info: {topic}"
-                await queue.put(f"data: {json.dumps({'type': 'token', 'content': 'LOG: Formulating...' + chr(10)})}\n\n")
-            else:
-                await queue.put(f"data: {json.dumps({'type': 'token', 'content': 'LOG: Preparing topic for question generation...' + chr(10)})}\n\n")
-
-            logger.info(f"Streaming Exam (Plain Text): {topic} ({question_count} questions)")
-            
-            prompt = (
-                get_existing_questions_prompt(material_text, question_count)
-                if source_mode == "existing_questions"
-                else get_assessment_prompt(material_text, question_count, include_mcq, include_tf, mcq_count, tf_count, source_mode)
-            )
-
-            try:
-                template_id = select_template(mcq_count, tf_count)
-            except Exception:
-                template_id = "standard_50_questions"
-
-            exam_id = "temp-dev-id"
-            if supabase:
-                try:
-                    res = supabase.table("exams").insert({
-                        "class_id": class_id,
-                        "title": f"[{assessment_type}] {topic}",
-                        "is_approved": False,
-                        "template_id": template_id,
-                        "has_multiple_sets": has_multiple_sets,
-                        "total_questions": question_count,
-                        "mcq_count": mcq_count,
-                        "tf_count": tf_count,
-                    }).execute()
-                    if res.data: exam_id = res.data[0]['id']
-                except Exception as db_err:
-                    logger.warning(f"Failed to create exam record: {db_err}")
-
-            payload_init = json.dumps({'type': 'token', 'content': 'LOG: Generating...\n\n'})
-            await queue.put(f"data: {payload_init}\n\n")
-            
-            try:
-                structure_rule = ""
-                if source_mode == "existing_questions":
-                    structure_rule = "Preserve the supplied questions and answer keys. Do not create unrelated questions.\n\n"
-                elif mcq_count > 0 and tf_count > 0:
-                    structure_rule = (
-                        "CRITICAL STRUCTURE RULE: You MUST divide your output into two separate parts.\n"
-                        f"First, generate EXACTLY {mcq_count} Multiple Choice questions.\n"
-                        f"Then, generate EXACTLY {tf_count} True/False questions.\n"
-                        "Do NOT alternate them. Finish all MCQs before starting the True/False questions. Continue numbering consecutively.\n\n"
-                    )
-                elif mcq_count > 0:
-                    structure_rule = f"Generate EXACTLY {mcq_count} Multiple Choice questions.\n\n"
-                elif tf_count > 0:
-                    structure_rule = f"Generate EXACTLY {tf_count} True/False questions.\n\n"
-
-                system_msg = (
-                    "You are an expert AI assessment generator.\n"
-                    f"{structure_rule}"
-                    "You must format EVERY Multiple Choice question strictly like this in clean plain text:\n"
-                    "1. [Question text here?]\n"
-                    "A. [First option]\n"
-                    "B. [Second option]\n"
-                    "C. [Third option]\n"
-                    "D. [Fourth option]\n"
-                    "ANSWER: [A, B, C, or D]\n\n"
-                    "For True/False questions, format them strictly like this (do NOT write options A and B):\n"
-                    "1. [True or False statement here.]\n"
-                    "ANSWER: [T or F]\n\n"
-                    "CRITICAL RULE: DO NOT write intro text like 'Here are the questions'. Start immediately with '1.'.\n"
-                    "CRITICAL RULE: Your answer key MUST be 100% accurate and factually correct. Verify all logic, math, or assembly concepts step-by-step before assigning the correct letter.\n"
-                    "CRITICAL RULE: Ensure ALL questions are entirely UNIQUE. DO NOT duplicate or repeat the same question twice.\n"
-                    "You MUST randomize the correct answers across the exam. Mix them up randomly!"
-                )
-
-                full_text = ""
-                async for content in stream_openrouter_raw(
-                    prompt,
-                    system_msg,
-                    max_tokens=10000,
-                    model_override=(
-                        HF_MODEL_REASONING
-                        if filename is not None or source_mode == "existing_questions"
-                        else HF_MODEL_FAST
-                    ),
-                ):
-                    full_text += content
-                    payload_token = json.dumps({'type': 'token', 'content': content})
-                    await queue.put(f"data: {payload_token}\n\n")
-                
-                payload_parsing = json.dumps({'type': 'token', 'content': '\n\nLOG: Instantly Parsing & Saving to Database...\n'})
-                await queue.put(f"data: {payload_parsing}\n\n")
-                
-                parsed_questions = parse_plaintext_questions(full_text, topic)
-                
-                if not parsed_questions:
-                    parsed_questions = [{
-                        "part": 1,
-                        "questionType": "MCQ",
-                        "questionText": f"General question regarding {topic}?",
-                        "options": ["Option A", "Option B", "Option C", "Option D"],
-                        "correctAnswer": "A",
-                        "topicTag": topic
-                    }]
-
-                final_list = parsed_questions[:question_count]
-
-                if supabase and exam_id != "temp-dev-id":
-                    try:
-                        inserts = []
-                        for q in final_list:
-                            q_text = str(q.get('questionText', ''))
-                            options = q.get('options', [])
-                            
-                            if q.get('questionType') == 'MCQ' and options:
-                                formatted_options = "\n".join([f"{chr(65+i)}. {opt}" for i, opt in enumerate(options)])
-                                q_text = f"{q_text}\n{formatted_options}"
-                                
-                            inserts.append({
-                                "exam_id": exam_id,
-                                "question_text": q_text,
-                                "correct_answer": str(q.get('correctAnswer', 'A')),
-                                "question_type": str(q.get('questionType', 'MCQ')),
-                                "topic_tag": str(q.get('topicTag', topic))
-                            })
-                        supabase.table("questions").insert(inserts).execute()
-                    except Exception as q_err:
-                        logger.warning(f"Failed to persist questions: {q_err}")
-
-                payload_complete = json.dumps({'type': 'complete', 'exam_id': exam_id, 'questions': final_list})
-                await queue.put(f"data: {payload_complete}\n\n")
-
-            except Exception as e:
-                logger.error(f"Streaming Error: {e}")
-                payload_exception = json.dumps({'type': 'error', 'content': str(e)})
-                await queue.put(f"data: {payload_exception}\n\n")
-
-        except Exception as e:
-            logger.error(f"Generation worker error: {e}")
-            await queue.put(f"data: {json.dumps({'type': 'error', 'content': str(e)})}\n\n")
+                await report(f"Reading {filename}...")
+                class FileName:
+                    def __init__(self, value):
+                        self.filename = value
+                extracted = extract_text_from_file(FileName(filename), content_bytes)
+                if not extracted.strip():
+                    raise AssessmentValidationError("No readable text was found in the uploaded file.")
+                material = f"Source file: {filename}\n{extracted}\nAdditional topic: {topic}"
+            await queue.put(_assessment_event("token", content="Preparing verified questions...\n"))
+            await report("Preparing structured assessment...")
+            questions = await generate_verified_questions(
+                material, mcq_count, tf_count, source_mode, report, show_question,
+                show_draft)
+            await queue.put(_assessment_event("complete", exam_id="temp-dev-id", questions=questions))
+        except Exception as exc:
+            logger.exception("Assessment generation failed")
+            await queue.put(_assessment_event("error", content=str(exc)))
         finally:
             active_generations.discard(task_key)
             await queue.put(None)
@@ -606,16 +373,18 @@ async def generate_exam_stream(
     task.add_done_callback(background_tasks_refs.discard)
 
     async def event_generator():
-        try:
-            while True:
-                item = await queue.get()
-                if item is None:
-                    break
-                yield item
-        except Exception:
-            logger.info(f"Client disconnected for {task_key}. Background generation continues.")
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=15)
+            except asyncio.TimeoutError:
+                yield ": keep-alive\n\n"
+                continue
+            if item is None:
+                break
+            yield item
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
 
 @app.post("/save-draft")
 async def save_draft(request: SaveDraftRequest):
@@ -647,13 +416,15 @@ async def save_draft(request: SaveDraftRequest):
         
         # 2. Insert Questions into Supabase
         if request.questions:
+            base_millis = time.time_ns() // 1_000_000
             inserts = [{
+                "id": _ordered_question_id(index, base_millis),
                 "exam_id": exam_id,
-                "question_text": str(q.get('questionText', q.get('text', ''))),
+                "question_text": _stored_question_text(q),
                 "correct_answer": str(q.get('correctAnswer', 'A')),
                 "question_type": str(q.get('questionType', 'MCQ')),
                 "topic_tag": str(q.get('topicTag', request.title))
-            } for q in request.questions]
+            } for index, q in enumerate(request.questions)]
             supabase.table("questions").insert(inserts).execute()
             
         return {"status": "success", "exam_id": exam_id}
@@ -670,7 +441,8 @@ async def get_exam_questions(exam_id: str, user=Depends(get_current_user)):
     try:
         # Order by question sequence/id to ensure correct order
         res = supabase.table("questions").select("*").eq("exam_id", exam_id).order("id").execute()
-        return res.data or []
+        ordered = sorted(res.data or [], key=lambda q: (q.get("question_type") != "MCQ", q["id"]))
+        return [_restored_question(question) for question in ordered]
     except Exception as e:
         logger.error(f"Get exam questions error: {e}")
         raise HTTPException(status_code=500, detail=f"Database query error: {str(e)}")

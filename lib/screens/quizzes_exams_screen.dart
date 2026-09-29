@@ -11,6 +11,7 @@ import '../services/data_cache_service.dart';
 import '../models/omr/bubble_sheet_template.dart';
 import '../models/omr/template_registry.dart';
 import '../utils/ui_utils.dart';
+import '../utils/choice_label.dart';
 import 'ai_questionnaire_screen.dart';
 import 'student_insight_detail_screen.dart';
 
@@ -197,8 +198,9 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
 
     final optionControllers = isTF
         ? <TextEditingController>[]
-        : options
-            .map((opt) => TextEditingController(text: opt.toString()))
+        : options.asMap().entries
+            .map((entry) => TextEditingController(
+                text: stripChoiceLabel(entry.value, entry.key)))
             .toList();
 
     String currentAnswer =
@@ -466,7 +468,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                                         ] else ...[
                                           ...List.generate(options.length, (i) {
                                             return Text(
-                                                "${String.fromCharCode(65 + i)}. ${options[i]}",
+                                                "${String.fromCharCode(65 + i)}. ${stripChoiceLabel(options[i], i)}",
                                                 style: TextStyle(
                                                     color: Theme.of(context)
                                                         .colorScheme

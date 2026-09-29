@@ -7,6 +7,7 @@ import '../services/api_service.dart';
 import '../services/supabase_service.dart';
 import '../services/exam_set_service.dart';
 import '../utils/ui_utils.dart';
+import '../utils/choice_label.dart';
 import '../models/omr/bubble_sheet_template.dart';
 import '../models/omr/template_registry.dart';
 
@@ -27,7 +28,7 @@ class AIQuestionnaireScreen extends StatefulWidget {
 class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
   final TextEditingController _inputController =
       TextEditingController(text: '');
-  int _currentStep = 0; // 0: Input, 1: Terminal, 2: Review
+  int _currentStep = 0; // 0: Input, 1: Live questions, 2: Review
   String _assessmentType = 'Quiz'; // Can be 'Quiz' or 'Exam'
 
   late int _selectedTotal;
@@ -54,8 +55,12 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
         orElse: () => _templatesByTotal[_selectedTotal]!.first);
   }
 
-  // Terminal Logic
-  String _streamedText = "";
+  // Only verified questions are shown while generation is in progress.
+  String _generationStatus = 'Preparing your assessment...';
+  String? _generationError;
+  String _draftQuestionText = '';
+  String _draftQuestionType = 'MCQ';
+  final List<Map<String, dynamic>> _liveQuestions = [];
   final ScrollController _terminalScrollController = ScrollController();
   StreamSubscription? _streamSubscription;
 
@@ -124,13 +129,18 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
 
     // Hide keyboard safely
     FocusScope.of(context).unfocus();
+    await _streamSubscription?.cancel();
     await Future.delayed(const Duration(milliseconds: 300));
 
     if (!mounted) return;
 
     setState(() {
       _currentStep = 1;
-      _streamedText = "LOG: Initializing Pipeline...\n\n";
+      _generationStatus = 'Preparing your assessment...';
+      _generationError = null;
+      _draftQuestionText = '';
+      _liveQuestions.clear();
+      _finalQuestions = [];
       _isGenerationFinished = false;
     });
 
@@ -179,45 +189,91 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
       if (!mounted) return;
 
       final type = event['type'];
-      if (type == 'token') {
-        setState(() => _streamedText += (event['content'] ?? ''));
-
-        // Auto-scroll to bottom of terminal
-        Timer(const Duration(milliseconds: 100), () {
+      if (type == 'draft') {
+        final draftText = (event['text'] ?? '').toString();
+        if (draftText.isNotEmpty) {
+          setState(() {
+            _draftQuestionText = draftText;
+            _draftQuestionType = (event['questionType'] ?? 'MCQ').toString();
+            _generationStatus = 'Writing the next question...';
+          });
+        }
+      } else if (type == 'question') {
+        final question = event['question'];
+        final number = event['number'];
+        if (question is Map && number == _liveQuestions.length + 1) {
+          setState(() {
+            _liveQuestions.add(Map<String, dynamic>.from(question));
+            if (_draftQuestionText.trim() ==
+                (question['questionText'] ?? '').toString().trim()) {
+              _draftQuestionText = '';
+            }
+            _generationStatus = 'Building the remaining questions...';
+          });
+        }
+        Timer(const Duration(milliseconds: 120), () {
           if (_terminalScrollController.hasClients) {
             _terminalScrollController.animateTo(
               _terminalScrollController.position.maxScrollExtent,
-              duration: const Duration(milliseconds: 200),
+              duration: const Duration(milliseconds: 300),
               curve: Curves.easeOut,
             );
           }
         });
-      } else if (type == 'complete') {
+      } else if (type == 'progress') {
         setState(() {
-          var questionsJson = event['questions'];
-          if (questionsJson is List) {
-            _finalQuestions = questionsJson;
-          } else if (questionsJson is Map) {
-            _finalQuestions = [questionsJson];
+          final progress = (event['content'] ?? '').toString();
+          _generationStatus = progress.startsWith('Checking')
+              ? 'Preparing more questions'
+              : progress;
+          if (_generationStatus == 'Writing the next questions' ||
+              _generationStatus == 'Preparing more questions') {
+            _draftQuestionText = '';
           }
+        });
+      } else if (type == 'token') {
+        // Older app builds display these as text. This screen uses verified
+        // question events and only needs the initial preparation status.
+        if (_liveQuestions.isEmpty &&
+            (event['content'] ?? '').toString().startsWith('Preparing')) {
+          setState(() => _generationStatus = 'Writing questions...');
+        }
+      } else if (type == 'complete') {
+        final received = event['questions'];
+        if (received is! List ||
+            received.length != _selectedTotal ||
+            received.where((q) => q is Map && q['questionType'] == 'MCQ').length !=
+                _selectedTemplate.mcqCount ||
+            received.where((q) => q is Map && q['questionType'] == 'TF').length !=
+                _selectedTemplate.tfCount) {
+          setState(() => _generationError =
+              'Generated question counts do not match the selected answer sheet.');
+          CheckMateUi.showTopPrompt(context, 'Question types do not match the selected answer sheet.');
+          return;
+        }
+        final ordered = <dynamic>[
+          ...received.where((q) => q['questionType'] == 'MCQ'),
+          ...received.where((q) => q['questionType'] == 'TF'),
+        ];
+        setState(() {
+          _finalQuestions = ordered;
           _isGenerationFinished = true;
-          _streamedText +=
-              "\n\n[SYSTEM] Assessment created and saved successfully! Transitioning...";
+          _draftQuestionText = '';
+          _generationStatus = 'All questions verified. Opening review...';
         });
 
         // Smooth transition to Review Step
-        Future.delayed(const Duration(milliseconds: 1500), () {
+        Future.delayed(const Duration(milliseconds: 700), () {
           if (mounted) setState(() => _currentStep = 2);
         });
       } else if (type == 'error') {
-        setState(
-            () => _streamedText += "\n[CRITICAL] Error: ${event['content']}");
+        setState(() => _generationError = event['content'].toString());
         CheckMateUi.showTopPrompt(
             context, 'Generation Failed: ${event['content']}');
       }
     }, onError: (e) {
       if (mounted) {
-        setState(() => _streamedText += "\n[CRITICAL] Stream Error: $e");
+        setState(() => _generationError = e.toString());
       }
     });
   }
@@ -478,55 +534,137 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
   }
 
   Widget _buildTerminal() {
-    return Container(
+    final scheme = Theme.of(context).colorScheme;
+    final verified = _liveQuestions.length;
+    return SafeArea(
       key: const ValueKey(1),
-      color: Colors.black,
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 900),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Row(
-                children: [
-                  Icon(Icons.terminal, color: Colors.greenAccent, size: 20),
-                  SizedBox(width: 10),
-                  Text("LIVE AI ENGINE LOGS",
-                      style: TextStyle(
-                          color: Colors.greenAccent,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
-                          letterSpacing: 1.2)),
+          constraints: const BoxConstraints(maxWidth: 820),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Building your assessment',
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                        fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                Text(_generationStatus,
+                    style: TextStyle(color: scheme.onSurfaceVariant)),
+                const SizedBox(height: 18),
+                LinearProgressIndicator(
+                  value: _isGenerationFinished ? 1 : verified / _selectedTotal,
+                  minHeight: 7,
+                  borderRadius: BorderRadius.circular(8),
+                  backgroundColor: scheme.surfaceContainerHighest,
+                  color: scheme.primary,
+                ),
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 4,
+                  children: [
+                    Text('$verified of $_selectedTotal questions ready',
+                        style: const TextStyle(fontWeight: FontWeight.bold)),
+                    Text(
+                      '${_selectedTemplate.mcqCount} MCQ${_selectedTemplate.tfCount > 0 ? '  ·  ${_selectedTemplate.tfCount} True/False' : ''}',
+                      style: TextStyle(color: scheme.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                if (_generationError != null) ...[
+                  Text(_generationError!,
+                      style: TextStyle(color: scheme.error)),
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    onPressed: _startGeneration,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Try again'),
+                  ),
                 ],
-              ),
-              const Divider(color: Colors.greenAccent, height: 20),
-              Expanded(
-                child: SingleChildScrollView(
-                  controller: _terminalScrollController,
-                  child: Text(
-                    _streamedText,
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontFamily: 'monospace',
-                      fontSize: 13,
-                      height: 1.5,
+                if (_draftQuestionText.isNotEmpty) ...[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: scheme.primaryContainer.withValues(alpha: 0.45),
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: scheme.primary.withValues(alpha: 0.35)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.edit_note, color: scheme.primary, size: 19),
+                            const SizedBox(width: 8),
+                            Text(
+                              'WRITING $_draftQuestionType DRAFT',
+                              style: TextStyle(
+                                color: scheme.primary,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 0.8,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _draftQuestionText,
+                          maxLines: 4,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.bodyLarge,
+                        ),
+                      ],
                     ),
                   ),
+                  const SizedBox(height: 14),
+                ],
+                Expanded(
+                  child: verified == 0
+                      ? Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.auto_awesome,
+                                  size: 42, color: scheme.primary),
+                              const SizedBox(height: 12),
+                              Text('Questions will appear here',
+                                  style: Theme.of(context).textTheme.titleMedium),
+                            ],
+                          ),
+                        )
+                      : ListView.builder(
+                          controller: _terminalScrollController,
+                          itemCount: verified,
+                          itemBuilder: (context, index) {
+                            final question = _liveQuestions[index];
+                            final type = question['questionType'];
+                            final startsPart = index == 0 ||
+                                _liveQuestions[index - 1]['questionType'] != type;
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (startsPart)
+                                  _PartHeader(
+                                    title: type == 'TF'
+                                        ? 'PART 2: TRUE OR FALSE'
+                                        : 'PART 1: MULTIPLE CHOICE',
+                                  ),
+                                _QuestionCard(
+                                    data: question,
+                                    index: index + 1,
+                                    showAnswer: false),
+                              ],
+                            );
+                          },
+                        ),
                 ),
-              ),
-              const SizedBox(height: 10),
-              if (!_isGenerationFinished)
-                const LinearProgressIndicator(
-                    backgroundColor: Colors.white10, color: Colors.greenAccent)
-              else
-                const Text("COMPLETED",
-                    style: TextStyle(
-                        color: Colors.greenAccent,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 10)),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -610,20 +748,20 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
           children: [
             if (part1.isNotEmpty) ...[
               const _PartHeader(title: "PART 1: MULTIPLE CHOICE"),
-              ...part1.map((q) => _QuestionCard(
-                  data: q, index: _finalQuestions.indexOf(q) + 1)),
+              ...part1.asMap().entries.map((entry) => _QuestionCard(
+                  data: entry.value, index: entry.key + 1)),
             ],
             if (part2.isNotEmpty) ...[
               const SizedBox(height: 20),
               const _PartHeader(title: "PART 2: TRUE OR FALSE"),
-              ...part2.map((q) => _QuestionCard(
-                  data: q, index: _finalQuestions.indexOf(q) + 1)),
+              ...part2.asMap().entries.map((entry) => _QuestionCard(
+                  data: entry.value, index: part1.length + entry.key + 1)),
             ],
             if (others.isNotEmpty) ...[
               if (part1.isNotEmpty || part2.isNotEmpty)
                 const _PartHeader(title: "OTHER QUESTIONS"),
-              ...others.map((q) => _QuestionCard(
-                  data: q, index: _finalQuestions.indexOf(q) + 1)),
+              ...others.asMap().entries.map((entry) => _QuestionCard(
+                  data: entry.value, index: part1.length + part2.length + entry.key + 1)),
             ],
             const SizedBox(height: 20),
             OutlinedButton.icon(
@@ -686,7 +824,12 @@ class _PartHeader extends StatelessWidget {
 class _QuestionCard extends StatelessWidget {
   final dynamic data;
   final int index;
-  const _QuestionCard({required this.data, required this.index});
+  final bool showAnswer;
+  const _QuestionCard({
+    required this.data,
+    required this.index,
+    this.showAnswer = true,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -739,20 +882,24 @@ class _QuestionCard extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(
                             horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
-                          color: isCorrect
+                          color: showAnswer && isCorrect
                               ? Colors.green.withValues(alpha: 0.1)
                               : Colors.transparent,
                           borderRadius: BorderRadius.circular(4),
-                          border: isCorrect
+                          border: showAnswer && isCorrect
                               ? Border.all(
                                   color: Colors.green.withValues(alpha: 0.5))
                               : null,
                         ),
-                        child: Text("$letter) ${options[i]}",
+                        child: Text("$letter) ${stripChoiceLabel(options[i], i)}",
                             style: TextStyle(
                               fontSize: 13,
-                              color: isCorrect ? Colors.green.shade700 : null,
-                              fontWeight: isCorrect ? FontWeight.bold : null,
+                              color: showAnswer && isCorrect
+                                  ? Colors.green.shade700
+                                  : null,
+                              fontWeight: showAnswer && isCorrect
+                                  ? FontWeight.bold
+                                  : null,
                             )),
                       )),
                     ],
