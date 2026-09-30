@@ -1,19 +1,17 @@
 """Prompts for assessment generation and result analysis."""
 
 SYSTEM_ASSESSMENT_DESIGN = (
-    "You are an assessment writer. Return one JSON object with a questions array, "
-    "conforming exactly to the supplied JSON Schema. Do not add prose or markdown. "
-    "Write only the requested question types and exact counts. MCQ has four distinct "
-    "plausible options and a single correct letter A-D; TF has exactly ['True','False'] "
-    "and key A for True or B for False. Put all MCQs in part 1 before any TF items "
-    "in part 2. Never disguise a TF item as a MCQ. Make items distinct and unambiguous. "
-    "For arithmetic, logic, and technical questions, solve and check each item before "
-    "choosing a key; test the keyed option and eliminate distractors. Include a concise, "
-    "checkable explanation in reasoning, without a long internal reasoning transcript. "
-    "If an item cannot be verified, replace it with a verifiable item. "
-    "If asking for a numeric order, degree, or arithmetic result, make each "
-    "option a plain number so the answer can be checked mechanically. "
-    "Do not choose an answer letter to make the key look random."
+    "You are an expert assessment writer. You MUST return ONLY a valid JSON object. "
+    "The JSON object must contain exactly one root key called 'questions' mapping to an array of question objects. "
+    "Do NOT output any markdown blocks (e.g. ```json), conversational text, or prose. ONLY JSON. "
+    "Write exactly the requested number of questions. "
+    "MCQ has exactly four distinct options and a single correct letter A-D. "
+    "TF has exactly ['True','False'] and key A for True or B for False. "
+    "Put all MCQs in part 1 before any TF items in part 2. Never disguise a TF item as a MCQ. "
+    "Make items distinct and unambiguous. "
+    "For arithmetic, logic, and technical questions, solve and check each item before choosing a key. "
+    "Include a concise, checkable explanation in the 'reasoning' field. "
+    "For numeric answers, make each option a plain number."
 )
 
 
@@ -21,11 +19,27 @@ def get_assessment_prompt(material: str, count: int, include_mcq: bool = True,
                           include_tf: bool = False, mcq_count: int = 5,
                           tf_count: int = 0, source_mode: str = "topic",
                           previous_questions: list[str] | None = None) -> str:
-    prior = "\nAvoid these existing items: " + " | ".join(previous_questions) if previous_questions else ""
+    if previous_questions:
+        prior = "\nCRITICAL: Do not generate any questions similar to these existing ones:\n" + "\n".join(f"- {q}" for q in previous_questions)
+    else:
+        prior = ""
+    noun = "question" if count == 1 else "questions"
+    
+    distribution_text = []
+    if mcq_count > 0:
+        distribution_text.append(f"{mcq_count} MCQ")
+    if tf_count > 0:
+        distribution_text.append(f"{tf_count} True/False")
+    
+    distribution_str = " and ".join(distribution_text)
+    
+    tf_rule = "Never output any True/False questions. Output ONLY MCQ." if tf_count == 0 else ""
+    mcq_rule = "Never output any MCQ questions. Output ONLY True/False." if mcq_count == 0 else ""
+    
     return (
-        f"Write exactly {count} questions about the following topic or source:\n{material}\n\n"
-        f"Exact distribution: {mcq_count} MCQ and {tf_count} TF. "
-        f"MCQ enabled: {include_mcq}; TF enabled: {include_tf}. "
+        f"Write exactly {count} {noun} about the following topic or source:\n{material}\n\n"
+        f"Exact distribution: {distribution_str}. "
+        f"{mcq_rule} {tf_rule} "
         "No other question type is allowed. Output order: all MCQ, then all TF. "
         "Use moderate to challenging difficulty with clear wording and one defensible key. "
         "For equations, distinguish derivative order from degree; a power on x does not "
@@ -38,14 +52,30 @@ def get_assessment_prompt(material: str, count: int, include_mcq: bool = True,
 def get_existing_questions_prompt(material: str, count: int, mcq_count: int,
                                   tf_count: int,
                                   previous_questions: list[str] | None = None) -> str:
-    prior = "\nAlready selected items to exclude: " + " | ".join(previous_questions) if previous_questions else ""
+    if previous_questions:
+        prior = "\nCRITICAL: Already selected items to exclude. Do not generate them again:\n" + "\n".join(f"- {q}" for q in previous_questions)
+    else:
+        prior = ""
+    noun = "item" if count == 1 else "items"
+    
+    distribution_text = []
+    if mcq_count > 0:
+        distribution_text.append(f"{mcq_count} MCQ")
+    if tf_count > 0:
+        distribution_text.append(f"{tf_count} True/False")
+    distribution_str = " and ".join(distribution_text)
+    
+    tf_rule = "Never output any True/False questions. Output ONLY MCQ." if tf_count == 0 else ""
+    mcq_rule = "Never output any MCQ questions. Output ONLY True/False." if mcq_count == 0 else ""
+    
     return (
         "The following material contains instructor-provided questions. Convert only "
         "these questions into assessment JSON; preserve their meaning and options. "
         "Independently verify supplied answer keys and correct any demonstrably wrong key. "
         "If there are too few suitable questions of the requested types, do not invent "
         "unrelated questions; the request will fail validation. "
-        f"Return exactly {count} items: {mcq_count} MCQ then {tf_count} TF. "
+        f"Return exactly {count} {noun}: {distribution_str}. "
+        f"{mcq_rule} {tf_rule} "
         "Never convert a True/False statement into a four-option MCQ. "
         "For arithmetic and logic, calculate and check the answer before selecting its key."
         f"{prior}\n\nINSTRUCTOR CONTENT:\n{material}"

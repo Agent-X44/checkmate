@@ -67,35 +67,23 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
   // Data Logic
   List<dynamic> _finalQuestions = [];
   bool _isGenerationFinished = false;
-  bool _isSaving = false;
   PlatformFile? _selectedFile;
   String _sourceMode = 'topic';
   bool _hasMultipleSets = false;
 
-  Future<void> _saveToDrafts() async {
-    setState(() => _isSaving = true);
+  Future<void> _saveToDraftsAuto() async {
     try {
       await SupabaseService.saveCreatedExam(
         classId: widget.classId,
-        title: _inputController.text,
+        title: _inputController.text.isNotEmpty ? _inputController.text : (_selectedFile?.name ?? 'Generated Assessment'),
         assessmentType: _assessmentType,
         questions: _finalQuestions,
         hasMultipleSets: _hasMultipleSets,
         templateId: _selectedTemplate.id,
       );
-      if (mounted) {
-        CheckMateUi.showTopPrompt(
-            context, '$_assessmentType saved to Drafts successfully!',
-            isError: false);
-        Navigator.pop(context, true);
-      }
     } catch (e) {
       if (mounted) {
-        CheckMateUi.showTopPrompt(context, 'Failed to save draft: $e');
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isSaving = false);
+        CheckMateUi.showTopPrompt(context, 'Failed to save draft automatically: $e');
       }
     }
   }
@@ -143,6 +131,15 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
       _finalQuestions = [];
       _isGenerationFinished = false;
     });
+    
+    // Show prompt that it's generating and they can edit it later
+    if (mounted) {
+      CheckMateUi.showTopPrompt(
+        context, 
+        'Generation started. AI can make mistakes. Your assessment will be automatically saved to Drafts, where you can edit it later.',
+        isError: false,
+      );
+    }
 
     // Unified Stream: Handles both terminal logging and JSON delivery in one go
     final mcqCount = _selectedTemplate.mcqCount;
@@ -185,7 +182,7 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
       );
     }
 
-    _streamSubscription = stream.listen((event) {
+    _streamSubscription = stream.listen((event) async {
       if (!mounted) return;
 
       final type = event['type'];
@@ -201,9 +198,14 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
       } else if (type == 'question') {
         final question = event['question'];
         final number = event['number'];
-        if (question is Map && number == _liveQuestions.length + 1) {
+        if (question is Map && number is int && number > 0 &&
+            number <= _liveQuestions.length + 1) {
           setState(() {
-            _liveQuestions.add(Map<String, dynamic>.from(question));
+            if (number == _liveQuestions.length + 1) {
+              _liveQuestions.add(Map<String, dynamic>.from(question));
+            } else {
+              _liveQuestions[number - 1] = Map<String, dynamic>.from(question);
+            }
             if (_draftQuestionText.trim() ==
                 (question['questionText'] ?? '').toString().trim()) {
               _draftQuestionText = '';
@@ -259,8 +261,11 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
           _finalQuestions = ordered;
           _isGenerationFinished = true;
           _draftQuestionText = '';
-          _generationStatus = 'All questions verified. Opening review...';
+          _generationStatus = 'All questions verified. Saving draft...';
         });
+
+        // Automatically save to drafts securely using the frontend session
+        await _saveToDraftsAuto();
 
         // Smooth transition to Review Step
         Future.delayed(const Duration(milliseconds: 700), () {
@@ -535,7 +540,7 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
 
   Widget _buildTerminal() {
     final scheme = Theme.of(context).colorScheme;
-    final verified = _liveQuestions.length;
+    final drafted = _liveQuestions.length;
     return SafeArea(
       key: const ValueKey(1),
       child: Center(
@@ -554,7 +559,7 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
                     style: TextStyle(color: scheme.onSurfaceVariant)),
                 const SizedBox(height: 18),
                 LinearProgressIndicator(
-                  value: _isGenerationFinished ? 1 : verified / _selectedTotal,
+                  value: _isGenerationFinished ? 1 : drafted / _selectedTotal,
                   minHeight: 7,
                   borderRadius: BorderRadius.circular(8),
                   backgroundColor: scheme.surfaceContainerHighest,
@@ -565,7 +570,7 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
                   spacing: 12,
                   runSpacing: 4,
                   children: [
-                    Text('$verified of $_selectedTotal questions ready',
+                    Text('$drafted of $_selectedTotal questions drafted',
                         style: const TextStyle(fontWeight: FontWeight.bold)),
                     Text(
                       '${_selectedTemplate.mcqCount} MCQ${_selectedTemplate.tfCount > 0 ? '  ·  ${_selectedTemplate.tfCount} True/False' : ''}',
@@ -584,47 +589,8 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
                     label: const Text('Try again'),
                   ),
                 ],
-                if (_draftQuestionText.isNotEmpty) ...[
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: scheme.primaryContainer.withValues(alpha: 0.45),
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: scheme.primary.withValues(alpha: 0.35)),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(Icons.edit_note, color: scheme.primary, size: 19),
-                            const SizedBox(width: 8),
-                            Text(
-                              'WRITING $_draftQuestionType DRAFT',
-                              style: TextStyle(
-                                color: scheme.primary,
-                                fontSize: 12,
-                                fontWeight: FontWeight.bold,
-                                letterSpacing: 0.8,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          _draftQuestionText,
-                          maxLines: 4,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.bodyLarge,
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                ],
                 Expanded(
-                  child: verified == 0
+                  child: drafted == 0
                       ? Center(
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
@@ -639,8 +605,43 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
                         )
                       : ListView.builder(
                           controller: _terminalScrollController,
-                          itemCount: verified,
+                          itemCount: drafted + (_draftQuestionText.isNotEmpty ? 1 : 0),
                           itemBuilder: (context, index) {
+                            if (index == drafted) {
+                               return Card(
+                                margin: const EdgeInsets.only(bottom: 12),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(16),
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          SizedBox(
+                                            width: 14, 
+                                            height: 14, 
+                                            child: CircularProgressIndicator(strokeWidth: 2, color: scheme.primary)
+                                          ),
+                                          const SizedBox(width: 8),
+                                          Text(
+                                            'Typing $_draftQuestionType draft...',
+                                            style: TextStyle(
+                                              color: scheme.primary,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 12),
+                                      Text("${index + 1}. $_draftQuestionText █",
+                                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }
+                            
                             final question = _liveQuestions[index];
                             final type = question['questionType'];
                             final startsPart = index == 0 ||
@@ -764,6 +765,27 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
                   data: entry.value, index: part1.length + part2.length + entry.key + 1)),
             ],
             const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.amber.withValues(alpha: 0.2),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.amber),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.amber),
+                  SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'AI can make mistakes. Your assessment has been automatically saved to Drafts. You can edit it in the assessment review.',
+                      style: TextStyle(fontSize: 14),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
             OutlinedButton.icon(
               onPressed: _exportDocx,
               icon: const Icon(Icons.description),
@@ -773,7 +795,9 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
             ),
             const SizedBox(height: 10),
             ElevatedButton(
-              onPressed: _isSaving ? null : _saveToDrafts,
+              onPressed: () {
+                Navigator.pop(context, true);
+              },
               style: ElevatedButton.styleFrom(
                 minimumSize: const Size(double.infinity, 55),
                 backgroundColor: Theme.of(context).brightness == Brightness.dark
@@ -783,17 +807,8 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
                     ? Colors.black
                     : Colors.white,
               ),
-              child: _isSaving
-                  ? SizedBox(
-                      width: 24,
-                      height: 24,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Theme.of(context).brightness == Brightness.dark
-                              ? Colors.black
-                              : Colors.white))
-                  : const Text('FINISH & SAVE TO DRAFTS',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
+              child: const Text('RETURN TO CLASS (SAVED)',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
             ),
           ],
         ),

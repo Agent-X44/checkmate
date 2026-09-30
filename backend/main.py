@@ -79,7 +79,7 @@ load_dotenv()
 
 app = FastAPI(title="CheckMate Compliance API")
 
-active_generations = set()
+active_generations = {}
 background_tasks_refs = set()
 
 # --- DATABASE ---
@@ -309,10 +309,6 @@ async def generate_exam_stream(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     task_key = (class_id, topic, assessment_type, source_mode, mcq_count, tf_count)
-    if task_key in active_generations:
-        async def duplicate_generator():
-            yield _assessment_event("error", content="This assessment is already generating. Wait for it to finish before retrying.")
-        return StreamingResponse(duplicate_generator(), media_type="text/event-stream")
 
     filename = file.filename if file else None
     content_bytes = await file.read() if file else None
@@ -320,14 +316,19 @@ async def generate_exam_stream(
         raise HTTPException(status_code=413, detail="Uploaded files must be 10 MB or smaller.")
 
     queue = asyncio.Queue()
-    active_generations.add(task_key)
+    # A retry replaces the earlier stream. Closing a Flutter subscription does
+    # not always stop its server worker immediately, so the old task must not
+    # block the new assessment request.
+    previous_task = active_generations.get(task_key)
+    if previous_task is not None:
+        previous_task.cancel()
 
     async def report(message):
         # Keep operational details out of the student-facing live preview.
         if message.startswith("Generating"):
             phase = "Writing the next questions"
         elif message.startswith("Checking"):
-            phase = "Preparing more questions"
+            phase = "Finalizing assessment"
         elif message.startswith("Accepted"):
             phase = "Preparing more questions"
         else:
@@ -335,7 +336,9 @@ async def generate_exam_stream(
         await queue.put(_assessment_event("progress", content=phase))
 
     async def show_question(question, number):
-        await queue.put(_assessment_event("question", number=number, question=question))
+        preview = {key: value for key, value in question.items()
+                   if key not in ("correctAnswer", "reasoning", "verification")}
+        await queue.put(_assessment_event("question", number=number, question=preview))
         # Older app builds only understand token events. They still receive each
         # verified question in real time, never an unchecked model proposal.
         await queue.put(_assessment_event("token", content=_verified_question_text(question, number)))
@@ -365,23 +368,33 @@ async def generate_exam_stream(
             logger.exception("Assessment generation failed")
             await queue.put(_assessment_event("error", content=str(exc)))
         finally:
-            active_generations.discard(task_key)
+            if active_generations.get(task_key) is asyncio.current_task():
+                active_generations.pop(task_key, None)
             await queue.put(None)
 
     task = asyncio.create_task(generation_worker())
+    active_generations[task_key] = task
     background_tasks_refs.add(task)
-    task.add_done_callback(background_tasks_refs.discard)
+    def clear_generation_task(completed):
+        background_tasks_refs.discard(completed)
+        if active_generations.get(task_key) is completed:
+            active_generations.pop(task_key, None)
+    task.add_done_callback(clear_generation_task)
 
     async def event_generator():
-        while True:
-            try:
-                item = await asyncio.wait_for(queue.get(), timeout=15)
-            except asyncio.TimeoutError:
-                yield ": keep-alive\n\n"
-                continue
-            if item is None:
-                break
-            yield item
+        try:
+            while True:
+                try:
+                    item = await asyncio.wait_for(queue.get(), timeout=15)
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+                    continue
+                if item is None:
+                    break
+                yield item
+        finally:
+            if not task.done():
+                pass # Do not cancel task on disconnect so it continues background generation
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 

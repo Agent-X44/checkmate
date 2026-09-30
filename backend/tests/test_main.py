@@ -1,3 +1,4 @@
+import asyncio
 import os
 import sys
 import pytest
@@ -90,7 +91,9 @@ async def test_stream_keeps_exact_requested_types_without_persisting(monkeypatch
     assert not any("Checking" in event.get("content", "")
                    for event in events if event["type"] == "progress")
     assert [event["number"] for event in streamed] == list(range(1, 31))
-    assert all(event["question"]["verification"] for event in streamed)
+    assert all("correctAnswer" not in event["question"] and
+               "verification" not in event["question"] for event in streamed)
+    assert all(question["verification"] for question in events[-1]["questions"])
 
 
 @pytest.mark.asyncio
@@ -102,6 +105,44 @@ async def test_stream_rejects_type_count_mismatch():
             "include_mcq": "true", "include_tf": "true",
         })
     assert response.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_retry_replaces_an_abandoned_assessment_stream(monkeypatch):
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    calls = 0
+
+    async def fake_generate(material, mcq_count, tf_count, source_mode, report,
+                            on_question, on_draft):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+        return [{"questionType": "MCQ", "questionText": "What is 2 + 2?",
+                 "options": ["4", "3", "5", "6"], "correctAnswer": "A"}]
+
+    monkeypatch.setattr(main, "generate_verified_questions", fake_generate)
+    request = dict(topic="Arithmetic", class_id="retry-course", question_count=1,
+                   assessment_type="Quiz", include_mcq=True, include_tf=False,
+                   mcq_count=1, tf_count=0, source_mode="topic",
+                   has_multiple_sets=False, file=None)
+    await main.generate_exam_stream(**request)
+    await asyncio.wait_for(started.wait(), timeout=1)
+    retry_response = await main.generate_exam_stream(**request)
+    chunks = [chunk async for chunk in retry_response.body_iterator]
+    events = [json.loads(chunk[6:]) for chunk in chunks if chunk.startswith("data: ")]
+
+    assert calls == 2
+    assert cancelled.is_set()
+    assert events[-1]["type"] == "complete"
+    assert len(events[-1]["questions"]) == 1
+    assert not main.active_generations
 
 @pytest.mark.asyncio
 async def test_resolve_sheet_not_found():
