@@ -181,6 +181,9 @@ CREATE POLICY "Users manage own enrollments" ON enrollments FOR ALL TO authentic
 USING (auth.uid() = user_id OR class_id IN (SELECT id FROM classes WHERE instructor_id = auth.uid()))
 WITH CHECK (auth.uid() = user_id);
 
+CREATE POLICY "Users can view all enrollments" ON enrollments FOR SELECT TO authenticated
+USING (true);
+
 -- Instructors create and manage sheets for students in their classes.
 CREATE POLICY "Instructors manage answer sheets" ON answer_sheets FOR ALL TO authenticated
 USING (

@@ -363,7 +363,23 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
     );
 
     try {
-      final questions = await SupabaseService.getExamQuestions(examId);
+      List<Map<String, dynamic>> items = [];
+      bool isStudentResult = false;
+      
+      if (widget.isOwner) {
+        items = await SupabaseService.getExamQuestions(examId);
+      } else {
+        final result = await SupabaseService.getMyResult(examId);
+        final rawAnswers = result?['grade']?['answers'];
+        if (rawAnswers is List && rawAnswers.isNotEmpty) {
+          items = List<Map<String, dynamic>>.from(rawAnswers);
+          isStudentResult = true;
+        } else {
+          // Fallback: load general exam questions so student can review test items and correct answers
+          items = await SupabaseService.getExamQuestions(examId);
+        }
+      }
+
       if (mounted) {
         Navigator.pop(context); // Dismiss loading
         showModalBottomSheet(
@@ -400,18 +416,112 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                   const Divider(),
                   const SizedBox(height: 10),
                   Expanded(
-                    child: questions.isEmpty
+                    child: items.isEmpty
                         ? const Center(
                             child:
                                 Text("No questions found for this assessment."))
                         : StatefulBuilder(builder: (context, setModalState) {
                             return ListView.builder(
                               controller: scrollController,
-                              itemCount: questions.length,
+                              itemCount: items.length,
                               itemBuilder: (context, index) {
-                                final q = questions[index];
+                                final q = items[index];
                                 final isTF = q['question_type'] == 'TF';
                                 final options = q['options'] as List? ?? [];
+                                
+                                if (isStudentResult) {
+                                  // Display student answer and evaluation
+                                  final qNum = q['question_number'] ?? (index + 1);
+                                  final qText = q['question_text']?.toString() ?? '';
+                                  final isCorrect = q['isCorrect'] == true;
+                                  final isAmbiguous = q['isAmbiguous'] == true;
+                                  final answer = q['answer']?.toString();
+                                  final correctAnswer = q['correct_answer']?.toString() ?? '';
+                                  
+                                  String statusText;
+                                  Color statusColor;
+                                  if (isCorrect) {
+                                    statusText = 'Correct';
+                                    statusColor = Colors.green;
+                                  } else if (isAmbiguous) {
+                                    statusText = 'Needs review';
+                                    statusColor = Colors.orange;
+                                  } else if (answer == null || answer.isEmpty) {
+                                    statusText = 'Unanswered';
+                                    statusColor = Colors.orange;
+                                  } else {
+                                    statusText = 'Incorrect';
+                                    statusColor = Colors.red;
+                                  }
+
+                                  String studentAnsText;
+                                  if (isAmbiguous) {
+                                    final marks = q['multipleAnswers'] is List
+                                        ? (q['multipleAnswers'] as List).join(', ')
+                                        : 'Multiple';
+                                    studentAnsText = 'Student answer: $marks';
+                                  } else if (answer == null || answer.isEmpty) {
+                                    studentAnsText = 'Student answer: None';
+                                  } else if (isTF) {
+                                    final tfLabel = answer == 'A' ? 'True' : (answer == 'B' ? 'False' : answer);
+                                    studentAnsText = 'Student answer: $tfLabel';
+                                  } else {
+                                    String optionVal = '';
+                                    if (options.isNotEmpty && answer.length == 1) {
+                                      final code = answer.codeUnitAt(0) - 65;
+                                      if (code >= 0 && code < options.length) {
+                                        optionVal = '. ${options[code]}';
+                                      }
+                                    }
+                                    studentAnsText = 'Student answer: $answer$optionVal';
+                                  }
+
+                                  String correctAnsText = '';
+                                  if (isTF) {
+                                    final tfLabel = correctAnswer == 'A'
+                                        ? 'True'
+                                        : (correctAnswer == 'B' ? 'False' : correctAnswer);
+                                    correctAnsText = 'Correct answer: $tfLabel';
+                                  } else {
+                                    correctAnsText = 'Correct answer: $correctAnswer';
+                                  }
+
+                                  return Card(
+                                    margin: const EdgeInsets.only(bottom: 12),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(12),
+                                      child: Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          Row(
+                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                            children: [
+                                              Text('Question $qNum',
+                                                  style: const TextStyle(fontWeight: FontWeight.bold)),
+                                              Text(statusText,
+                                                  style: TextStyle(
+                                                      fontWeight: FontWeight.bold, color: statusColor)),
+                                            ],
+                                          ),
+                                          if (qText.isNotEmpty) ...[
+                                            const SizedBox(height: 4),
+                                            Text(qText, style: const TextStyle(fontSize: 14)),
+                                          ],
+                                          const SizedBox(height: 8),
+                                          Text(studentAnsText, style: const TextStyle(fontSize: 13)),
+                                          if (!isCorrect && correctAnsText.isNotEmpty) ...[
+                                            const SizedBox(height: 2),
+                                            Text(correctAnsText,
+                                                style: TextStyle(
+                                                    fontSize: 13,
+                                                    color: Colors.green.shade700,
+                                                    fontWeight: FontWeight.bold)),
+                                          ],
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                }
 
                                 return Card(
                                   margin: const EdgeInsets.only(bottom: 12),
@@ -445,7 +555,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                                                   _showEditQuestionDialog(q,
                                                       (updatedQ) {
                                                     setModalState(() {
-                                                      questions[index] =
+                                                      items[index] =
                                                           updatedQ;
                                                     });
                                                   });
@@ -964,113 +1074,115 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
               elevation: 0,
               margin: const EdgeInsets.only(bottom: 10),
               color: colors.surfaceContainerLow,
+              clipBehavior: Clip.antiAlias,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
               ),
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      minLeadingWidth: 40,
-                      leading: Container(
-                        width: 40,
-                        height: 40,
-                        decoration: BoxDecoration(
-                          color: actionColor.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(12),
+              child: InkWell(
+                onTap: widget.isOwner
+                    ? openResults
+                    : (isReleased ? openStudentResult : null),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        minLeadingWidth: 40,
+                        leading: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            color: actionColor.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Icon(
+                            title == 'Exams'
+                                ? Icons.assignment_outlined
+                                : Icons.quiz_outlined,
+                            color: actionColor,
+                          ),
                         ),
-                        child: Icon(
-                          title == 'Exams'
-                              ? Icons.assignment_outlined
-                              : Icons.quiz_outlined,
-                          color: actionColor,
+                        title: Text(
+                          displayTitle,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
-                      title: Text(
-                        displayTitle,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
+                        subtitle: Text(
+                          info['isDraftPending'] == true
+                              ? 'Questions pending'
+                              : "${info['totalItems']} items • ${info['templateName']}",
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.onSurfaceVariant,
+                          ),
                         ),
-                      ),
-                      subtitle: Text(
-                        info['isDraftPending'] == true
-                            ? 'Questions pending'
-                            : "${info['totalItems']} items • ${info['templateName']}",
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: colors.onSurfaceVariant,
-                        ),
-                      ),
-                      trailing: widget.isOwner
-                          ? PopupMenuButton<String>(
-                              tooltip: 'More assessment actions',
-                              icon: Icon(Icons.more_vert,
-                                  color: colors.onSurfaceVariant),
-                              onSelected: (action) {
-                                switch (action) {
-                                  case 'export':
-                                    _exportQuestionnaire(
-                                      exam['id'],
-                                      displayTitle,
-                                      hasMultipleSets: hasMultipleSets,
-                                    );
-                                    break;
-                                  case 'print':
-                                    _generateSheets(
-                                      exam['id'],
-                                      displayTitle,
-                                      hasMultipleSets: hasMultipleSets,
-                                      templateId:
-                                          exam['template_id']?.toString(),
-                                    );
-                                    break;
-                                  case 'unapprove':
-                                    _unapproveExam(exam['id']);
-                                    break;
-                                  case 'delete':
-                                    _deleteExam(exam['id']);
-                                    break;
-                                }
-                              },
-                              itemBuilder: (context) => [
-                                const PopupMenuItem(
-                                  value: 'export',
-                                  child: Text('Export questionnaire'),
-                                ),
-                                const PopupMenuItem(
-                                  value: 'print',
-                                  child: Text('Print answer sheets'),
-                                ),
-                                if (isApproved && !isReleased)
+                        trailing: widget.isOwner
+                            ? PopupMenuButton<String>(
+                                tooltip: 'More assessment actions',
+                                icon: Icon(Icons.more_vert,
+                                    color: colors.onSurfaceVariant),
+                                onSelected: (action) {
+                                  switch (action) {
+                                    case 'export':
+                                      _exportQuestionnaire(
+                                        exam['id'],
+                                        displayTitle,
+                                        hasMultipleSets: hasMultipleSets,
+                                      );
+                                      break;
+                                    case 'print':
+                                      _generateSheets(
+                                        exam['id'],
+                                        displayTitle,
+                                        hasMultipleSets: hasMultipleSets,
+                                        templateId:
+                                            exam['template_id']?.toString(),
+                                      );
+                                      break;
+                                    case 'unapprove':
+                                      _unapproveExam(exam['id']);
+                                      break;
+                                    case 'delete':
+                                      _deleteExam(exam['id']);
+                                      break;
+                                  }
+                                },
+                                itemBuilder: (context) => [
                                   const PopupMenuItem(
-                                    value: 'unapprove',
-                                    child: Text('Return to draft'),
+                                    value: 'export',
+                                    child: Text('Export questionnaire'),
                                   ),
-                                PopupMenuItem(
-                                  value: 'delete',
-                                  enabled: _deletingExamId != exam['id'],
-                                  child: const Text('Delete assessment'),
-                                ),
-                              ],
-                            )
-                          : Icon(
-                              isReleased
-                                  ? Icons.chevron_right
-                                  : Icons.lock_outline,
-                              color: colors.onSurfaceVariant,
-                            ),
-                      onTap: widget.isOwner
-                          ? openResults
-                          : (isReleased ? openStudentResult : null),
-                    ),
+                                  const PopupMenuItem(
+                                    value: 'print',
+                                    child: Text('Print answer sheets'),
+                                  ),
+                                  if (isApproved && !isReleased)
+                                    const PopupMenuItem(
+                                      value: 'unapprove',
+                                      child: Text('Return to draft'),
+                                    ),
+                                  PopupMenuItem(
+                                    value: 'delete',
+                                    enabled: _deletingExamId != exam['id'],
+                                    child: const Text('Delete assessment'),
+                                  ),
+                                ],
+                              )
+                            : Icon(
+                                isReleased
+                                    ? Icons.chevron_right
+                                    : Icons.lock_outline,
+                                color: colors.onSurfaceVariant,
+                              ),
+                      ),
                     const SizedBox(height: 10),
                     Wrap(
                       spacing: 8,
@@ -1168,8 +1280,9 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                   ],
                 ),
               ),
-            );
-          }),
+            ),
+          );
+        }),
       ],
     );
   }

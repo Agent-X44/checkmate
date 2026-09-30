@@ -42,9 +42,9 @@ def get_assessment_prompt(material: str, count: int, include_mcq: bool = True,
         f"{mcq_rule} {tf_rule} "
         "No other question type is allowed. Output order: all MCQ, then all TF. "
         "Use moderate to challenging difficulty with clear wording and one defensible key. "
-        "For equations, distinguish derivative order from degree; a power on x does not "
-        "change the differential equation's order. Verify all arithmetic and logic before "
-        "assigning the key. Provide a short evidence-based reasoning field per item."
+        "Base your questions strictly on facts, historical records, or established logic. "
+        "If the topic involves math or physics equations, verify all arithmetic and ensure derivative order is distinguished from degree. "
+        "Provide a short evidence-based reasoning field per item."
         f"{prior}"
     )
 
@@ -77,14 +77,14 @@ def get_existing_questions_prompt(material: str, count: int, mcq_count: int,
         f"Return exactly {count} {noun}: {distribution_str}. "
         f"{mcq_rule} {tf_rule} "
         "Never convert a True/False statement into a four-option MCQ. "
-        "For arithmetic and logic, calculate and check the answer before selecting its key."
+        "Base your verification strictly on facts, historical records, calculations, or logic."
         f"{prior}\n\nINSTRUCTOR CONTENT:\n{material}"
     )
 
 
 SYSTEM_ANSWER_AUDIT = (
     "You are an independent answer-key auditor. The proposed keys are intentionally "
-    "omitted. Solve each question yourself, checking calculations and logic before "
+    "omitted. Solve each question yourself, checking facts, history, calculations, and logic before "
     "choosing a letter. For each numbered item return its number, one answer letter, "
     "verified=true only if exactly one answer is defensible, and a brief checkable "
     "justification. If uncertain, ambiguous, or flawed, set verified=false. "
