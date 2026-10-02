@@ -36,6 +36,7 @@ class _RootAuthWrapperState extends State<RootAuthWrapper> {
       );
     } catch (_) {}
 
+    DeepLinkService().initialize();
     if (mounted) {
       setState(() {
         _user = Supabase.instance.client.auth.currentUser;

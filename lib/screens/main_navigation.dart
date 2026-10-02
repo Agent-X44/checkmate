@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/course.dart';
+import '../services/deep_link_service.dart';
 import '../services/notification_service.dart';
 import '../services/supabase_service.dart';
 import '../utils/ui_utils.dart';
@@ -41,6 +43,7 @@ class _MainNavigationState extends State<MainNavigation> {
 
   List<Course> _drawerCachedCourses = [];
   bool _isDrawerLoading = true;
+  late final StreamSubscription<Course> _joinedCourseSubscription;
 
   Future<void> _refreshDrawerCourses() async {
     try {
@@ -66,6 +69,24 @@ class _MainNavigationState extends State<MainNavigation> {
   void initState() {
     super.initState();
     _refreshDrawerCourses();
+    _joinedCourseSubscription = DeepLinkService.joinedCourses.listen((course) {
+      if (mounted) {
+        setState(() {
+          _drawerCachedCourses
+              .removeWhere((existing) => existing.id == course.id);
+          _drawerCachedCourses.insert(0, course);
+        });
+        _dashboardKey.currentState?.addEnrolledCourse(course);
+      }
+      unawaited(_refreshDrawerCourses());
+      unawaited(_dashboardKey.currentState?.refreshCourses());
+    });
+  }
+
+  @override
+  void dispose() {
+    _joinedCourseSubscription.cancel();
+    super.dispose();
   }
 
   void _onItemTapped(int index) {

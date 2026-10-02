@@ -52,7 +52,6 @@ class _CheckMateAppState extends State<CheckMateApp> {
   void initState() {
     super.initState();
     _loadTheme();
-    DeepLinkService().initialize();
   }
 
   Future<void> _loadTheme() async {

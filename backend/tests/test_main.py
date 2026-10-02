@@ -3,6 +3,7 @@ import os
 import sys
 import pytest
 import json
+from types import SimpleNamespace
 from httpx import AsyncClient, ASGITransport
 
 # Add parent directory to path so 'main' can be imported
@@ -17,6 +18,86 @@ async def test_read_root():
         response = await ac.get("/")
     assert response.status_code == 200
     assert response.json()["status"] == "online"
+
+
+@pytest.mark.asyncio
+async def test_course_invitation_landing_shows_app_link_and_safe_code(monkeypatch):
+    class Query:
+        def select(self, columns):
+            assert columns == "name, code"
+            return self
+
+        def eq(self, column, value):
+            assert (column, value) == ("code", "JOIN42")
+            return self
+
+        def limit(self, count):
+            assert count == 1
+            return self
+
+        def execute(self):
+            return SimpleNamespace(data=[{
+                "name": '<script>alert("x")</script>',
+                "code": "JOIN42",
+            }])
+
+    class Database:
+        def table(self, table):
+            assert table == "classes"
+            return Query()
+
+    monkeypatch.setattr(main, "supabase", Database())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get("/join", params={"code": "join42"})
+
+    assert response.status_code == 200
+    assert 'href="checkmate://join?code=JOIN42"' in response.text
+    assert "JOIN42" in response.text
+    assert "<script>alert" not in response.text
+    assert "&lt;script&gt;" in response.text
+    assert "releases/latest/download/CheckMate.apk" in response.text
+
+
+@pytest.mark.asyncio
+async def test_android_app_links_association_contains_application_and_signing_certs():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get("/.well-known/assetlinks.json")
+
+    assert response.status_code == 200
+    statement = response.json()[0]
+    assert statement["target"]["package_name"] == "com.checkmate.checkmate"
+    assert len(statement["target"]["sha256_cert_fingerprints"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_course_invitation_landing_rejects_invalid_and_unknown_codes(monkeypatch):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        invalid = await ac.get("/join", params={"code": "bad"})
+        assert invalid.status_code == 400
+        assert "missing a valid course code" in invalid.text
+
+        class Query:
+            def select(self, _columns):
+                return self
+
+            def eq(self, _column, _value):
+                return self
+
+            def limit(self, _count):
+                return self
+
+            def execute(self):
+                return SimpleNamespace(data=[])
+
+        class Database:
+            def table(self, _table):
+                return Query()
+
+        monkeypatch.setattr(main, "supabase", Database())
+        unknown = await ac.get("/join", params={"code": "JOIN42"})
+
+    assert unknown.status_code == 404
+    assert "invalid or no longer active" in unknown.text
 
 
 def test_legacy_double_labeled_choices_are_restored_once():

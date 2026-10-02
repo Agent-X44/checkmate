@@ -42,14 +42,14 @@
                     android:scheme="checkmate"
                     android:host="join" />
             </intent-filter>
-            <!-- Universal App Link: https://checkmate.app/join?code=XYZ -->
+            <!-- Verified Android App Link: https://<invite-host>/join?code=XYZ -->
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:scheme="https"
-                    android:host="checkmate.app"
+                    android:host="noelpi-checkmate-backend.hf.space"
                     android:pathPrefix="/join" />
             </intent-filter>
         </activity>

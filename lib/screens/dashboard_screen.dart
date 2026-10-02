@@ -39,10 +39,13 @@ class DashboardScreenState extends State<DashboardScreen> {
   void addEnrolledCourse(Course course) {
     if (mounted) {
       setState(() {
+        _enrolledCourses.removeWhere((existing) => existing.id == course.id);
         _enrolledCourses.insert(0, course);
       });
     }
   }
+
+  Future<void> refreshCourses() => _refreshAll();
 
   Future<void> _refreshAll() async {
     try {

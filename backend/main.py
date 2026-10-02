@@ -10,6 +10,7 @@ MAINTENANCE NOTES:
 """
 
 import asyncio
+import html
 import os
 import json
 import logging
@@ -18,7 +19,7 @@ import time
 import re
 from io import BytesIO
 from fastapi import FastAPI, HTTPException, Body, Depends, UploadFile, File, Form
-from fastapi.responses import StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -230,6 +231,99 @@ async def status():
         "model": active_model,
         "database": "connected" if supabase else "disconnected"
     }
+
+
+def _course_invite_page(code: str = "", course_name: str | None = None,
+                        message: str = "", status_code: int = 200) -> HTMLResponse:
+    safe_code = html.escape(code)
+    safe_name = html.escape(course_name or "your course")
+    safe_message = html.escape(message)
+    app_link = html.escape(
+        f"checkmate://join?code={code}", quote=True,
+    ) if code else "checkmate://"
+    course_content = (
+        f"<p class=\"course\">You are invited to join <strong>{safe_name}</strong>.</p>"
+        f"<a class=\"button\" href=\"{app_link}\">Open CheckMate</a>"
+        "<p>If CheckMate is not installed, download the APK and then enter this course code:</p>"
+        f"<div class=\"code\" id=\"course-code\">{safe_code}</div>"
+        "<button class=\"copy\" type=\"button\" onclick=\"copyCode()\">Copy course code</button>"
+        "<div class=\"stores\"><a href=\"https://github.com/Agent-X44/checkmate/releases/latest/download/CheckMate.apk\">"
+        "Download CheckMate APK</a></div>"
+        "<script>async function copyCode(){const c=document.getElementById('course-code').textContent;"
+        "const s=document.getElementById('copy-status');try{if(navigator.clipboard&&window.isSecureContext){"
+        "await navigator.clipboard.writeText(c);}else{const t=document.createElement('textarea');"
+        "t.value=c;t.style.position='fixed';t.style.opacity='0';document.body.appendChild(t);t.select();"
+        "const ok=document.execCommand('copy');t.remove();if(!ok)throw new Error('copy failed');}"
+        "s.textContent='Course code copied.';}catch(_){s.textContent="
+        "'Copy is unavailable. Select and copy the course code above.';}}</script>"
+        "<p id=\"copy-status\" aria-live=\"polite\"></p>"
+        if course_name is not None else f"<p class=\"message\">{safe_message}</p>"
+    )
+    return HTMLResponse(
+        content=(
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+            "<meta name=\"theme-color\" content=\"#101014\"><title>CheckMate course invitation</title>"
+            "<style>body{margin:0;background:#101014;color:#f7f7fa;font:16px system-ui,sans-serif;"
+            "display:grid;min-height:100vh;place-items:center}.card{box-sizing:border-box;width:min(92vw,480px);"
+            "padding:32px;border:1px solid #393940;border-radius:24px;background:#1e1e24;text-align:center}"
+            "h1{font-size:28px}.course{color:#c9c9d1}.button,.copy{display:inline-block;border:0;border-radius:12px;"
+            "padding:14px 20px;margin:8px;background:#8b91ff;color:#101014;font-weight:700;text-decoration:none}"
+            ".code{font-size:30px;letter-spacing:5px;font-weight:800;margin:16px}.copy{background:#33333b;color:#fff}"
+            ".stores{display:flex;justify-content:center;gap:20px;margin-top:20px}.stores a{color:#b7baff}"
+            ".message{color:#ffb4ab}</style></head><body><main class=\"card\">"
+            "<h1>CheckMate course invitation</h1>"
+            f"{course_content}</main></body></html>"
+        ),
+        status_code=status_code,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/join", response_class=HTMLResponse)
+def course_invitation(code: str = ""):
+    normalized_code = code.strip().upper()
+    if not re.fullmatch(r"[A-Z0-9]{5,8}", normalized_code):
+        return _course_invite_page(
+            message="This invitation link is missing a valid course code. Ask the instructor for a new link.",
+            status_code=400,
+        )
+    if not supabase:
+        return _course_invite_page(
+            message="Course invitations are temporarily unavailable. Please try again later.",
+            status_code=503,
+        )
+    course = _one("classes", "code", normalized_code, "name, code")
+    if not course:
+        return _course_invite_page(
+            message="This course code is invalid or no longer active. Ask the instructor for a new invitation.",
+            status_code=404,
+        )
+    return _course_invite_page(
+        normalized_code,
+        str(course.get("name") or "your course"),
+    )
+
+
+@app.get("/.well-known/assetlinks.json")
+def android_app_links():
+    return JSONResponse(
+        content=[{
+            "relation": ["delegate_permission/common.handle_all_urls"],
+            "target": {
+                "namespace": "android_app",
+                "package_name": "com.checkmate.checkmate",
+                "sha256_cert_fingerprints": [
+                    "C1:9A:8B:E3:C3:83:48:3C:DB:5D:D7:41:D7:8F:22:67:"
+                    "3B:D1:32:43:A2:B5:46:D2:89:1B:CE:77:3C:97:93:67",
+                    "6E:D3:E3:E6:FE:80:78:D5:17:5F:BE:06:95:B9:1A:46:"
+                    "A7:55:DC:21:CE:B9:AD:F1:2A:0F:A7:C9:77:6E:A9:72",
+                ],
+            },
+        }],
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
 
 def _assessment_event(event_type: str, **payload) -> str:
     return f"data: {json.dumps({'type': event_type, **payload}, ensure_ascii=False)}\n\n"

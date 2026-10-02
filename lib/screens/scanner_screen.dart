@@ -268,7 +268,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
   }
 
   void _tryLockSheetQr(QrData candidate, {List<Offset>? corners}) {
-    if (!mounted || !widget.isActive || _isProcessing || _lockedSheetQr != null) {
+    if (!mounted ||
+        !widget.isActive ||
+        _isProcessing ||
+        _lockedSheetQr != null) {
       return;
     }
     final identifier = candidate.sheetIdentifier;
@@ -447,85 +450,81 @@ class _ScannerScreenState extends State<ScannerScreen> {
     return raw.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').trim().toUpperCase();
   }
 
-  Future<bool> _validateCourseCodeBeforeJoin(String inviteCode) async {
-    final normalizedCode = _normalizeJoinCode(inviteCode);
-    debugPrint(
-        'QR JOIN DEBUG: validating code raw="$inviteCode" normalized="$normalizedCode"');
-
-    try {
-      final courseData =
-          await SupabaseService.getCourseDataByCode(normalizedCode).timeout(
-        const Duration(seconds: 3),
-      );
-      debugPrint(
-          'QR JOIN DEBUG: validation result for $normalizedCode => ${courseData != null ? courseData['id'] : 'NOT_FOUND'}');
-      return courseData != null;
-    } catch (e) {
-      debugPrint(
-          'QR JOIN DEBUG: validation exception for $normalizedCode :: $e');
-      return false;
-    }
-  }
-
   Future<void> _joinCourseFromPrompt(
       String inviteCode, BuildContext bottomSheetContext) async {
     final normalizedCode = _normalizeJoinCode(inviteCode);
     debugPrint(
         'JOIN COURSE BUTTON: pressed raw="$inviteCode" normalized="$normalizedCode"');
 
-    final isValidCourse = await _validateCourseCodeBeforeJoin(normalizedCode);
-    if (!isValidCourse) {
-      final fallbackContext = navigatorKey.currentContext ?? context;
-      if (fallbackContext.mounted) {
-        CheckMateUi.showTopPrompt(
-          fallbackContext,
-          'Course code $normalizedCode is not available or lookup failed.',
-          isError: true,
-        );
-      }
-      return;
-    }
-
+    var progressDialogOpen = true;
+    showDialog<void>(
+      context: bottomSheetContext,
+      barrierDismissible: false,
+      builder: (_) => const AlertDialog(
+        content: Row(
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(width: 20),
+            Expanded(child: Text('Joining course...')),
+          ],
+        ),
+      ),
+    );
     try {
       debugPrint(
           'JOIN COURSE: starting direct Supabase join for $normalizedCode');
-
-      final targetContext = navigatorKey.currentContext ?? context;
-      if (targetContext.mounted) {
-        CheckMateUi.showTopPrompt(
-            targetContext, 'Joining course ($normalizedCode)...',
-            isError: false);
-      }
-
       final course = await SupabaseService.joinClass(normalizedCode).timeout(
-        const Duration(seconds: 8),
+        const Duration(seconds: 15),
         onTimeout: () => throw Exception(
-            'Course join timed out. Please check your network and try again.'),
+          'Joining the course timed out. Check your connection and try again.',
+        ),
       );
 
       if (mounted) {
         _isConfirmationCardOpen = false;
       }
 
+      if (progressDialogOpen && bottomSheetContext.mounted) {
+        Navigator.of(bottomSheetContext, rootNavigator: true).pop();
+        progressDialogOpen = false;
+      }
       if (bottomSheetContext.mounted &&
           Navigator.of(bottomSheetContext, rootNavigator: true).canPop()) {
         Navigator.of(bottomSheetContext, rootNavigator: true).pop();
       }
 
       debugPrint('JOIN COURSE: success for $normalizedCode -> ${course.name}');
+      DeepLinkService.notifyCourseJoined(course);
+      final targetContext = navigatorKey.currentContext ?? context;
       if (targetContext.mounted) {
         CheckMateUi.showTopPrompt(
           targetContext,
-          'Successfully joined course: ${course.name}!',
+          'Joined course: ${course.name}!',
           isError: false,
         );
       }
     } catch (e) {
       debugPrint('JOIN COURSE: failed for $normalizedCode :: $e');
-      final fallbackContext = navigatorKey.currentContext ?? context;
-      if (fallbackContext.mounted) {
-        final msg = e.toString().replaceAll('Exception: ', '');
-        CheckMateUi.showTopPrompt(fallbackContext, msg, isError: true);
+      if (progressDialogOpen && bottomSheetContext.mounted) {
+        Navigator.of(bottomSheetContext, rootNavigator: true).pop();
+        progressDialogOpen = false;
+      }
+      if (bottomSheetContext.mounted) {
+        final message =
+            e.toString().replaceFirst(RegExp(r'^(Exception|Error): '), '');
+        await showDialog<void>(
+          context: bottomSheetContext,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Could not join course'),
+            content: Text(message),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('OK'),
+              ),
+            ],
+          ),
+        );
       }
     }
   }

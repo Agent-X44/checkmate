@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:checkmate/models/course.dart';
 import 'supabase_service.dart';
 import '../utils/ui_utils.dart';
 
@@ -19,19 +20,52 @@ class DeepLinkService {
   final AppLinks _appLinks = AppLinks();
   StreamSubscription<Uri>? _linkSubscription;
   String? _pendingJoinCode;
+  bool _processingPendingJoin = false;
+  static final StreamController<Course> _joinedCourses =
+      StreamController<Course>.broadcast();
 
   String? get pendingJoinCode => _pendingJoinCode;
+  static Stream<Course> get joinedCourses => _joinedCourses.stream;
+  static const String inviteHost = 'noelpi-checkmate-backend.hf.space';
 
-  /// Builds standardized invitation link for a course (Web host coming soon)
+  /// Opens the app when installed, otherwise the web landing offers the APK.
   static String buildInviteLink(String joinCode) {
-    // Commented out web domain link until website host is deployed
-    // return 'https://checkmate.app/join?code=${joinCode.trim().toUpperCase()}';
-    return 'checkmate://join?code=${joinCode.trim().toUpperCase()}';
+    return Uri.https(inviteHost, '/join', {
+      'code': _normalizeCode(joinCode),
+    }).toString();
   }
 
   /// Builds custom scheme deep link for direct app launch
   static String buildCustomSchemeLink(String joinCode) {
-    return 'checkmate://join?code=${joinCode.trim().toUpperCase()}';
+    return Uri(
+      scheme: 'checkmate',
+      host: 'join',
+      queryParameters: {'code': _normalizeCode(joinCode)},
+    ).toString();
+  }
+
+  static String _normalizeCode(String value) {
+    return value.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').toUpperCase();
+  }
+
+  static String? extractJoinCode(Uri uri) {
+    var code = uri.queryParameters['code'] ?? uri.queryParameters['joinCode'];
+    if ((code == null || code.isEmpty) && uri.pathSegments.isNotEmpty) {
+      final segments = uri.pathSegments;
+      if (segments.first.toLowerCase() == 'join' && segments.length > 1) {
+        code = segments[1];
+      } else if (segments.length == 1 &&
+          segments.first.toLowerCase() != 'join') {
+        code = segments.first;
+      }
+    }
+    if (code == null) return null;
+    final normalized = _normalizeCode(code);
+    return RegExp(r'^[A-Z0-9]{5,8}$').hasMatch(normalized) ? normalized : null;
+  }
+
+  static void notifyCourseJoined(Course course) {
+    _joinedCourses.add(course);
   }
 
   /// Initialize App Links listener
@@ -60,22 +94,7 @@ class DeepLinkService {
 
   /// Parse URI and extract course join code
   String? _extractCodeFromUri(Uri uri) {
-    // 1. Try query parameter ?code=... or ?joinCode=...
-    String? code = uri.queryParameters['code'] ?? uri.queryParameters['joinCode'];
-    
-    // 2. Try path segment: /join/CODE or /join?code=...
-    if ((code == null || code.isEmpty) && uri.pathSegments.isNotEmpty) {
-      if (uri.pathSegments.length >= 2 && uri.pathSegments.first == 'join') {
-        code = uri.pathSegments[1];
-      } else if (uri.pathSegments.length == 1 && uri.pathSegments.first != 'join') {
-        code = uri.pathSegments.first;
-      }
-    }
-
-    if (code != null && code.trim().isNotEmpty) {
-      return code.trim().toUpperCase();
-    }
-    return null;
+    return extractJoinCode(uri);
   }
 
   /// Handle incoming Uri
@@ -115,24 +134,32 @@ class DeepLinkService {
     final normalizedCode = code.trim().toUpperCase();
     final context = navigatorKey.currentContext;
 
-    debugPrint('DEEP LINK JOIN DEBUG: start joinCode=$normalizedCode user=${SupabaseService.currentUser?.id ?? 'null'}');
+    debugPrint(
+        'DEEP LINK JOIN DEBUG: start joinCode=$normalizedCode user=${SupabaseService.currentUser?.id ?? 'null'}');
 
     try {
       if (context != null && context.mounted) {
-        CheckMateUi.showTopPrompt(context, 'Joining course ($normalizedCode)...', isError: false);
+        CheckMateUi.showTopPrompt(
+            context, 'Joining course ($normalizedCode)...',
+            isError: false);
       }
 
       final course = await SupabaseService.joinClass(normalizedCode).timeout(
         const Duration(seconds: 8),
-        onTimeout: () => throw Exception('Course join timed out. Please check your network and try again.'),
+        onTimeout: () => throw Exception(
+            'Course join timed out. Please check your network and try again.'),
       );
 
-      debugPrint('DEEP LINK JOIN DEBUG: success for $normalizedCode -> ${course.name}');
+      debugPrint(
+          'DEEP LINK JOIN DEBUG: success for $normalizedCode -> ${course.name}');
+      notifyCourseJoined(course);
       _pendingJoinCode = null;
       try {
         final prefs = await SharedPreferences.getInstance();
         await prefs.remove('pending_join_code');
-      } catch (_) {}
+      } catch (error) {
+        debugPrint('Could not clear the saved invitation code: $error');
+      }
 
       final currentCtx = navigatorKey.currentContext;
       if (currentCtx != null && currentCtx.mounted) {
@@ -159,6 +186,7 @@ class DeepLinkService {
 
   /// Check & process any stored pending join code after login
   Future<void> checkPendingJoinOnLogin() async {
+    if (_processingPendingJoin || SupabaseService.currentUser == null) return;
     String? code = _pendingJoinCode;
 
     if (code == null || code.isEmpty) {
@@ -170,7 +198,12 @@ class DeepLinkService {
 
     if (code != null && code.isNotEmpty) {
       debugPrint('DEEP_LINK: Processing pending join code after auth -> $code');
-      await processJoinCode(code);
+      _processingPendingJoin = true;
+      try {
+        await processJoinCode(code);
+      } finally {
+        _processingPendingJoin = false;
+      }
     }
   }
 
