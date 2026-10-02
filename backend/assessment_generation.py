@@ -583,10 +583,10 @@ async def generate_verified_questions(material, mcq_count, tf_count,
                         item = normalize_questions([raw], 1 if kind == "MCQ" else 0,
                                                    1 if kind == "TF" else 0)[0]
                         key = re.sub(r"\W+", "", item["questionText"].casefold())
-                        if key in seen or any(
+                        if source_mode != "existing_questions" and (key in seen or any(
                             key == re.sub(r"\W+", "", prior_item["questionText"].casefold())
                             for prior_item in proposed
-                        ):
+                        )):
                             duplicate_in_batch = True
                             if item["questionText"] not in rejected_texts:
                                 rejected_texts.append(item["questionText"])
