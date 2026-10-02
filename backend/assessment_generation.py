@@ -30,6 +30,56 @@ def _clean_text(value):
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
+def _source_answer_key(material, question_text, occurrence):
+    """Read an explicit inline or numbered key when the source exposes one."""
+    compact = []
+    offsets = []
+    for index, character in enumerate(material.casefold()):
+        if character.isalnum():
+            compact.append(character)
+            offsets.append(index)
+    needle = "".join(character for character in question_text.casefold()
+                     if character.isalnum())
+    matches = list(re.finditer(re.escape(needle), "".join(compact))) if needle else []
+    if occurrence >= len(matches):
+        return None
+    match = matches[occurrence]
+    start, end = offsets[match.start()], offsets[match.end() - 1] + 1
+    line_start = material.rfind("\n", 0, start) + 1
+    prefix = material[line_start:start]
+    number_match = re.fullmatch(r"\s*(\d+)\s*[.)]\s*", prefix)
+    if number_match:
+        next_question = re.search(r"(?m)^\s*\d+\s*[.)]\s+\S", material[end:])
+        block_end = end + next_question.start() if next_question else len(material)
+        block = material[end:block_end]
+        inline = re.search(
+            r"\b(?:correct\s+answer|answer|ans)\s*(?::|=|\bis\b|-)\s*"
+            r"(?:option\s*)?(true|false|[A-D])\b", block, re.I,
+        )
+        if inline:
+            value = inline.group(1).upper()
+            return {"TRUE": "A", "FALSE": "B"}.get(value, value)
+        key_section = re.search(r"(?im)^\s*(?:answer\s*key|answers)\s*:?\s*$", material)
+        if key_section:
+            key_line = re.search(
+                rf"(?im)^\s*{number_match.group(1)}\s*[.):=-]\s*"
+                r"(true|false|[A-D])\s*$", material[key_section.end():],
+            )
+            if key_line:
+                value = key_line.group(1).upper()
+                return {"TRUE": "A", "FALSE": "B"}.get(value, value)
+    else:
+        nearby = material[end:end + 600]
+        inline = re.search(
+            r"\b(?:correct\s+answer|answer|ans)\s*(?::|=|\bis\b|-)\s*"
+            r"(?:option\s*)?(true|false|[A-D])\b", nearby, re.I,
+        )
+        if inline:
+            value = inline.group(1).upper()
+            return {"TRUE": "A", "FALSE": "B"}.get(value, value)
+    return None
+
+
 def clean_option_label(value, index):
     """Keep option content separate from the A-D label supplied by the UI."""
     text = _clean_text(value)
@@ -267,7 +317,8 @@ def repair_numeric_options(source):
     return question
 
 
-def normalize_questions(raw_questions, mcq_count, tf_count):
+def normalize_questions(raw_questions, mcq_count, tf_count, *,
+                        preserve_provided_answers=False, allow_duplicate_questions=False):
     expected = mcq_count + tf_count
     if len(raw_questions) != expected:
         raise AssessmentValidationError(f"Generated {len(raw_questions)} questions; expected {expected}.")
@@ -281,6 +332,10 @@ def normalize_questions(raw_questions, mcq_count, tf_count):
         answer = str(source.get("correctAnswer") or "").upper().strip()
         if kind not in ("MCQ", "TF") or not text:
             raise AssessmentValidationError(f"Question {number} has an invalid type or empty text.")
+        if preserve_provided_answers and not answer:
+            raise AssessmentValidationError(
+                f"Question {number} has no supplied answer key. Add its answer to the source."
+            )
         if kind == "MCQ":
             if len(options) != 4 or len(set(option.casefold() for option in options)) != 4 or not all(options):
                 raise AssessmentValidationError(f"Question {number} needs four distinct MCQ options.")
@@ -302,10 +357,11 @@ def normalize_questions(raw_questions, mcq_count, tf_count):
         }
         if source.get("verification"):
             question["verification"] = _clean_text(source["verification"])
-        computed = deterministic_key(question)
-        if computed:
-            question["correctAnswer"] = computed
-            question["reasoning"] = deterministic_explanation(question)
+        if not preserve_provided_answers:
+            computed = deterministic_key(question)
+            if computed:
+                question["correctAnswer"] = computed
+                question["reasoning"] = deterministic_explanation(question)
         result.append(question)
     actual = Counter(question["questionType"] for question in result)
     if actual["MCQ"] != mcq_count or actual["TF"] != tf_count:
@@ -313,7 +369,7 @@ def normalize_questions(raw_questions, mcq_count, tf_count):
             f"Generated {actual['MCQ']} MCQ and {actual['TF']} True/False; expected {mcq_count} MCQ and {tf_count} TF."
         )
     texts = [re.sub(r"\W+", "", question["questionText"].casefold()) for question in result]
-    if len(set(texts)) != len(texts):
+    if not allow_duplicate_questions and len(set(texts)) != len(texts):
         raise AssessmentValidationError("Generated duplicate question text.")
     return [question for question in result if question["questionType"] == "MCQ"] + [
         question for question in result if question["questionType"] == "TF"]
@@ -357,6 +413,96 @@ def apply_audit(questions, audit_items):
     return checked
 
 
+async def format_existing_questions(material, mcq_count, tf_count,
+                                    on_progress=None, on_question=None, on_draft=None):
+    """Transcribe instructor items without changing keys or discarding repeats."""
+    from ai_instructions import (SYSTEM_EXISTING_QUESTIONS_FORMAT,
+                                 get_existing_questions_prompt)
+    from ai_service import (AssessmentResponse, HF_MODEL_REASONING, Question,
+                            stream_structured_array)
+
+    formatted = []
+    source_occurrences = Counter()
+    source_text = re.sub(r"\W+", "", material.casefold())
+    for kind, count in (("MCQ", mcq_count), ("TF", tf_count)):
+        for offset in range(0, count, 15):
+            batch_count = min(15, count - offset)
+            prompt = get_existing_questions_prompt(
+                material, batch_count, batch_count if kind == "MCQ" else 0,
+                batch_count if kind == "TF" else 0, start_index=offset + 1,
+            )
+            if on_progress:
+                await on_progress(f"Formatting {kind} questions {offset + 1}-{offset + batch_count}...")
+            batch = []
+
+            async def show_draft(text, _item_index):
+                if on_draft:
+                    await on_draft(text, kind)
+
+            async for raw in stream_structured_array(
+                SYSTEM_EXISTING_QUESTIONS_FORMAT, prompt, AssessmentResponse,
+                "questions", Question, HF_MODEL_REASONING,
+                max_tokens=8000, temperature=0.0,
+                on_partial=show_draft if on_draft else None,
+                max_items=batch_count,
+            ):
+                batch.append(raw)
+            if len(batch) != batch_count:
+                raise AssessmentValidationError(
+                    f"Found {len(batch)} of {batch_count} supplied {kind} questions "
+                    f"at positions {offset + 1}-{offset + batch_count}. "
+                    "Check the source and selected answer-sheet counts."
+                )
+            supplied = []
+            for raw in batch:
+                item = raw.model_dump() if hasattr(raw, "model_dump") else dict(raw)
+                text_key = re.sub(r"\W+", "", str(item.get("questionText") or "").casefold())
+                if text_key not in source_text:
+                    raise AssessmentValidationError(
+                        f"Formatted question {len(formatted) + len(supplied) + 1} "
+                        "differs from the instructor's source. Keep the original wording."
+                    )
+                key = _source_answer_key(material, item.get("questionText") or "",
+                                         source_occurrences[text_key])
+                source_occurrences[text_key] += 1
+                if key is None:
+                    raise AssessmentValidationError(
+                        f"Question {len(formatted) + len(supplied) + 1} has no readable "
+                        "answer key in the source. Add an inline 'Answer: B' or a "
+                        "numbered Answer Key section."
+                    )
+                item["correctAnswer"] = key
+                supplied.append(item)
+            # Validate formatting and keys without solving, replacing, or deduplicating.
+            normalized = normalize_questions(
+                supplied, batch_count if kind == "MCQ" else 0,
+                batch_count if kind == "TF" else 0,
+                preserve_provided_answers=True, allow_duplicate_questions=True,
+            )
+            for question in normalized:
+                original_text = re.sub(r"\W+", "", question["questionText"].casefold())
+                if original_text not in source_text:
+                    raise AssessmentValidationError(
+                        f"Formatted question {len(formatted) + 1} differs from the "
+                        "instructor's source. Keep the original wording."
+                    )
+                if kind == "MCQ" and any(
+                    re.sub(r"\W+", "", option.casefold()) not in source_text
+                    for option in question["options"]
+                ):
+                    raise AssessmentValidationError(
+                        f"Formatted question {len(formatted) + 1} contains a "
+                        "choice missing from the instructor's source."
+                    )
+                formatted.append(question)
+                if on_question:
+                    await on_question(question, len(formatted))
+    return normalize_questions(
+        formatted, mcq_count, tf_count,
+        preserve_provided_answers=True, allow_duplicate_questions=True,
+    )
+
+
 async def generate_verified_questions(material, mcq_count, tf_count,
                                       source_mode="topic", on_progress=None,
                                       on_question=None, on_draft=None):
@@ -367,7 +513,7 @@ async def generate_verified_questions(material, mcq_count, tf_count,
     """
     from ai_instructions import (
         SYSTEM_ANSWER_AUDIT, SYSTEM_ASSESSMENT_DESIGN,
-        get_assessment_prompt, get_existing_questions_prompt,
+        get_assessment_prompt,
     )
     from ai_service import (
         AnswerAuditItem, AnswerAuditResponse, AssessmentResponse,
@@ -376,6 +522,10 @@ async def generate_verified_questions(material, mcq_count, tf_count,
 
     if mcq_count < 0 or tf_count < 0 or mcq_count + tf_count < 1:
         raise AssessmentValidationError("An assessment needs a positive question count.")
+    if source_mode == "existing_questions":
+        return await format_existing_questions(
+            material, mcq_count, tf_count, on_progress, on_question, on_draft,
+        )
     accepted = []
     seen = set()
     rejected_texts = []
@@ -397,24 +547,16 @@ async def generate_verified_questions(material, mcq_count, tf_count,
             batch_tf = batch_count if kind == "TF" else 0
             prior = [question["questionText"] for question in accepted]
             prior.extend(rejected_texts[-20:])
-            prompt = (
-                get_existing_questions_prompt(material, batch_count, batch_mcq, batch_tf, prior)
-                if source_mode == "existing_questions"
-                else get_assessment_prompt(material, batch_count, batch_mcq > 0,
+            prompt = get_assessment_prompt(material, batch_count, batch_mcq > 0,
                                            batch_tf > 0, batch_mcq, batch_tf,
                                            source_mode, prior)
-            )
             if stagnant:
                 prompt += f"\nThe previous attempt was rejected: {last_error}. Write different, unambiguous items."
             if replacement_needed:
-                if source_mode == "existing_questions":
-                    prompt += (f"\nThis is a replacement for rejected items. Select {batch_count} "
-                               "different questions from the instructor's content; do not invent them.")
-                else:
-                    prompt += (f"\nThis is a replacement for rejected items. Write {batch_count} "
-                               "new questions with distinct facts, scenarios, or calculations. "
-                               "For numeric practice, change the inputs and recompute the keys. "
-                               "Do not merely rephrase excluded questions.")
+                prompt += (f"\nThis is a replacement for rejected items. Write {batch_count} "
+                           "new questions with distinct facts, scenarios, or calculations. "
+                           "For numeric practice, change the inputs and recompute the keys. "
+                           "Do not merely rephrase excluded questions.")
             if on_progress:
                 await on_progress(f"Generating {kind} questions {done + 1}-{done + batch_count}...")
             before = done
@@ -437,8 +579,7 @@ async def generate_verified_questions(material, mcq_count, tf_count,
                     if len(proposed) >= batch_count:
                         continue
                     try:
-                        if source_mode != "existing_questions":
-                            raw = repair_numeric_options(raw)
+                        raw = repair_numeric_options(raw)
                         item = normalize_questions([raw], 1 if kind == "MCQ" else 0,
                                                    1 if kind == "TF" else 0)[0]
                         key = re.sub(r"\W+", "", item["questionText"].casefold())
@@ -487,12 +628,8 @@ async def generate_verified_questions(material, mcq_count, tf_count,
         excluded = [item["questionText"] for item in questions] + rejected_texts[-20:]
         for attempt in range(8):
             candidate = None
-            prompt = (
-                get_existing_questions_prompt(material, 1, kind == "MCQ", kind == "TF", excluded)
-                if source_mode == "existing_questions"
-                else get_assessment_prompt(material, 1, kind == "MCQ", kind == "TF",
+            prompt = get_assessment_prompt(material, 1, kind == "MCQ", kind == "TF",
                                            kind == "MCQ", kind == "TF", source_mode, excluded)
-            )
             prompt += (f"\nReplace this ambiguous item: {original['questionText']}. "
                        f"Issue: {reason}. Provide a distinct, verifiable question and answer.")
             try:
@@ -503,8 +640,7 @@ async def generate_verified_questions(material, mcq_count, tf_count,
                     max_tokens=2000, temperature=min(0.3 + attempt * 0.05, 0.6),
                     max_items=1,
                 ):
-                    if source_mode != "existing_questions":
-                        raw = repair_numeric_options(raw)
+                    raw = repair_numeric_options(raw)
                     candidate = normalize_questions([raw], 1 if kind == "MCQ" else 0, 1 if kind == "TF" else 0)[0]
                     key = re.sub(r"\W+", "", candidate["questionText"].casefold())
                     if any(key == re.sub(r"\W+", "", text.casefold()) for text in excluded):

@@ -31,6 +31,8 @@ class _StudentInsightDetailScreenState
   bool _isLoading = true;
   bool _isGeneratingInsight = false;
   Map<String, dynamic>? _data;
+  String? _loadError;
+  String? _insightError;
 
   @override
   void initState() {
@@ -39,6 +41,10 @@ class _StudentInsightDetailScreenState
   }
 
   Future<void> _loadResult() async {
+    setState(() {
+      _isLoading = true;
+      _loadError = null;
+    });
     try {
       final Map<String, dynamic>? res;
       if (widget.sheetId != null) {
@@ -61,14 +67,23 @@ class _StudentInsightDetailScreenState
         }
       }
     } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
+      debugPrint('Student result load error: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _loadError = 'Could not load your result. Please try again.';
+        });
+      }
     }
   }
 
   Future<void> _generateInsightOnTheFly(Map<String, dynamic> grade,
       {bool regenerate = false}) async {
     if (_isGeneratingInsight) return;
-    setState(() => _isGeneratingInsight = true);
+    setState(() {
+      _isGeneratingInsight = true;
+      _insightError = null;
+    });
 
     try {
       final sheetId = grade['sheet_id']?.toString() ?? '';
@@ -93,38 +108,82 @@ class _StudentInsightDetailScreenState
       }
     } catch (e) {
       debugPrint("AI Insight generation error: $e");
-      if (mounted) setState(() => _isGeneratingInsight = false);
+      if (mounted) {
+        setState(() {
+          _isGeneratingInsight = false;
+          _insightError = 'AI feedback could not be loaded.';
+        });
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final grade = _data?['grade'];
-    final savedInsight = _data?['insight'];
-    final insightRaw =
-        savedInsight is Map ? savedInsight['insight_text'] : null;
+    dynamic savedInsight = _data?['insight'];
+
+    if (savedInsight is String) {
+      try {
+        savedInsight = jsonDecode(savedInsight);
+      } catch (_) {}
+    }
+
+    final insightRaw = savedInsight is Map
+        ? (savedInsight['insight_text'] ?? savedInsight['text'])
+        : (savedInsight is String ? savedInsight : null);
 
     // Parse structured JSON from AI if possible
     Map<String, dynamic>? insightJson;
-    if (savedInsight is Map && savedInsight['insight'] is Map) {
-      insightJson = Map<String, dynamic>.from(savedInsight['insight']);
-    } else if (savedInsight is Map &&
-        savedInsight['performanceSummary'] is String) {
-      insightJson = Map<String, dynamic>.from(savedInsight);
-    } else if (insightRaw is String) {
-      try {
-        insightJson = jsonDecode(insightRaw);
-      } catch (_) {
-        // Fallback to raw text
+    if (savedInsight is Map) {
+      final inner = savedInsight['insight'];
+      if (inner is Map) {
+        insightJson = Map<String, dynamic>.from(inner);
+      } else if (inner is String) {
+        try {
+          final decodedInner = jsonDecode(inner);
+          if (decodedInner is Map) {
+            insightJson = Map<String, dynamic>.from(decodedInner);
+          }
+        } catch (_) {}
+      } else if (savedInsight['performanceSummary'] is String) {
+        insightJson = Map<String, dynamic>.from(savedInsight);
       }
+    }
+
+    if (insightJson == null && insightRaw is String) {
+      try {
+        final decoded = jsonDecode(insightRaw);
+        if (decoded is Map) {
+          insightJson = Map<String, dynamic>.from(decoded);
+        }
+      } catch (_) {}
     }
 
     return Scaffold(
       appBar: AppBar(title: Text(widget.examTitle)),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
+          : _loadError != null
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(_loadError!, textAlign: TextAlign.center),
+                      TextButton(onPressed: _loadResult, child: const Text('Retry')),
+                    ],
+                  ),
+                )
           : _data == null
-              ? const Center(child: Text("Result not available yet."))
+              ? const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(24.0),
+                    child: Text(
+                      "Result not available yet or not yet released by instructor.",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 16),
+                    ),
+                  ),
+                )
               : SingleChildScrollView(
                   padding: const EdgeInsets.all(16),
                   child: Center(
@@ -181,11 +240,25 @@ class _StudentInsightDetailScreenState
                             ),
                           )
                         else
-                          Text(
-                              insightRaw?.toString() ??
-                                  "Your AI-powered pedagogical feedback is being generated. Check back soon!",
-                              style:
-                                  const TextStyle(fontSize: 15, height: 1.5)),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                insightRaw?.toString() ??
+                                    _insightError ??
+                                    'Personal feedback is not available yet.',
+                                style: const TextStyle(fontSize: 15, height: 1.5),
+                              ),
+                              if (grade != null) TextButton.icon(
+                                onPressed: () => _generateInsightOnTheFly(
+                                  Map<String, dynamic>.from(grade),
+                                  regenerate: true,
+                                ),
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Retry feedback'),
+                              ),
+                            ],
+                          ),
                       ],
                     ),
                   )),

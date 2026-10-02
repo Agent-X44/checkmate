@@ -14,6 +14,17 @@ SYSTEM_ASSESSMENT_DESIGN = (
     "For numeric answers, make each option a plain number."
 )
 
+SYSTEM_EXISTING_QUESTIONS_FORMAT = (
+    "You are a transcription and layout assistant for instructor-provided assessment items. "
+    "Return only a JSON object with a 'questions' array matching the supplied schema. "
+    "Do not write, rewrite, solve, verify, correct, replace, omit, or deduplicate questions. "
+    "Keep question wording, choice wording, repeated questions, and supplied answer keys. "
+    "Remove printed question numbers and A-D choice labels from text because the app adds them. "
+    "Use part 1 for MCQ and part 2 for True/False; TF options are ['True', 'False']. "
+    "Map supplied MCQ answer letters to A-D and supplied True/False answers to A/B. "
+    "If no answer is supplied, do not invent one."
+)
+
 
 def get_assessment_prompt(material: str, count: int, include_mcq: bool = True,
                           include_tf: bool = False, mcq_count: int = 5,
@@ -50,12 +61,7 @@ def get_assessment_prompt(material: str, count: int, include_mcq: bool = True,
 
 
 def get_existing_questions_prompt(material: str, count: int, mcq_count: int,
-                                  tf_count: int,
-                                  previous_questions: list[str] | None = None) -> str:
-    if previous_questions:
-        prior = "\nCRITICAL: Already selected items to exclude. Do not generate them again:\n" + "\n".join(f"- {q}" for q in previous_questions)
-    else:
-        prior = ""
+                                  tf_count: int, start_index: int = 1) -> str:
     noun = "item" if count == 1 else "items"
     
     distribution_text = []
@@ -69,16 +75,19 @@ def get_existing_questions_prompt(material: str, count: int, mcq_count: int,
     mcq_rule = "Never output any MCQ questions. Output ONLY True/False." if mcq_count == 0 else ""
     
     return (
-        "The following material contains instructor-provided questions. Convert only "
-        "these questions into assessment JSON; preserve their meaning and options. "
-        "Independently verify supplied answer keys and correct any demonstrably wrong key. "
-        "If there are too few suitable questions of the requested types, do not invent "
-        "unrelated questions; the request will fail validation. "
+        "Format the instructor's existing questions as assessment JSON. "
         f"Return exactly {count} {noun}: {distribution_str}. "
+        f"Select {distribution_str} items at positions {start_index} through "
+        f"{start_index + count - 1} among the supplied items of that type, "
+        "in their original order. Count identical repeated questions separately. "
         f"{mcq_rule} {tf_rule} "
         "Never convert a True/False statement into a four-option MCQ. "
-        "Base your verification strictly on facts, historical records, calculations, or logic."
-        f"{prior}\n\nINSTRUCTOR CONTENT:\n{material}"
+        "Preserve every chosen question and its choices, including duplicates. "
+        "Copy the provided answer key exactly; do not check or correct its correctness. "
+        "Do not invent replacement questions, choices, or answers. "
+        "If a selected item has no supplied key, leave correctAnswer empty so validation "
+        "can ask the instructor to provide it. Keep reasoning empty. "
+        f"\n\nINSTRUCTOR CONTENT:\n{material}"
     )
 
 

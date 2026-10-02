@@ -145,6 +145,122 @@ def test_model_choice_labels_are_removed_without_changing_the_key():
     assert checked[0]["correctAnswer"] == "C"
 
 
+def test_existing_questions_keep_repeated_text_and_supplied_keys(monkeypatch):
+    import ai_service
+
+    calls = []
+    supplied = [
+        {**_mcq(1, key="A"), "options": ["A. 1", "B. 2", "C. 3", "D. 4"]},
+        {**_mcq(1, key="B"), "options": ["A. 1", "B. 2", "C. 3", "D. 4"]},
+        {"questionType": "TF", "questionText": "Two is even.",
+         "options": ["True", "False"], "correctAnswer": "A"},
+    ]
+
+    async def fake_stream(system_prompt, user_prompt, schema_class, array_key,
+                          item_class, model_override=None, max_tokens=8192,
+                          temperature=0.3, on_partial=None, max_items=None):
+        calls.append((system_prompt, user_prompt, array_key))
+        assert "positions 1 through" in user_prompt
+        assert "Already selected items to exclude" not in user_prompt
+        items = supplied[:2] if "2 MCQ" in user_prompt else supplied[2:]
+        for item in items:
+            yield item
+
+    monkeypatch.setattr(ai_service, "stream_structured_array", fake_stream)
+    result = asyncio.run(generate_verified_questions(
+        "1. What is 1 plus 0? A. 1 B. 2 C. 3 D. 4 Answer: B\n"
+        "2. What is 1 plus 0? A. 1 B. 2 C. 3 D. 4 Answer: A\n"
+        "3. Two is even. Answer: False",
+        2, 1, source_mode="existing_questions",
+    ))
+    assert len(result) == 3
+    assert [item["questionText"] for item in result[:2]] == [
+        "What is 1 plus 0?", "What is 1 plus 0?",
+    ]
+    assert [item["correctAnswer"] for item in result] == ["B", "A", "B"]
+    assert result[0]["options"] == ["1", "2", "3", "4"]
+    assert all(item["part"] == (1 if item["questionType"] == "MCQ" else 2)
+               for item in result)
+    assert len(calls) == 2
+    assert all(array_key == "questions" for _, _, array_key in calls)
+
+
+def test_existing_questions_keep_duplicates_across_stream_batches(monkeypatch):
+    import ai_service
+
+    prompts = []
+
+    async def fake_stream(system_prompt, user_prompt, schema_class, array_key,
+                          item_class, model_override=None, max_tokens=8192,
+                          temperature=0.3, on_partial=None, max_items=None):
+        prompts.append(user_prompt)
+        for _ in range(max_items):
+            yield {**_mcq(1), "options": ["A. 1", "B. 2", "C. 3", "D. 4"]}
+
+    monkeypatch.setattr(ai_service, "stream_structured_array", fake_stream)
+    material = "\n".join(
+        f"{number}. What is 1 plus 0? A. 1 B. 2 C. 3 D. 4 Answer: A"
+        for number in range(1, 17)
+    )
+    result = asyncio.run(generate_verified_questions(
+        material, 16, 0, source_mode="existing_questions",
+    ))
+    assert len(result) == 16
+    assert len({question["questionText"] for question in result}) == 1
+    assert all(question["correctAnswer"] == "A" for question in result)
+    assert len(prompts) == 2
+    assert "positions 16 through 16" in prompts[1]
+
+
+def test_existing_questions_with_missing_key_fail_without_replacement(monkeypatch):
+    import ai_service
+
+    async def fake_stream(system_prompt, user_prompt, schema_class, array_key,
+                          item_class, model_override=None, max_tokens=8192,
+                          temperature=0.3, on_partial=None, max_items=None):
+        yield _mcq(1)
+
+    monkeypatch.setattr(ai_service, "stream_structured_array", fake_stream)
+    with pytest.raises(AssessmentValidationError, match="no readable answer key"):
+        asyncio.run(generate_verified_questions(
+            "What is 1 plus 0? A. 1 B. 2 C. 3 D. 4", 1, 0,
+            source_mode="existing_questions",
+        ))
+
+
+def test_existing_questions_reject_rewritten_source_text(monkeypatch):
+    import ai_service
+
+    async def fake_stream(system_prompt, user_prompt, schema_class, array_key,
+                          item_class, model_override=None, max_tokens=8192,
+                          temperature=0.3, on_partial=None, max_items=None):
+        yield {**_mcq(1), "questionText": "What is one plus zero?"}
+
+    monkeypatch.setattr(ai_service, "stream_structured_array", fake_stream)
+    with pytest.raises(AssessmentValidationError, match="differs from the instructor's source"):
+        asyncio.run(generate_verified_questions(
+            "What is 1 plus 0? A. 1 B. 2 C. 3 D. 4 Answer: A",
+            1, 0, source_mode="existing_questions",
+        ))
+
+
+def test_existing_questions_apply_separate_numbered_answer_key(monkeypatch):
+    import ai_service
+
+    async def fake_stream(system_prompt, user_prompt, schema_class, array_key,
+                          item_class, model_override=None, max_tokens=8192,
+                          temperature=0.3, on_partial=None, max_items=None):
+        yield {**_mcq(1, key="A"), "questionText": "Which number is prime?",
+               "options": ["4", "6", "7", "8"]}
+
+    monkeypatch.setattr(ai_service, "stream_structured_array", fake_stream)
+    result = asyncio.run(generate_verified_questions(
+        "1. Which number is prime?\nA. 4\nB. 6\nC. 7\nD. 8\n"
+        "Answer Key\n1. C", 1, 0, source_mode="existing_questions",
+    ))
+    assert result[0]["correctAnswer"] == "C"
+
+
 def test_independent_audit_corrects_wrong_proposed_key():
     questions = normalize_questions([{
         **_mcq(1, key="B"),

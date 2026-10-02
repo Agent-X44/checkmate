@@ -273,7 +273,7 @@ class _StudentsListScreenState extends State<StudentsListScreen> {
                               ],
                             )
                           : null,
-                      onTap: widget.course.isOwner
+                      onTap: widget.course.isOwner && studentId != null
                           ? () {
                               Navigator.push(
                                 context,
@@ -281,7 +281,7 @@ class _StudentsListScreenState extends State<StudentsListScreen> {
                                   builder: (context) => PrivateChatScreen(
                                     course: widget.course,
                                     student: Student(
-                                      id: '${widget.course.id}_private_chat',
+                                      id: studentId,
                                       name: name,
                                       avatar: initial,
                                     ),

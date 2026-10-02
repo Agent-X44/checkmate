@@ -42,6 +42,7 @@ from ai_service import (
 )
 from assessment_generation import AssessmentValidationError, clean_option_label, generate_verified_questions, validate_distribution
 from result_analysis import class_summary, enrich_answers, grade_context, question_counts, student_summary, student_overview_summary, topic_counts
+from scores_export import build_scores_workbook
 from ai_instructions import (
     SYSTEM_CLASS_ANALYSIS,
     SYSTEM_STUDENT_MENTOR,
@@ -327,6 +328,8 @@ async def generate_exam_stream(
         # Keep operational details out of the student-facing live preview.
         if message.startswith("Generating"):
             phase = "Writing the next questions"
+        elif message.startswith("Formatting"):
+            phase = "Formatting your questions"
         elif message.startswith("Checking"):
             phase = "Finalizing assessment"
         elif message.startswith("Accepted"):
@@ -358,7 +361,9 @@ async def generate_exam_stream(
                 if not extracted.strip():
                     raise AssessmentValidationError("No readable text was found in the uploaded file.")
                 material = f"Source file: {filename}\n{extracted}\nAdditional topic: {topic}"
-            await queue.put(_assessment_event("token", content="Preparing verified questions...\n"))
+            preparation = ("Preparing supplied questions...\n" if source_mode == "existing_questions"
+                           else "Preparing verified questions...\n")
+            await queue.put(_assessment_event("token", content=preparation))
             await report("Preparing structured assessment...")
             questions = await generate_verified_questions(
                 material, mcq_count, tf_count, source_mode, report, show_question,
@@ -503,12 +508,25 @@ async def delete_exam_endpoint(exam_id: str):
         raise HTTPException(status_code=500, detail=f"Delete exam error: {str(e)}")
 
 @app.get("/get-exams/{class_id}")
-async def get_exams(class_id: str):
-    """Fetch all exams (including unapproved drafts) for a class bypassing RLS."""
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database unconfigured")
+async def get_exams(class_id: str, user=Depends(get_current_user)):
+    """Instructors see drafts; enrolled students see approved assessments."""
+    user_id = _require_user(user)
+    course = _one("classes", "id", class_id, "id, instructor_id")
+    if not course:
+        raise HTTPException(status_code=404, detail="Class not found")
+    is_instructor = course.get("instructor_id") == user_id
+    if not is_instructor:
+        enrollment = supabase.table("enrollments").select("id").eq(
+            "class_id", class_id).eq("user_id", user_id).limit(1).execute().data
+        if not enrollment:
+            raise HTTPException(status_code=403, detail="Class access required")
     try:
-        res = supabase.table("exams").select("*, questions(id, question_type), answer_sheets(id, grades(percentage))").eq("class_id", class_id).order("created_at", desc=True).execute()
+        columns = ("*, questions(id, question_type), answer_sheets(id, grades(percentage))"
+                   if is_instructor else "*, questions(id, question_type)")
+        query = supabase.table("exams").select(columns).eq("class_id", class_id)
+        if not is_instructor:
+            query = query.eq("is_approved", True)
+        res = query.order("created_at", desc=True).execute()
         return res.data or []
     except Exception as e:
         logger.error(f"Get exams error: {e}")
@@ -772,6 +790,67 @@ def _grade_rows_for_sheet(sheet_id):
 
 def _latest_grade(grades):
     return max(grades, key=lambda grade: (grade.get("created_at") or "", str(grade.get("id") or "")))
+
+
+@app.get("/my-exam-result/{exam_id}")
+async def my_exam_result(exam_id: str, user=Depends(get_current_user)):
+    """Return only the caller's saved, released grade and item evaluations."""
+    user_id = _require_user(user)
+    exam = _one("exams", "id", exam_id, "id, results_released")
+    if not exam or exam.get("results_released") is not True:
+        raise HTTPException(status_code=404, detail="Released result not found")
+    sheets = _paged(lambda: supabase.table("answer_sheets").select("id")
+                    .eq("exam_id", exam_id).eq("student_id", user_id))
+    grades = [grade for sheet in sheets
+              for grade in _grade_rows_for_sheet(sheet["id"])]
+    if not grades:
+        raise HTTPException(status_code=404, detail="Saved result not found")
+    grade = enrich_answers(_latest_grade(grades), _questions_for_exam(exam_id))
+    return {"grade": grade, "insight": grade.get("student_insight")}
+
+
+@app.get("/export-scores/{exam_id}")
+async def export_scores(exam_id: str, user=Depends(get_current_user)):
+    """Download saved assessment scores as an instructor-only XLSX file."""
+    exam = _instructor_exam(exam_id, user)
+    try:
+        course = _one("classes", "id", exam["class_id"], "name") or {}
+        sheets = _paged(lambda: supabase.table("answer_sheets").select(
+            "id, sheet_identifier, student_id, set_type, profiles(name, email), "
+            "grades(id, score, total_questions, percentage, created_at)"
+        ).eq("exam_id", exam_id).order("id"))
+        submissions = []
+        for sheet in sheets:
+            relation = sheet.get("grades") or []
+            grades = relation if isinstance(relation, list) else [relation]
+            if not grades:
+                continue
+            grade = _latest_grade(grades)
+            profile = sheet.get("profiles") or {}
+            submissions.append({
+                "student_name": profile.get("name") or profile.get("email") or "Student",
+                "student_email": profile.get("email") or "",
+                "set_type": sheet.get("set_type") or "A",
+                "score": grade.get("score"),
+                "total_questions": grade.get("total_questions"),
+                "percentage": grade.get("percentage"),
+                "created_at": grade.get("created_at"),
+                "sheet_code": sheet.get("sheet_identifier") or "",
+            })
+        workbook = build_scores_workbook(
+            exam.get("title") or "Assessment", course.get("name") or "Class",
+            submissions, results_released=exam.get("results_released") is True,
+        )
+        filename = f"CheckMate_Scores_{exam_id[:8]}.xlsx"
+        return StreamingResponse(workbook, media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Score export failed for %s: %s", exam_id, exc)
+        raise HTTPException(status_code=500, detail="Could not export scores")
 
 
 @app.post("/analyze-class")

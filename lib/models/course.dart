@@ -20,33 +20,30 @@ class ChatMessage {
     this.editedTimestamp,
   }) : id = id ?? DateTime.now().microsecondsSinceEpoch.toString();
 
-  bool getIsMe(bool isCurrentViewerOwner) {
-    if (isCurrentViewerOwner) {
-      return senderId == 'instructor';
-    } else {
-      return senderId != 'instructor';
-    }
-  }
-
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'senderId': senderId,
-    'senderName': senderName,
-    'text': text,
-    'timestamp': timestamp.toIso8601String(),
-    'isEdited': isEdited,
-    'editedTimestamp': editedTimestamp?.toIso8601String(),
-  };
+        'id': id,
+        'senderId': senderId,
+        'senderName': senderName,
+        'text': text,
+        'timestamp': timestamp.toIso8601String(),
+        'isEdited': isEdited,
+        'editedTimestamp': editedTimestamp?.toIso8601String(),
+      };
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
-    id: json['id'],
-    senderId: json['senderId'] ?? (json['sender'] == 'Me' ? 'instructor' : 'student'),
-    senderName: json['senderName'] ?? json['sender'] ?? 'User',
-    text: json['text'] ?? '',
-    timestamp: json['timestamp'] != null ? DateTime.parse(json['timestamp']) : DateTime.now(),
-    isEdited: json['isEdited'] ?? false,
-    editedTimestamp: json['editedTimestamp'] != null ? DateTime.parse(json['editedTimestamp']) : null,
-  );
+        id: json['id'],
+        senderId: json['senderId'] ??
+            (json['sender'] == 'Me' ? 'instructor' : 'student'),
+        senderName: json['senderName'] ?? json['sender'] ?? 'User',
+        text: json['text'] ?? '',
+        timestamp: json['timestamp'] != null
+            ? DateTime.parse(json['timestamp'])
+            : DateTime.now(),
+        isEdited: json['isEdited'] ?? false,
+        editedTimestamp: json['editedTimestamp'] != null
+            ? DateTime.parse(json['editedTimestamp'])
+            : null,
+      );
 }
 
 class ClassComment {
@@ -65,20 +62,22 @@ class ClassComment {
   });
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'authorName': authorName,
-    'text': text,
-    'timestamp': timestamp.toIso8601String(),
-    'isMe': isMe,
-  };
+        'id': id,
+        'authorName': authorName,
+        'text': text,
+        'timestamp': timestamp.toIso8601String(),
+        'isMe': isMe,
+      };
 
   factory ClassComment.fromJson(Map<String, dynamic> json) => ClassComment(
-    id: json['id'] ?? '',
-    authorName: json['authorName'] ?? 'User',
-    text: json['text'] ?? '',
-    timestamp: json['timestamp'] != null ? DateTime.parse(json['timestamp']) : DateTime.now(),
-    isMe: json['isMe'] ?? false,
-  );
+        id: json['id'] ?? '',
+        authorName: json['authorName'] ?? 'User',
+        text: json['text'] ?? '',
+        timestamp: json['timestamp'] != null
+            ? DateTime.parse(json['timestamp'])
+            : DateTime.now(),
+        isMe: json['isMe'] ?? false,
+      );
 }
 
 class StreamPost {
@@ -113,46 +112,42 @@ class StreamPost {
   }) : comments = comments ?? [];
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'authorName': authorName,
-    'authorRole': authorRole,
-    'title': title,
-    'content': content,
-    'timestamp': timestamp.toIso8601String(),
-    'editedTimestamp': editedTimestamp?.toIso8601String(),
-    'postType': postType,
-    'attachmentName': attachmentName,
-    'attachmentType': attachmentType,
-    'allowComments': allowComments,
-    'isMe': isMe,
-    'comments': comments.map((c) => c.toJson()).toList(),
-  };
+        'id': id,
+        'authorName': authorName,
+        'authorRole': authorRole,
+        'title': title,
+        'content': content,
+        'timestamp': timestamp.toIso8601String(),
+        'editedTimestamp': editedTimestamp?.toIso8601String(),
+        'postType': postType,
+        'attachmentName': attachmentName,
+        'attachmentType': attachmentType,
+        'allowComments': allowComments,
+        'isMe': isMe,
+        'comments': comments.map((c) => c.toJson()).toList(),
+      };
 
   factory StreamPost.fromJson(Map<String, dynamic> json) => StreamPost(
-    id: json['id'] ?? '',
-    authorName: json['authorName'] ?? 'Instructor',
-    authorRole: json['authorRole'] ?? 'Instructor',
-    title: json['title'],
-    content: json['content'] ?? '',
-    timestamp: json['timestamp'] != null ? DateTime.parse(json['timestamp']) : DateTime.now(),
-    editedTimestamp: json['editedTimestamp'] != null ? DateTime.parse(json['editedTimestamp']) : null,
-    postType: json['postType'] ?? 'announcement',
-    attachmentName: json['attachmentName'],
-    attachmentType: json['attachmentType'],
-    allowComments: json['allowComments'] ?? true,
-    isMe: json['isMe'] ?? false,
-    comments: (json['comments'] as List? ?? []).map((c) => ClassComment.fromJson(c)).toList(),
-  );
-}
-
-class PrivateChat {
-  final String studentId;
-  final List<ChatMessage> messages;
-
-  PrivateChat({
-    required this.studentId,
-    List<ChatMessage>? messages,
-  }) : messages = messages ?? [];
+        id: json['id'] ?? '',
+        authorName: json['authorName'] ?? 'Instructor',
+        authorRole: json['authorRole'] ?? 'Instructor',
+        title: json['title'],
+        content: json['content'] ?? '',
+        timestamp: json['timestamp'] != null
+            ? DateTime.parse(json['timestamp'])
+            : DateTime.now(),
+        editedTimestamp: json['editedTimestamp'] != null
+            ? DateTime.parse(json['editedTimestamp'])
+            : null,
+        postType: json['postType'] ?? 'announcement',
+        attachmentName: json['attachmentName'],
+        attachmentType: json['attachmentType'],
+        allowComments: json['allowComments'] ?? true,
+        isMe: json['isMe'] ?? false,
+        comments: (json['comments'] as List? ?? [])
+            .map((c) => ClassComment.fromJson(c))
+            .toList(),
+      );
 }
 
 class Student {
@@ -174,7 +169,6 @@ class Course {
   final List<ChatMessage> groupMessages;
   final List<StreamPost> streamPosts;
   final List<Student> enrolledStudents;
-  final Map<String, PrivateChat> privateChats;
   bool globalCanStudentReply;
   final String joinCode;
 
@@ -191,11 +185,9 @@ class Course {
     List<ChatMessage>? groupMessages,
     List<StreamPost>? streamPosts,
     List<Student>? enrolledStudents,
-    Map<String, PrivateChat>? privateChats,
   })  : groupMessages = groupMessages ?? [],
         streamPosts = streamPosts ?? [],
-        enrolledStudents = enrolledStudents ?? [],
-        privateChats = privateChats ?? {};
+        enrolledStudents = enrolledStudents ?? [];
 
   factory Course.fromMap(Map<String, dynamic> map, {required bool isOwner}) {
     final String courseId = map['id']?.toString() ?? '';

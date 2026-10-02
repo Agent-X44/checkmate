@@ -59,38 +59,15 @@ class ApiService {
       throw const FormatException('Invalid sheet ID format.');
     }
 
-    try {
-      final session = Supabase.instance.client.auth.currentSession;
-      final headers = session != null
-          ? {'Authorization': 'Bearer ${session.accessToken}'}
-          : null;
-
-      final response = await _dio.get(
-        '/resolve-sheet/$cleanId',
-        options: dio.Options(headers: headers),
-      );
-      return response.data;
-    } catch (e) {
-      debugPrint(
-          "API Error (resolveSheet): $e - attempting direct Supabase fallback...");
-      try {
-        final res = await Supabase.instance.client
-            .from('answer_sheets')
-            .select('*, profiles(*), exams(*, classes(*))')
-            .eq('sheet_identifier', cleanId)
-            .maybeSingle();
-
-        if (res != null) {
-          final sheetData = Map<String, dynamic>.from(res);
-          final profile = sheetData['profiles'] as Map?;
-          sheetData['student_name'] = profile?['name'] ?? 'Student';
-          return sheetData;
-        }
-      } catch (dbErr) {
-        debugPrint("Direct Supabase resolveSheet fallback error: $dbErr");
-      }
-      rethrow;
-    }
+    final session = Supabase.instance.client.auth.currentSession;
+    if (session == null) throw StateError('Sign in to evaluate answer sheets.');
+    final response = await _dio.get(
+      '/resolve-sheet/$cleanId',
+      options: dio.Options(
+        headers: {'Authorization': 'Bearer ${session.accessToken}'},
+      ),
+    );
+    return Map<String, dynamic>.from(response.data as Map);
   }
 
   static Future<Map<String, dynamic>> createExam({
@@ -158,26 +135,23 @@ class ApiService {
   }
 
   static Future<bool> checkSheetScanned(String sheetId) async {
-    if (sheetId.isEmpty || sheetId == 'unknown') return false;
-    try {
-      final existingSheet = await Supabase.instance.client
-          .from('answer_sheets')
-          .select('id')
-          .eq('sheet_identifier', sheetId.trim())
-          .maybeSingle();
-
-      if (existingSheet == null) return false;
-
-      final existing = await Supabase.instance.client
-          .from('grades')
-          .select('id')
-          .eq('sheet_id', existingSheet['id'])
-          .maybeSingle();
-      return existing != null;
-    } catch (e) {
-      debugPrint("checkSheetScanned error: $e");
-      return false;
+    final cleanId = sheetId.trim();
+    if (!_isValidSheetId(cleanId)) {
+      throw const FormatException('Invalid sheet ID format.');
     }
+    final session = Supabase.instance.client.auth.currentSession;
+    if (session == null) throw StateError('Sign in to evaluate answer sheets.');
+    final response = await _dio.get(
+      '/check-sheet-scanned/$cleanId',
+      options: dio.Options(
+        headers: {'Authorization': 'Bearer ${session.accessToken}'},
+      ),
+    );
+    final data = response.data;
+    if (data is! Map || data['scanned'] is! bool) {
+      throw const FormatException('Invalid sheet status response.');
+    }
+    return data['scanned'] as bool;
   }
 
   static Future<List<Map<String, dynamic>>> getExamResults(
@@ -286,6 +260,18 @@ class ApiService {
     }
   }
 
+  /// The backend returns only the signed-in student's saved, released result.
+  static Future<Map<String, dynamic>?> getMyExamResult(String examId) async {
+    try {
+      final response = await _dio.get('/my-exam-result/$examId',
+          options: _authenticatedOptions());
+      return Map<String, dynamic>.from(response.data);
+    } on dio.DioException catch (error) {
+      if (error.response?.statusCode == 404) return null;
+      rethrow;
+    }
+  }
+
   static Future<void> updateQuestion({
     required String questionId,
     required String questionText,
@@ -315,7 +301,8 @@ class ApiService {
 
   static Future<List<Map<String, dynamic>>> getExams(String classId) async {
     try {
-      final response = await _dio.get('/get-exams/$classId');
+      final response = await _dio.get('/get-exams/$classId',
+          options: _authenticatedOptions());
       return List<Map<String, dynamic>>.from(response.data);
     } catch (e) {
       debugPrint("API Error (getExams): $e");
@@ -359,6 +346,13 @@ class ApiService {
   static Future<void> releaseResults(String examId) async {
     await _dio.post('/release-results/$examId',
         options: _authenticatedOptions());
+  }
+
+  static Future<Uint8List> exportScoresXlsx(String examId) async {
+    final options = _authenticatedOptions();
+    options.responseType = dio.ResponseType.bytes;
+    final response = await _dio.get('/export-scores/$examId', options: options);
+    return Uint8List.fromList(List<int>.from(response.data));
   }
 
   static Future<Uint8List> exportToDocx(

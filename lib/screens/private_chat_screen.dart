@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/course.dart';
 import '../services/messaging_service.dart';
 import '../utils/ui_utils.dart';
@@ -20,71 +21,69 @@ class PrivateChatScreen extends StatefulWidget {
 
 class _PrivateChatScreenState extends State<PrivateChatScreen> {
   final TextEditingController _controller = TextEditingController();
-  late PrivateChat _chat;
-  late String _chatKey;
-  Timer? _pollTimer;
+  final List<ChatMessage> _messages = [];
+  StreamSubscription<List<ChatMessage>>? _messageSubscription;
+  late final String _studentId;
+  bool _sending = false;
+  bool _loadingMessages = true;
+  bool _messageLoadFailed = false;
+
+  String get _currentUserId =>
+      Supabase.instance.client.auth.currentUser?.id ?? '';
+  bool _isMine(ChatMessage message) => message.senderId == _currentUserId;
 
   @override
   void initState() {
     super.initState();
-    // Use course-bound canonical chat key so student and instructor always sync
-    _chatKey = '${widget.course.id}_private_chat';
-    _chat = widget.course.privateChats.putIfAbsent(
-      _chatKey,
-      () => PrivateChat(studentId: _chatKey),
-    );
-    _loadPrivateChat(_chatKey);
-
-    // Real-time polling every 1 second to instantly sync messages between instructor and student views
-    _pollTimer = Timer.periodic(const Duration(milliseconds: 1000), (_) async {
-      final saved = await MessagingService.loadPrivateChat(
-          widget.course.id, widget.course.name, _chatKey);
-      if (mounted && saved.length != _chat.messages.length) {
+    _studentId = widget.course.isOwner ? widget.student.id : _currentUserId;
+    _messageSubscription = MessagingService.streamPrivateChat(
+      widget.course.id,
+      _studentId,
+      widget.course.isOwner ? widget.student.name : 'You',
+      widget.course.instructor,
+    ).listen((messages) {
+      if (mounted) {
         setState(() {
-          _chat.messages.clear();
-          _chat.messages.addAll(saved);
+          _messages
+            ..clear()
+            ..addAll(messages);
+          _loadingMessages = false;
+          _messageLoadFailed = false;
         });
+      }
+    }, onError: (Object error) {
+      if (mounted) {
+        setState(() {
+          _loadingMessages = false;
+          _messageLoadFailed = true;
+        });
+        CheckMateUi.showTopPrompt(context, 'Could not load messages: $error');
       }
     });
   }
 
   @override
   void dispose() {
-    _pollTimer?.cancel();
+    _messageSubscription?.cancel();
     _controller.dispose();
     super.dispose();
   }
 
-  Future<void> _loadPrivateChat(String chatKey) async {
-    final saved = await MessagingService.loadPrivateChat(
-        widget.course.id, widget.course.name, chatKey);
-    if (saved.isNotEmpty && mounted) {
-      setState(() {
-        _chat.messages.clear();
-        _chat.messages.addAll(saved);
-      });
+  Future<void> _sendMessage() async {
+    final text = _controller.text.trim();
+    if (text.isEmpty || _sending) return;
+    setState(() => _sending = true);
+    try {
+      await MessagingService.sendPrivateMessage(
+          widget.course.id, _studentId, text);
+      if (mounted) _controller.clear();
+    } catch (error) {
+      if (mounted) {
+        CheckMateUi.showTopPrompt(context, 'Could not send message: $error');
+      }
+    } finally {
+      if (mounted) setState(() => _sending = false);
     }
-  }
-
-  void _sendMessage() async {
-    if (_controller.text.trim().isEmpty) return;
-    final senderId = widget.course.isOwner ? 'instructor' : 'student';
-    final senderName =
-        widget.course.isOwner ? widget.course.instructor : 'Student';
-
-    setState(() {
-      _chat.messages.add(
-        ChatMessage(
-          senderId: senderId,
-          senderName: senderName,
-          text: _controller.text,
-          timestamp: DateTime.now(),
-        ),
-      );
-      _controller.clear();
-    });
-    await MessagingService.savePrivateChat(
-        widget.course.id, widget.course.name, _chatKey, _chat.messages);
   }
 
   String _formatFullDateTime(DateTime dt) {
@@ -111,7 +110,7 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
 
   void _showMessageOptions(
       ChatMessage message, bool isDark, Color accentColor, Color textColor) {
-    final isMe = message.getIsMe(widget.course.isOwner);
+    final isMe = _isMine(message);
 
     showModalBottomSheet(
       context: context,
@@ -164,14 +163,17 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
                             color: Colors.red, fontWeight: FontWeight.bold)),
                     onTap: () async {
                       Navigator.pop(sheetContext);
-                      setState(() {
-                        _chat.messages.removeWhere((m) => m.id == message.id);
-                      });
-                      await MessagingService.savePrivateChat(widget.course.id,
-                          widget.course.name, _chatKey, _chat.messages);
-                      if (mounted) {
-                        CheckMateUi.showTopPrompt(context, 'Message unsent.',
-                            isError: false);
+                      try {
+                        await MessagingService.deletePrivateMessage(message.id);
+                        if (mounted) {
+                          CheckMateUi.showTopPrompt(context, 'Message unsent.',
+                              isError: false);
+                        }
+                      } catch (error) {
+                        if (mounted) {
+                          CheckMateUi.showTopPrompt(
+                              context, 'Could not unsend message: $error');
+                        }
                       }
                     },
                   ),
@@ -221,13 +223,16 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
               ),
               onPressed: () async {
                 if (editController.text.trim().isEmpty) return;
-                setState(() {
-                  message.text = editController.text.trim();
-                  message.isEdited = true;
-                  message.editedTimestamp = DateTime.now();
-                });
-                await MessagingService.savePrivateChat(widget.course.id,
-                    widget.course.name, _chatKey, _chat.messages);
+                try {
+                  await MessagingService.editPrivateMessage(
+                      message.id, editController.text.trim());
+                } catch (error) {
+                  if (mounted) {
+                    CheckMateUi.showTopPrompt(
+                        context, 'Could not update message: $error');
+                  }
+                  return;
+                }
                 if (dialogContext.mounted) {
                   Navigator.pop(dialogContext);
                 }
@@ -387,21 +392,27 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
               ),
             ),
           Expanded(
-            child: Center(
-                child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 840),
-              child: ListView.builder(
-                padding: const EdgeInsets.all(16),
-                reverse: true,
-                itemCount: _chat.messages.length,
-                itemBuilder: (context, index) {
-                  final message =
-                      _chat.messages[_chat.messages.length - 1 - index];
-                  return _buildMessageBubble(
-                      message, isDark, accentColor, textColor);
-                },
-              ),
-            )),
+            child: _loadingMessages
+                ? const Center(child: CircularProgressIndicator())
+                : _messageLoadFailed
+                    ? const Center(child: Text('Could not load messages.'))
+                    : _messages.isEmpty
+                        ? const Center(child: Text('No messages yet.'))
+                        : Center(
+                            child: ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 840),
+                            child: ListView.builder(
+                              padding: const EdgeInsets.all(16),
+                              reverse: true,
+                              itemCount: _messages.length,
+                              itemBuilder: (context, index) {
+                                final message =
+                                    _messages[_messages.length - 1 - index];
+                                return _buildMessageBubble(
+                                    message, isDark, accentColor, textColor);
+                              },
+                            ),
+                          )),
           ),
           if (canSend)
             _buildInputArea(isDark, accentColor, textColor)
@@ -414,7 +425,7 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
 
   Widget _buildMessageBubble(
       ChatMessage message, bool isDark, Color accentColor, Color textColor) {
-    final isMe = message.getIsMe(widget.course.isOwner);
+    final isMe = _isMine(message);
 
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
@@ -533,7 +544,7 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
             ),
             IconButton(
               icon: Icon(Icons.send, color: accentColor),
-              onPressed: _sendMessage,
+              onPressed: _sending ? null : _sendMessage,
             ),
           ],
         ),

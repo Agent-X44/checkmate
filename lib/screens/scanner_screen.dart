@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
+import 'package:dio/dio.dart' as dio;
 import 'package:google_mlkit_barcode_scanning/google_mlkit_barcode_scanning.dart';
 import '../services/image_processor.dart';
 import '../services/api_service.dart';
@@ -66,7 +67,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
       _paperDetected &&
       _rawCorners != null &&
       _rawCorners!.length >= 8 &&
-      _lockedSheetQr != null; // Must lock QR before capturing
+      _lockedSheetQr != null &&
+      _validatedSheetQr == _lockedSheetQr!.sheetIdentifier;
 
   // Isolate state
   bool _isIsolateWorking = false;
@@ -76,6 +78,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
   List<Offset>? _detectedQrCorners;
   QrData?
       _lockedSheetQr; // BR-05: Lock the decoded QR so it isn't lost during edge detection
+  String? _validatedSheetQr;
+  int _qrValidationRevision = 0;
+  String? _rejectedQrId;
+  DateTime? _rejectedQrAt;
   String _lastQrDebugText = 'QR: waiting';
   Offset? _focusPoint;
   DateTime _lastUIUpdate = DateTime.now();
@@ -86,10 +92,15 @@ class _ScannerScreenState extends State<ScannerScreen> {
   final Set<String> _processedSheetIds = {};
 
   Isolate? _isolate;
+  bool _isolateStarting = false;
   SendPort? _isolateSendPort;
   final ReceivePort _mainReceivePort = ReceivePort();
-  final BarcodeScanner _barcodeScanner =
+  StreamSubscription<dynamic>? _isolateSubscription;
+  BarcodeScanner _barcodeScanner =
       BarcodeScanner(formats: [BarcodeFormat.qrCode]);
+  Future<void>? _qrDecodeFuture;
+  bool _qrDecodeInFlight = false;
+  int _qrSession = 0;
   DateTime? _lastQrScanTime;
   DateTime? _lastFrameTime;
   DateTime? _qrLockTime;
@@ -97,6 +108,19 @@ class _ScannerScreenState extends State<ScannerScreen> {
   @override
   void initState() {
     super.initState();
+    _isolateSubscription = _mainReceivePort.listen((message) {
+      if (message is SendPort) {
+        _isolateSendPort = message;
+      } else if (message is ScanResponse) {
+        if (message.scanSession != _qrSession) return;
+        // A response can arrive while the review screen is open. Release the
+        // in-flight frame lock even when that stale response is discarded.
+        _isIsolateWorking = false;
+        if (mounted && !_isProcessing) _handleLiveResponse(message);
+      } else if (message is ProcessedSheet && mounted) {
+        _handleProcessedSheet(message);
+      }
+    });
     unawaited(_restoreAndSyncPending());
     if (widget.isActive) _startCapture();
   }
@@ -120,6 +144,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
       await PendingGradeSyncService.syncPending();
       final remaining = await PendingGradeSyncService.pending();
       if (mounted) setState(() => _pendingSyncCount = remaining.length);
+    } catch (error) {
+      debugPrint('Could not sync pending grades: $error');
     } finally {
       if (mounted) setState(() => _isSyncingPending = false);
     }
@@ -138,6 +164,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
       if (widget.isActive) {
         _startCapture();
       } else {
+        _resetDetectionForNextSheet();
         _disposeCameraAndRestore();
       }
     }
@@ -177,27 +204,130 @@ class _ScannerScreenState extends State<ScannerScreen> {
     } catch (_) {}
     _isolate?.kill();
     _isolate = null;
+    _isolateSendPort = null;
+    _isIsolateWorking = false;
   }
 
   /// Offloads heavy CV processing to a separate Isolate to prevent UI jank.
   Future<void> _startIsolate() async {
-    if (_isolate != null) return;
-    _isolate = await Isolate.spawn(
-        ImageProcessor.edgeDetectionWorker, _mainReceivePort.sendPort);
-    _mainReceivePort.listen((message) {
-      if (message is SendPort) {
-        _isolateSendPort = message;
-      } else if (message is ScanResponse && mounted && !_isProcessing) {
-        _handleLiveResponse(message);
-      } else if (message is ProcessedSheet && mounted) {
-        _handleProcessedSheet(message);
+    if (_isolate != null || _isolateStarting) return;
+    _isolateStarting = true;
+    try {
+      final isolate = await Isolate.spawn(
+          ImageProcessor.edgeDetectionWorker, _mainReceivePort.sendPort);
+      if (!mounted || !widget.isActive) {
+        isolate.kill();
+      } else {
+        _isolate = isolate;
       }
+    } finally {
+      _isolateStarting = false;
+    }
+  }
+
+  String _sheetCheckError(Object error) {
+    if (error is StateError &&
+        error.message.toString().contains('Sign in to evaluate')) {
+      return 'Sign in to evaluate this paper.';
+    }
+    if (error is dio.DioException) {
+      switch (error.response?.statusCode) {
+        case 401:
+          return 'Sign in to evaluate this paper.';
+        case 403:
+          return 'You cannot evaluate this paper. Only its course instructor can scan it.';
+        case 404:
+          return 'This answer sheet was not found. Check its QR code.';
+        case 422:
+          return 'This paper has an invalid answer-sheet QR code.';
+      }
+    }
+    if (error is FormatException) {
+      return 'This paper has an invalid answer-sheet QR code.';
+    }
+    return 'Could not verify this paper. Check your connection and try again.';
+  }
+
+  void _rejectSheetQr(String identifier, String message) {
+    if (!mounted) return;
+    final now = DateTime.now();
+    final showPrompt = _rejectedQrId != identifier ||
+        _rejectedQrAt == null ||
+        now.difference(_rejectedQrAt!) > const Duration(seconds: 15);
+    _rejectedQrId = identifier;
+    if (showPrompt) _rejectedQrAt = now;
+    _qrValidationRevision++;
+    setState(() {
+      _lockedSheetQr = null;
+      _validatedSheetQr = null;
+      _detectedQrCorners = null;
+      _qrLockTime = null;
+      _lastQrDebugText = message;
     });
+    if (showPrompt) _showErrorSnackBar(message);
+  }
+
+  void _tryLockSheetQr(QrData candidate, {List<Offset>? corners}) {
+    if (!mounted || !widget.isActive || _isProcessing || _lockedSheetQr != null) {
+      return;
+    }
+    final identifier = candidate.sheetIdentifier;
+    if (identifier.isEmpty || identifier == 'UNKNOWN') return;
+    if (_processedSheetIds.contains(identifier)) {
+      _rejectSheetQr(identifier,
+          'This paper has already been scanned. Try another paper.');
+      return;
+    }
+    if (_rejectedQrId == identifier &&
+        _rejectedQrAt != null &&
+        DateTime.now().difference(_rejectedQrAt!) <
+            const Duration(seconds: 15)) {
+      return;
+    }
+    setState(() {
+      _lockedSheetQr = candidate;
+      _validatedSheetQr = null;
+      _qrLockTime = DateTime.now();
+      _qrFirstMode = false;
+      _lastQrDebugText = 'Checking: $identifier';
+      if (corners != null) _detectedQrCorners = corners;
+    });
+    final revision = ++_qrValidationRevision;
+    unawaited(_checkLockedSheetQr(identifier, _qrSession, revision));
+  }
+
+  Future<void> _checkLockedSheetQr(
+      String identifier, int scanSession, int revision) async {
+    try {
+      final scanned = await ApiService.checkSheetScanned(identifier);
+      if (!mounted ||
+          !widget.isActive ||
+          scanSession != _qrSession ||
+          revision != _qrValidationRevision ||
+          _lockedSheetQr?.sheetIdentifier != identifier) {
+        return;
+      }
+      if (scanned) {
+        _rejectSheetQr(identifier,
+            'This paper has already been scanned. Try another paper.');
+      } else {
+        setState(() {
+          _validatedSheetQr = identifier;
+          _lastQrDebugText = 'Ready: $identifier';
+        });
+      }
+    } catch (error) {
+      if (mounted &&
+          widget.isActive &&
+          scanSession == _qrSession &&
+          revision == _qrValidationRevision &&
+          _lockedSheetQr?.sheetIdentifier == identifier) {
+        _rejectSheetQr(identifier, _sheetCheckError(error));
+      }
+    }
   }
 
   void _handleLiveResponse(ScanResponse message) {
-    _isIsolateWorking = false;
-
     // 1. Detect whether the current frame contains a Course Invitation QR
     final inviteCode = message.detectedQr == null
         ? null
@@ -220,6 +350,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
               Offset(message.qrCorners![i * 2], message.qrCorners![i * 2 + 1]),
         );
         _lockedSheetQr = message.detectedQr;
+        _validatedSheetQr = null;
       } else {
         _detectedQrCorners = null;
         _lockedSheetQr = null;
@@ -259,14 +390,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
         final inviteCode =
             QrClassificationService.extractInvitationCodeFromQr(candidateQr);
         if (inviteCode == null) {
-          if (!_processedSheetIds.contains(candidateQr.sheetIdentifier)) {
-            _lockedSheetQr = candidateQr; // Lock it!
-            _qrLockTime = DateTime.now();
-            _qrFirstMode = false; // Transition directly to edge detection mode
-            _lastQrDebugText = 'LOCKED: ${candidateQr.sheetIdentifier}';
-          } else {
-            _lastQrDebugText = 'Scanned: ${candidateQr.sheetIdentifier}';
-          }
+          _tryLockSheetQr(candidateQr);
         } else {
           _lastQrDebugText = 'QR: invite candidate $inviteCode';
         }
@@ -276,7 +400,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
     }
 
     // Always update the QR bounding box to track the physical code if it's visible
-    if (candidateQr != null &&
+    if (_lockedSheetQr != null &&
+        candidateQr != null &&
         message.qrCorners != null &&
         message.qrCorners!.length >= 8) {
       _detectedQrCorners = List.generate(
@@ -1010,52 +1135,66 @@ class _ScannerScreenState extends State<ScannerScreen> {
             result: updatedSheet.toSyncResult(),
           );
           if (mounted) setState(() => _pendingSyncCount++);
-          await _retryPending();
+          // The reviewed result is safely queued. Sync it in the background
+          // so the next sheet can be detected without waiting for the network.
+          unawaited(_retryPending());
           if (mounted) {
-            if (_pendingSyncCount == 0) {
-              _showSuccessSnackBar(
-                  'Saved result for $studentName. Ready for the next sheet.');
-            } else {
-              _showErrorSnackBar(
-                  'Result stored on this device. Tap Retry sync when online.');
-            }
+            _showSuccessSnackBar(
+                'Result queued for $studentName. Ready for the next sheet.');
           }
         }
       }
     } catch (e) {
       _processedSheetIds.remove(sheet.qrData?.sheetIdentifier);
       if (mounted) {
-        String errorMsg = "Invalid paper, please try again.";
-        if (e.toString().contains("404")) {
-          errorMsg = "Invalid paper: Sheet ID not found. Please try again.";
-        } else if (e.toString().contains("403")) {
-          errorMsg = "Unauthorized: Assessment is not approved yet.";
-        }
-
-        _showErrorSnackBar(errorMsg);
+        _showErrorSnackBar(_sheetCheckError(e));
       }
     } finally {
-      if (mounted) {
-        setState(() {
-          _isOmrProcessing = false;
-          _lockedSheetQr = null; // Dispose locked sheet QR
-          _detectedQrCorners = null; // Dispose QR bounding box
-          _detectedCorners = null; // Dispose paper edge overlay
-          _rawCorners = null;
-          _qrLockTime = null;
-          _qrFirstMode = true; // Go back to searching for next QR
-          _paperDetected = false;
-          _detectionCounter = 0;
-          _lastQrDebugText = 'Ready for next sheet';
-        });
-
-        try {
-          _controller?.resumePreview();
-        } catch (e) {
-          debugPrint("Notice: resumePreview: $e");
-        }
-      }
+      // Capture owns the reset when it invoked this review flow.
+      if (!_isOmrProcessing) _resetDetectionForNextSheet();
     }
+  }
+
+  void _resetDetectionForNextSheet() {
+    if (!mounted) return;
+    final oldScanner = _barcodeScanner;
+    final oldDecode = _qrDecodeFuture;
+    _qrSession++;
+    _qrValidationRevision++;
+    _barcodeScanner = BarcodeScanner(formats: [BarcodeFormat.qrCode]);
+    _qrDecodeFuture = null;
+    _qrDecodeInFlight = false;
+    // Keep the previous native decoder alive until its in-flight frame ends.
+    // A bounded wait also releases it if the platform call never returns.
+    unawaited(() async {
+      try {
+        await Future.any<void>([
+          oldDecode ?? Future<void>.value(),
+          Future<void>.delayed(const Duration(seconds: 2)),
+        ]);
+        await oldScanner.close();
+      } catch (error) {
+        debugPrint('Could not close previous QR decoder: $error');
+      }
+    }());
+    _isIsolateWorking = false;
+    _lastFrameTime = null;
+    _lastQrScanTime = null;
+    setState(() {
+      _isOmrProcessing = false;
+      _lockedSheetQr = null;
+      _validatedSheetQr = null;
+      _detectedQrCorners = null;
+      _detectedCorners = null;
+      _rawCorners = null;
+      _qrLockTime = null;
+      // The startup QR-only window has already passed. Keeping it enabled
+      // here would suppress paper detection until another QR is found.
+      _qrFirstMode = false;
+      _paperDetected = false;
+      _detectionCounter = 0;
+      _lastQrDebugText = 'Ready for next sheet';
+    });
   }
 
   void _showErrorSnackBar(String msg) {
@@ -1067,12 +1206,23 @@ class _ScannerScreenState extends State<ScannerScreen> {
   }
 
   void _onCameraFrame(CameraImage image) {
-    if (!mounted ||
-        _isProcessing ||
-        _isolateSendPort == null ||
-        _isIsolateWorking) {
-      return;
+    if (!mounted || _isProcessing) return;
+
+    // QR reads must not depend on how long paper-edge processing takes.
+    if (!_qrDecodeInFlight) {
+      final session = _qrSession;
+      final scanner = _barcodeScanner;
+      _qrDecodeInFlight = true;
+      final decode = _tryDecodeQrFromCameraFrame(image, scanner, session);
+      _qrDecodeFuture = decode;
+      unawaited(decode.whenComplete(() {
+        if (_qrSession == session) {
+          _qrDecodeInFlight = false;
+          _qrDecodeFuture = null;
+        }
+      }));
     }
+    if (_isolateSendPort == null || _isIsolateWorking) return;
 
     // Frame throttling (100ms interval = max ~10 FPS for CV isolate) keeps RAM & thermal usage stable at ResolutionPreset.high
     final now = DateTime.now();
@@ -1089,14 +1239,14 @@ class _ScannerScreenState extends State<ScannerScreen> {
       if (mounted) {
         setState(() {
           _lockedSheetQr = null;
+          _validatedSheetQr = null;
+          _qrValidationRevision++;
           _qrLockTime = null;
           _detectedQrCorners = null;
           _lastQrDebugText = 'QR lock expired, rescan sheet';
         });
       }
     }
-
-    unawaited(_tryDecodeQrFromCameraFrame(image));
 
     _isIsolateWorking = true;
     try {
@@ -1106,6 +1256,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
         height: image.height,
         bytesPerRow: image.planes[0].bytesPerRow,
         replyPort: _mainReceivePort.sendPort,
+        scanSession: _qrSession,
       ));
     } catch (e) {
       _isIsolateWorking = false;
@@ -1135,7 +1286,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
     try {
       await _controller!.initialize();
-      _controller!.startImageStream(_onCameraFrame);
+      await _controller!.startImageStream(_onCameraFrame);
       if (mounted) {
         setState(() {
           _isInitialized = true;
@@ -1175,7 +1326,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
     } catch (_) {}
   }
 
-  Future<void> _tryDecodeQrFromCameraFrame(CameraImage image) async {
+  Future<void> _tryDecodeQrFromCameraFrame(
+      CameraImage image, BarcodeScanner scanner, int session) async {
     final now = DateTime.now();
     if (_lastQrScanTime != null &&
         now.difference(_lastQrScanTime!).inMilliseconds < 250) {
@@ -1202,8 +1354,13 @@ class _ScannerScreenState extends State<ScannerScreen> {
         ),
       );
 
-      final barcodes = await _barcodeScanner.processImage(inputImage);
-      if (!mounted || barcodes.isEmpty) return;
+      final barcodes = await scanner.processImage(inputImage);
+      if (!mounted ||
+          _isProcessing ||
+          session != _qrSession ||
+          barcodes.isEmpty) {
+        return;
+      }
 
       final rawValue = barcodes.first.rawValue ?? '';
       if (rawValue.trim().isEmpty) {
@@ -1218,7 +1375,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
       final inviteCode =
           QrClassificationService.extractInvitationCodeFromQr(candidate);
-      final normalizedCorners = barcodes.first.cornerPoints.isNotEmpty
+      final normalizedCorners = barcodes.first.cornerPoints.length >= 4
           ? List.generate(4, (index) {
               final point = barcodes.first.cornerPoints[index];
               final x = (point.x.toDouble() / image.width).clamp(0.0, 1.0);
@@ -1244,16 +1401,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
       }
 
       // If we haven't locked a QR yet, lock it from the camera frame if not already confirmed!
-      if (_lockedSheetQr == null && mounted) {
-        if (!_processedSheetIds.contains(candidate.sheetIdentifier)) {
-          setState(() {
-            _lockedSheetQr = candidate;
-            _qrLockTime = DateTime.now();
-            _qrFirstMode = false;
-            _lastQrDebugText = 'LOCKED: ${candidate.sheetIdentifier}';
-            _detectedQrCorners = normalizedCorners;
-          });
-        }
+      if (_lockedSheetQr == null && mounted && session == _qrSession) {
+        _tryLockSheetQr(candidate, corners: normalizedCorners);
       }
     } catch (e) {
       debugPrint('QR decode failed: $e');
@@ -1269,14 +1418,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
   }
 
   @override
-  void deactivate() {
-    super.deactivate();
-    _disposeCameraAndRestore();
-  }
-
-  @override
   void dispose() {
     _disposeCameraAndRestore();
+    _isolateSubscription?.cancel();
     _mainReceivePort.close();
     _barcodeScanner.close();
     super.dispose();
@@ -1504,16 +1648,29 @@ class _ScannerScreenState extends State<ScannerScreen> {
     );
   }
 
-  void _restartStreamIfNeeded() {
-    if (_controller != null &&
-        _controller!.value.isInitialized &&
-        !_controller!.value.isStreamingImages &&
-        mounted &&
-        !_isProcessing) {
-      try {
-        _controller!.startImageStream(_onCameraFrame);
-      } catch (e) {
-        debugPrint("Notice restarting image stream: $e");
+  Future<void> _resumeCameraStream() async {
+    if (!mounted || !widget.isActive) return;
+    final controller = _controller;
+    if (controller == null || !controller.value.isInitialized) {
+      await _startIsolate();
+      if (mounted && widget.isActive) await _initializeCamera();
+      return;
+    }
+    try {
+      if (controller.value.isPreviewPaused) {
+        await controller.resumePreview();
+      }
+      if (!mounted || !widget.isActive || _controller != controller) return;
+      if (!controller.value.isStreamingImages) {
+        await controller.startImageStream(_onCameraFrame);
+      }
+    } catch (error) {
+      debugPrint('Could not resume scanner stream: $error');
+      if (!mounted || !widget.isActive || _controller != controller) return;
+      await _disposeCameraOnly();
+      if (mounted && widget.isActive) {
+        await _startIsolate();
+        await _initializeCamera();
       }
     }
   }
@@ -1562,9 +1719,13 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
       final rawIdentifier = _lockedSheetQr?.sheetIdentifier ?? '';
       if (rawIdentifier.isNotEmpty && rawIdentifier != 'UNKNOWN') {
-        // Check for duplicate scan safely via ApiService to resolve the printed sheet code
-        final isAlreadyScanned =
-            await ApiService.checkSheetScanned(rawIdentifier);
+        bool isAlreadyScanned;
+        try {
+          isAlreadyScanned = await ApiService.checkSheetScanned(rawIdentifier);
+        } catch (error) {
+          if (mounted) _showErrorSnackBar(_sheetCheckError(error));
+          return;
+        }
 
         if (isAlreadyScanned) {
           _showErrorSnackBar(
@@ -1574,6 +1735,12 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
         try {
           preResolvedMetadata = await ApiService.resolveSheet(rawIdentifier);
+        } catch (error) {
+          if (mounted) _showErrorSnackBar(_sheetCheckError(error));
+          return;
+        }
+
+        try {
           final exam = preResolvedMetadata['exams'];
           final templateId = exam?['template_id']?.toString();
           final examId = exam?['id']?.toString() ?? '';
@@ -1636,24 +1803,13 @@ class _ScannerScreenState extends State<ScannerScreen> {
               preResolvedMetadata: preResolvedMetadata);
         } else {
           _showErrorSnackBar("Could not process sheet. Please try again.");
-          setState(() {
-            _isOmrProcessing = false;
-            _lockedSheetQr = null; // Unlock QR on failure so they can rescan
-            _qrLockTime = null;
-          });
-          _restartStreamIfNeeded();
         }
       }
     } catch (e) {
-      _showErrorSnackBar("Capture failed: $e");
-      if (mounted) {
-        setState(() {
-          _isOmrProcessing = false;
-          _lockedSheetQr = null; // Unlock QR on failure
-          _qrLockTime = null;
-        });
-        _restartStreamIfNeeded();
-      }
+      if (mounted) _showErrorSnackBar("Capture failed: $e");
+    } finally {
+      _resetDetectionForNextSheet();
+      await _resumeCameraStream();
     }
   }
 }

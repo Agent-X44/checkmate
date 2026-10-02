@@ -365,18 +365,23 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
     try {
       List<Map<String, dynamic>> items = [];
       bool isStudentResult = false;
+      String emptyMessage = 'No questions found for this assessment.';
       
       if (widget.isOwner) {
         items = await SupabaseService.getExamQuestions(examId);
       } else {
         final result = await SupabaseService.getMyResult(examId);
         final rawAnswers = result?['grade']?['answers'];
-        if (rawAnswers is List && rawAnswers.isNotEmpty) {
-          items = List<Map<String, dynamic>>.from(rawAnswers);
-          isStudentResult = true;
+        isStudentResult = true;
+        if (result == null) {
+          emptyMessage = 'Your result is not available or has not been released yet.';
+        } else if (rawAnswers is List && rawAnswers.isNotEmpty) {
+          items = rawAnswers
+              .whereType<Map>()
+              .map((answer) => Map<String, dynamic>.from(answer))
+              .toList();
         } else {
-          // Fallback: load general exam questions so student can review test items and correct answers
-          items = await SupabaseService.getExamQuestions(examId);
+          emptyMessage = 'This result has no saved item answers to review.';
         }
       }
 
@@ -417,9 +422,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                   const SizedBox(height: 10),
                   Expanded(
                     child: items.isEmpty
-                        ? const Center(
-                            child:
-                                Text("No questions found for this assessment."))
+                        ? Center(child: Text(emptyMessage, textAlign: TextAlign.center))
                         : StatefulBuilder(builder: (context, setModalState) {
                             return ListView.builder(
                               controller: scrollController,
@@ -509,7 +512,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                                           ],
                                           const SizedBox(height: 8),
                                           Text(studentAnsText, style: const TextStyle(fontSize: 13)),
-                                          if (!isCorrect && correctAnsText.isNotEmpty) ...[
+                                          if (correctAnsText.isNotEmpty) ...[
                                             const SizedBox(height: 2),
                                             Text(correctAnsText,
                                                 style: TextStyle(
@@ -776,7 +779,9 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
               return const Center(child: CircularProgressIndicator());
             }
 
-            final visibleExams = exams ?? const <Map<String, dynamic>>[];
+            final visibleExams = (exams ?? const <Map<String, dynamic>>[])
+                .where((exam) => widget.isOwner || exam['is_approved'] == true)
+                .toList();
             if (visibleExams.isEmpty) {
               return ListView(
                 physics: const AlwaysScrollableScrollPhysics(),

@@ -24,6 +24,7 @@ class ScanRequest {
   final int height;
   final int bytesPerRow;
   final SendPort replyPort;
+  final int scanSession;
 
   final double cannyThreshold1;
   final double cannyThreshold2;
@@ -38,6 +39,7 @@ class ScanRequest {
     required this.height,
     required this.bytesPerRow,
     required this.replyPort,
+    this.scanSession = 0,
     this.cannyThreshold1 = 50.0,
     this.cannyThreshold2 = 150.0,
     this.blurSigma = 0.0,
@@ -73,6 +75,7 @@ class OmrRequest {
 /// Response containing detection results and optional debug imagery.
 class ScanResponse {
   final bool foundPaper;
+  final int scanSession;
   final List<double>? corners; // Normalized coordinates [x1, y1, ...]
   final Uint8List? debugImage;
   final QrData? detectedQr;
@@ -80,6 +83,7 @@ class ScanResponse {
 
   ScanResponse({
     required this.foundPaper,
+    this.scanSession = 0,
     this.corners,
     this.debugImage,
     this.detectedQr,
@@ -281,6 +285,7 @@ class ImageProcessor {
 
       message.replyPort.send(ScanResponse(
         foundPaper: foundPaper,
+        scanSession: message.scanSession,
         corners: paperCorners,
         debugImage: debugBytes,
         detectedQr: detectedQr,
@@ -289,7 +294,10 @@ class ImageProcessor {
 
     } catch (e, stack) {
       debugPrint("LIVE SCAN ISOLATE ERROR: $e\n$stack");
-      message.replyPort.send(ScanResponse(foundPaper: false));
+      message.replyPort.send(ScanResponse(
+        foundPaper: false,
+        scanSession: message.scanSession,
+      ));
     } finally {
       // [LABEL: Cleanup] Prevent FFI Memory Leaks
       pool.disposeAll();

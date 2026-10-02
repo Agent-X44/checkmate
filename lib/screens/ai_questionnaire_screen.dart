@@ -75,7 +75,9 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
     try {
       await SupabaseService.saveCreatedExam(
         classId: widget.classId,
-        title: _inputController.text.isNotEmpty ? _inputController.text : (_selectedFile?.name ?? 'Generated Assessment'),
+        title: _inputController.text.isNotEmpty
+            ? _inputController.text
+            : (_selectedFile?.name ?? 'Generated Assessment'),
         assessmentType: _assessmentType,
         questions: _finalQuestions,
         hasMultipleSets: _hasMultipleSets,
@@ -83,7 +85,8 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
       );
     } catch (e) {
       if (mounted) {
-        CheckMateUi.showTopPrompt(context, 'Failed to save draft automatically: $e');
+        CheckMateUi.showTopPrompt(
+            context, 'Failed to save draft automatically: $e');
       }
     }
   }
@@ -131,12 +134,14 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
       _finalQuestions = [];
       _isGenerationFinished = false;
     });
-    
-    // Show prompt that it's generating and they can edit it later
+
+    // The supplied items are only formatted in Existing Questions mode.
     if (mounted) {
       CheckMateUi.showTopPrompt(
-        context, 
-        'Generation started. AI can make mistakes. Your assessment will be automatically saved to Drafts, where you can edit it later.',
+        context,
+        _sourceMode == 'existing_questions'
+            ? 'Formatting your questions and supplied answer key. Review the draft before approval.'
+            : 'Generation started. AI can make mistakes. Your assessment will be automatically saved to Drafts, where you can edit it later.',
         isError: false,
       );
     }
@@ -198,7 +203,9 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
       } else if (type == 'question') {
         final question = event['question'];
         final number = event['number'];
-        if (question is Map && number is int && number > 0 &&
+        if (question is Map &&
+            number is int &&
+            number > 0 &&
             number <= _liveQuestions.length + 1) {
           setState(() {
             if (number == _liveQuestions.length + 1) {
@@ -244,13 +251,18 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
         final received = event['questions'];
         if (received is! List ||
             received.length != _selectedTotal ||
-            received.where((q) => q is Map && q['questionType'] == 'MCQ').length !=
+            received
+                    .where((q) => q is Map && q['questionType'] == 'MCQ')
+                    .length !=
                 _selectedTemplate.mcqCount ||
-            received.where((q) => q is Map && q['questionType'] == 'TF').length !=
+            received
+                    .where((q) => q is Map && q['questionType'] == 'TF')
+                    .length !=
                 _selectedTemplate.tfCount) {
           setState(() => _generationError =
               'Generated question counts do not match the selected answer sheet.');
-          CheckMateUi.showTopPrompt(context, 'Question types do not match the selected answer sheet.');
+          CheckMateUi.showTopPrompt(context,
+              'Question types do not match the selected answer sheet.');
           return;
         }
         final ordered = <dynamic>[
@@ -261,7 +273,9 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
           _finalQuestions = ordered;
           _isGenerationFinished = true;
           _draftQuestionText = '';
-          _generationStatus = 'All questions verified. Saving draft...';
+          _generationStatus = _sourceMode == 'existing_questions'
+              ? 'Questions formatted. Saving draft...'
+              : 'All questions verified. Saving draft...';
         });
 
         // Automatically save to drafts securely using the frontend session
@@ -349,7 +363,7 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
                 maxLines: 3,
                 decoration: InputDecoration(
                   hintText: _sourceMode == 'existing_questions'
-                      ? 'Paste questions with optional answer keys...'
+                      ? 'Paste questions with answer keys (e.g. Answer: B)...'
                       : 'e.g. OSPFv2 Routing, Chemistry...',
                   border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12)),
@@ -552,8 +566,10 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('Building your assessment',
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                        fontWeight: FontWeight.bold)),
+                    style: Theme.of(context)
+                        .textTheme
+                        .headlineSmall
+                        ?.copyWith(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 6),
                 Text(_generationStatus,
                     style: TextStyle(color: scheme.onSurfaceVariant)),
@@ -599,29 +615,33 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
                                   size: 42, color: scheme.primary),
                               const SizedBox(height: 12),
                               Text('Questions will appear here',
-                                  style: Theme.of(context).textTheme.titleMedium),
+                                  style:
+                                      Theme.of(context).textTheme.titleMedium),
                             ],
                           ),
                         )
                       : ListView.builder(
                           controller: _terminalScrollController,
-                          itemCount: drafted + (_draftQuestionText.isNotEmpty ? 1 : 0),
+                          itemCount:
+                              drafted + (_draftQuestionText.isNotEmpty ? 1 : 0),
                           itemBuilder: (context, index) {
                             if (index == drafted) {
-                               return Card(
+                              return Card(
                                 margin: const EdgeInsets.only(bottom: 12),
                                 child: Padding(
                                   padding: const EdgeInsets.all(16),
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Row(
                                         children: [
                                           SizedBox(
-                                            width: 14, 
-                                            height: 14, 
-                                            child: CircularProgressIndicator(strokeWidth: 2, color: scheme.primary)
-                                          ),
+                                              width: 14,
+                                              height: 14,
+                                              child: CircularProgressIndicator(
+                                                  strokeWidth: 2,
+                                                  color: scheme.primary)),
                                           const SizedBox(width: 8),
                                           Text(
                                             'Typing $_draftQuestionType draft...',
@@ -634,18 +654,22 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
                                         ],
                                       ),
                                       const SizedBox(height: 12),
-                                      Text("${index + 1}. $_draftQuestionText █",
-                                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+                                      Text(
+                                          "${index + 1}. $_draftQuestionText █",
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 15)),
                                     ],
                                   ),
                                 ),
                               );
                             }
-                            
+
                             final question = _liveQuestions[index];
                             final type = question['questionType'];
                             final startsPart = index == 0 ||
-                                _liveQuestions[index - 1]['questionType'] != type;
+                                _liveQuestions[index - 1]['questionType'] !=
+                                    type;
                             return Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -749,8 +773,8 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
           children: [
             if (part1.isNotEmpty) ...[
               const _PartHeader(title: "PART 1: MULTIPLE CHOICE"),
-              ...part1.asMap().entries.map((entry) => _QuestionCard(
-                  data: entry.value, index: entry.key + 1)),
+              ...part1.asMap().entries.map((entry) =>
+                  _QuestionCard(data: entry.value, index: entry.key + 1)),
             ],
             if (part2.isNotEmpty) ...[
               const SizedBox(height: 20),
@@ -762,7 +786,8 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
               if (part1.isNotEmpty || part2.isNotEmpty)
                 const _PartHeader(title: "OTHER QUESTIONS"),
               ...others.asMap().entries.map((entry) => _QuestionCard(
-                  data: entry.value, index: part1.length + part2.length + entry.key + 1)),
+                  data: entry.value,
+                  index: part1.length + part2.length + entry.key + 1)),
             ],
             const SizedBox(height: 20),
             Container(
@@ -906,16 +931,17 @@ class _QuestionCard extends StatelessWidget {
                                   color: Colors.green.withValues(alpha: 0.5))
                               : null,
                         ),
-                        child: Text("$letter) ${stripChoiceLabel(options[i], i)}",
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: showAnswer && isCorrect
-                                  ? Colors.green.shade700
-                                  : null,
-                              fontWeight: showAnswer && isCorrect
-                                  ? FontWeight.bold
-                                  : null,
-                            )),
+                        child:
+                            Text("$letter) ${stripChoiceLabel(options[i], i)}",
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  color: showAnswer && isCorrect
+                                      ? Colors.green.shade700
+                                      : null,
+                                  fontWeight: showAnswer && isCorrect
+                                      ? FontWeight.bold
+                                      : null,
+                                )),
                       )),
                     ],
                   ),

@@ -739,18 +739,8 @@ class SupabaseService {
   // --- DATABASE: INSIGHTS & GRADES (BR-10, BR-12) ---
 
   static Future<Map<String, dynamic>?> getMyResult(String examId) async {
-    final user = currentUser;
-    if (user == null) return null;
-
-    final response = await _client
-        .from('grades')
-        .select('*, answer_sheets!inner(exam_id, student_id)')
-        .eq('answer_sheets.exam_id', examId)
-        .eq('answer_sheets.student_id', user.id)
-        .maybeSingle();
-    if (response == null) return null;
-
-    return {'grade': response, 'insight': response['student_insight']};
+    if (currentUser == null) return null;
+    return ApiService.getMyExamResult(examId);
   }
 
   static Future<Map<String, dynamic>?> getStudentResult(

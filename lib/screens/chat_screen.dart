@@ -630,7 +630,7 @@ class _ChatScreenState extends State<ChatScreen> {
                     builder: (context) => PrivateChatScreen(
                       course: widget.course,
                       student: Student(
-                        id: '${widget.course.id}_private_chat',
+                        id: widget.course.id,
                         name: widget.course.instructor,
                         avatar: widget.course.instructor[0],
                       ),

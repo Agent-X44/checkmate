@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/course.dart';
+import '../services/notification_service.dart';
 import '../services/supabase_service.dart';
 import '../utils/ui_utils.dart';
 import 'dashboard_screen.dart';
 import 'scanner_screen.dart';
 import 'settings_screen.dart';
 import 'course_dashboard_screen.dart';
+import 'notifications_screen.dart';
 import '../main.dart'; // To access globalCameras
 
 /// Main navigation shell for authenticated users.
@@ -32,7 +32,8 @@ class MainNavigation extends StatefulWidget {
 
 class _MainNavigationState extends State<MainNavigation> {
   int _selectedIndex = 0;
-  bool _notificationsOn = false;
+  late final Stream<List<AppNotification>> _notificationStream =
+      NotificationService.streamMine();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   final GlobalKey<DashboardScreenState> _dashboardKey =
@@ -61,76 +62,9 @@ class _MainNavigationState extends State<MainNavigation> {
     }
   }
 
-  Future<void> _loadNotificationPreference() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      setState(() {
-        _notificationsOn = prefs.getBool('notificationsEnabled') ?? false;
-      });
-    } catch (_) {}
-  }
-
-  Future<void> _toggleNotifications() async {
-    final newState = !_notificationsOn;
-
-    if (newState) {
-      debugPrint("DEBUG: Requesting Notification Permission...");
-      var status = await Permission.notification.status;
-      await Future.delayed(const Duration(milliseconds: 200));
-      status = await Permission.notification.request();
-
-      if (status.isPermanentlyDenied || status.isDenied) {
-        if (mounted) _showPermissionSettingsDialog();
-        return;
-      }
-    }
-
-    setState(() {
-      _notificationsOn = newState;
-    });
-
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('notificationsEnabled', newState);
-
-      if (mounted) {
-        CheckMateUi.showTopPrompt(
-          context,
-          newState ? 'Notifications Enabled' : 'Notifications Muted',
-          isError: false,
-        );
-      }
-    } catch (_) {}
-  }
-
-  void _showPermissionSettingsDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Notification Permission'),
-        content: const Text(
-            'Notifications are currently disabled. Please enable them in settings to receive updates.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('CANCEL'),
-          ),
-          TextButton(
-            onPressed: () {
-              openAppSettings();
-              Navigator.pop(context);
-            },
-            child: const Text('OPEN SETTINGS'),
-          ),
-        ],
-      ),
-    );
-  }
-
   @override
   void initState() {
     super.initState();
-    _loadNotificationPreference();
     _refreshDrawerCourses();
   }
 
@@ -362,23 +296,44 @@ class _MainNavigationState extends State<MainNavigation> {
           ),
         ),
         actions: [
-          IconButton(
-            tooltip: _notificationsOn
-                ? 'Mute notifications'
-                : 'Enable notifications',
-            icon: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 300),
-              transitionBuilder: (Widget child, Animation<double> animation) {
-                return ScaleTransition(scale: animation, child: child);
-              },
-              child: Icon(
-                _notificationsOn
-                    ? Icons.notifications
-                    : Icons.notifications_off,
-                key: ValueKey<bool>(_notificationsOn),
-              ),
-            ),
-            onPressed: _toggleNotifications,
+          StreamBuilder<List<AppNotification>>(
+            stream: _notificationStream,
+            builder: (context, snapshot) {
+              final unread =
+                  snapshot.data?.where((n) => n.isUnread).length ?? 0;
+              return IconButton(
+                tooltip: unread == 0
+                    ? 'Notifications'
+                    : '$unread unread notifications',
+                icon: Stack(clipBehavior: Clip.none, children: [
+                  const Icon(Icons.notifications_outlined),
+                  if (unread > 0)
+                    Positioned(
+                      top: -5,
+                      right: -8,
+                      child: Container(
+                        constraints:
+                            const BoxConstraints(minWidth: 17, minHeight: 17),
+                        padding: const EdgeInsets.symmetric(horizontal: 3),
+                        decoration: BoxDecoration(
+                          color: theme.colorScheme.error,
+                          borderRadius: BorderRadius.circular(9),
+                        ),
+                        child: Text(unread > 99 ? '99+' : '$unread',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                fontSize: 10,
+                                color: theme.colorScheme.onError,
+                                fontWeight: FontWeight.bold)),
+                      ),
+                    ),
+                ]),
+                onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute<void>(
+                        builder: (_) => const NotificationsScreen())),
+              );
+            },
           ),
           Padding(
             padding: const EdgeInsets.only(right: 8),
