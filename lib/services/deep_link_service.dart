@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:checkmate/models/course.dart';
 import 'supabase_service.dart';
 import '../utils/ui_utils.dart';
@@ -11,7 +12,7 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 /// Deep Link Service: Handles Google Classroom style invitation links
 /// Enforces:
-/// - BR-01: Direct Course Invitation & Automatic Join Workflow via Deep/App Links
+/// - BR-01: Course invitations require student confirmation before enrollment
 class DeepLinkService {
   static final DeepLinkService _instance = DeepLinkService._internal();
   factory DeepLinkService() => _instance;
@@ -106,17 +107,14 @@ class DeepLinkService {
 
     final user = SupabaseService.currentUser;
     if (user != null) {
-      // User is logged in -> Execute direct course join workflow
-      await processJoinCode(code);
-    } else {
-      // User is not logged in -> Store pending join code for post-login auto-join
       _pendingJoinCode = code;
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('pending_join_code', code);
-      } catch (e) {
-        debugPrint('Failed to persist pending join code: $e');
-      }
+      await _savePendingJoinCode(code);
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        unawaited(checkPendingJoinOnLogin());
+      });
+    } else {
+      _pendingJoinCode = code;
+      await _savePendingJoinCode(code);
 
       final context = navigatorKey.currentContext;
       if (context != null && context.mounted) {
@@ -137,13 +135,44 @@ class DeepLinkService {
     debugPrint(
         'DEEP LINK JOIN DEBUG: start joinCode=$normalizedCode user=${SupabaseService.currentUser?.id ?? 'null'}');
 
-    try {
-      if (context != null && context.mounted) {
-        CheckMateUi.showTopPrompt(
-            context, 'Joining course ($normalizedCode)...',
-            isError: false);
-      }
+    if (context == null || !context.mounted) {
+      await _savePendingJoinCode(normalizedCode);
+      return;
+    }
 
+    final shouldJoin = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Join course?'),
+        content: Text(
+            'Would you like to join the course with code $normalizedCode?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('CANCEL'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('JOIN'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldJoin != true) {
+      await _clearPendingJoinCode();
+      return;
+    }
+
+    try {
+      final currentContext = navigatorKey.currentContext;
+      if (currentContext != null && currentContext.mounted) {
+        CheckMateUi.showTopPrompt(
+          currentContext,
+          'Joining course ($normalizedCode)...',
+          isError: false,
+        );
+      }
       final course = await SupabaseService.joinClass(normalizedCode).timeout(
         const Duration(seconds: 8),
         onTimeout: () => throw Exception(
@@ -153,13 +182,7 @@ class DeepLinkService {
       debugPrint(
           'DEEP LINK JOIN DEBUG: success for $normalizedCode -> ${course.name}');
       notifyCourseJoined(course);
-      _pendingJoinCode = null;
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.remove('pending_join_code');
-      } catch (error) {
-        debugPrint('Could not clear the saved invitation code: $error');
-      }
+      await _clearPendingJoinCode();
 
       final currentCtx = navigatorKey.currentContext;
       if (currentCtx != null && currentCtx.mounted) {
@@ -169,8 +192,10 @@ class DeepLinkService {
           isError: false,
         );
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('DEEP LINK JOIN DEBUG: failed for $normalizedCode :: $e');
+      debugPrintStack(
+          stackTrace: stackTrace, label: 'Deep link course join failure');
       final errorMsg = e.toString().replaceAll('Exception: ', '');
       final currentCtx = navigatorKey.currentContext;
       if (currentCtx != null && currentCtx.mounted) {
@@ -204,6 +229,25 @@ class DeepLinkService {
       } finally {
         _processingPendingJoin = false;
       }
+    }
+  }
+
+  Future<void> _savePendingJoinCode(String code) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('pending_join_code', code);
+    } catch (error) {
+      debugPrint('Failed to persist pending join code: $error');
+    }
+  }
+
+  Future<void> _clearPendingJoinCode() async {
+    _pendingJoinCode = null;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('pending_join_code');
+    } catch (error) {
+      debugPrint('Could not clear the saved invitation code: $error');
     }
   }
 

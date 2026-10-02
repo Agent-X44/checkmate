@@ -503,8 +503,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
           isError: false,
         );
       }
-    } catch (e) {
+    } catch (e, stackTrace) {
       debugPrint('JOIN COURSE: failed for $normalizedCode :: $e');
+      debugPrintStack(stackTrace: stackTrace, label: 'Course join failure');
       if (progressDialogOpen && bottomSheetContext.mounted) {
         Navigator.of(bottomSheetContext, rootNavigator: true).pop();
         progressDialogOpen = false;
@@ -545,178 +546,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
     _lastScannedInviteCode = inviteCode;
     _lastInvitePromptTime = DateTime.now();
 
-    // 1. Verify if this QR code is a valid course in database & check creator status
     final normalizedInviteCode = _normalizeJoinCode(inviteCode);
-    Map<String, dynamic>? courseData;
-    try {
-      courseData =
-          await SupabaseService.getCourseDataByCode(normalizedInviteCode)
-              .timeout(const Duration(seconds: 2));
-    } catch (e) {
-      debugPrint("Course lookup error: $e");
-    }
-
-    if (!mounted) return;
-
-    // If this code is not yet found in the database, still surface the join prompt when it
-    // looks like an invitation code so the user can take action immediately.
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final accentColor =
         isDark ? theme.colorScheme.secondary : theme.colorScheme.primary;
-
-    if (courseData == null) {
-      await showModalBottomSheet(
-        context: context,
-        isDismissible: false,
-        enableDrag: false,
-        backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
-        builder: (bottomSheetContext) {
-          return Padding(
-            padding: const EdgeInsets.all(24.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 48,
-                  height: 5,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.withValues(alpha: 0.4),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: accentColor.withValues(alpha: 0.15),
-                    shape: BoxShape.circle,
-                  ),
-                  child:
-                      Icon(Icons.school_rounded, color: accentColor, size: 40),
-                ),
-                const SizedBox(height: 16),
-                Text(
-                  'Course Invitation Detected',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: isDark ? Colors.white : Colors.black87,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Course Code: $normalizedInviteCode',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: accentColor,
-                    letterSpacing: 1.2,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  'Would you like to join this course?',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: isDark ? Colors.white70 : Colors.black54,
-                  ),
-                ),
-                const SizedBox(height: 28),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () {
-                          if (mounted) {
-                            _isConfirmationCardOpen = false;
-                          }
-                          if (Navigator.of(bottomSheetContext,
-                                  rootNavigator: true)
-                              .canPop()) {
-                            Navigator.of(bottomSheetContext,
-                                    rootNavigator: true)
-                                .pop();
-                          }
-                        },
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          side: BorderSide(
-                            color:
-                                isDark ? Colors.white30 : Colors.grey.shade400,
-                          ),
-                        ),
-                        child: Text(
-                          'CANCEL',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: isDark ? Colors.white70 : Colors.black87,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () async {
-                          await _joinCourseFromPrompt(
-                              normalizedInviteCode, bottomSheetContext);
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: accentColor,
-                          foregroundColor: isDark ? Colors.black : Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 14),
-                          elevation: 2,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: const Text(
-                          'JOIN COURSE',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 15,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-              ],
-            ),
-          );
-        },
-      );
-      if (mounted) {
-        _isConfirmationCardOpen = false;
-      }
-      return;
-    }
-
-    // 2. Check if current user is the course creator
-    final currentUser = SupabaseService.currentUser;
-    final instructorId = courseData['instructor_id']?.toString().trim();
-    final currentUserId = currentUser?.id.trim();
-
-    if (instructorId != null &&
-        currentUserId != null &&
-        instructorId == currentUserId) {
-      await _showCreatorNoticeCard(inviteCode, courseData['name'] ?? '');
-      if (mounted) {
-        _isConfirmationCardOpen = false;
-      }
-      return;
-    }
-
-    // 3. Valid course & user is student: Open Course Join Confirmation Card
 
     await showModalBottomSheet(
       context: context,
@@ -760,7 +594,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Course Code: $inviteCode',
+                'Course Code: $normalizedInviteCode',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
@@ -848,118 +682,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
     if (mounted) {
       _isConfirmationCardOpen = false;
     }
-  }
-
-  Future<void> _showCreatorNoticeCard(
-      String inviteCode, String courseName) async {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-
-    await showModalBottomSheet(
-      context: context,
-      isDismissible: true,
-      enableDrag: true,
-      backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      builder: (bottomSheetContext) {
-        return Padding(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 48,
-                height: 5,
-                decoration: BoxDecoration(
-                  color: Colors.grey.withValues(alpha: 0.4),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              const SizedBox(height: 20),
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.amber.withValues(alpha: 0.15),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.info_outline_rounded,
-                    color: Colors.amber, size: 40),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                'Course Creator Notice',
-                style: TextStyle(
-                  fontSize: 20,
-                  fontWeight: FontWeight.bold,
-                  color: isDark ? Colors.white : Colors.black87,
-                ),
-              ),
-              const SizedBox(height: 8),
-              if (courseName.isNotEmpty)
-                Text(
-                  courseName,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                    color: Colors.amber,
-                  ),
-                ),
-              Text(
-                'Code: $inviteCode',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.grey,
-                  letterSpacing: 1.1,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                "You can't join the course you've created.",
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w500,
-                  color: isDark ? Colors.white70 : Colors.black87,
-                ),
-              ),
-              const SizedBox(height: 28),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: () {
-                    if (Navigator.of(bottomSheetContext, rootNavigator: true)
-                        .canPop()) {
-                      Navigator.of(bottomSheetContext, rootNavigator: true)
-                          .pop();
-                    }
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.amber,
-                    foregroundColor: Colors.black,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    elevation: 2,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                  ),
-                  child: const Text(
-                    'UNDERSTOOD',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 15,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-            ],
-          ),
-        );
-      },
-    );
   }
 
   String? _extractInviteCode(String raw) {

@@ -72,6 +72,7 @@ class _MainNavigationState extends State<MainNavigation> {
     _joinedCourseSubscription = DeepLinkService.joinedCourses.listen((course) {
       if (mounted) {
         setState(() {
+          _selectedIndex = 0;
           _drawerCachedCourses
               .removeWhere((existing) => existing.id == course.id);
           _drawerCachedCourses.insert(0, course);
@@ -79,7 +80,6 @@ class _MainNavigationState extends State<MainNavigation> {
         _dashboardKey.currentState?.addEnrolledCourse(course);
       }
       unawaited(_refreshDrawerCourses());
-      unawaited(_dashboardKey.currentState?.refreshCourses());
     });
   }
 

@@ -18,9 +18,12 @@ class SupabaseService {
   static SupabaseClient get client => _client;
 
   static String _storedQuestionText(dynamic question) {
-    final text = (question['questionText'] ?? question['text'] ?? '').toString();
+    final text =
+        (question['questionText'] ?? question['text'] ?? '').toString();
     final options = question['options'];
-    if (question['questionType'] == 'MCQ' && options is List && options.length == 4) {
+    if (question['questionType'] == 'MCQ' &&
+        options is List &&
+        options.length == 4) {
       return '$text\n${List.generate(4, (i) => '${String.fromCharCode(65 + i)}. ${stripChoiceLabel(options[i], i)}').join('\n')}';
     }
     return text;
@@ -39,7 +42,8 @@ class SupabaseService {
         options.add(stripChoiceLabel(match.group(1)!, i));
       }
       if (options.length == 4) {
-        question['question_text'] = lines.take(lines.length - 4).join('\n').trim();
+        question['question_text'] =
+            lines.take(lines.length - 4).join('\n').trim();
         question['options'] = options;
       }
     } else if (question['question_type'] == 'TF') {
@@ -312,24 +316,27 @@ class SupabaseService {
         throw Exception("Invalid course code format. Please try again.");
       }
 
-      try {
-        await _client.from('profiles').upsert({
-          'id': user.id,
-          'name': user.userMetadata?['name'] ??
-              user.email?.split('@')[0] ??
-              'Student',
-          'email': user.email ?? '',
-          'role': 'Student',
-        });
-      } catch (e) {
-        debugPrint("Student profile synchronization error: $e");
-      }
+      final profileSync = _client
+          .from('profiles')
+          .upsert({
+            'id': user.id,
+            'name': user.userMetadata?['name'] ??
+                user.email?.split('@')[0] ??
+                'Student',
+            'email': user.email ?? '',
+            'role': 'Student',
+          })
+          .then<void>((_) {})
+          .catchError((Object error) {
+            debugPrint("Student profile synchronization error: $error");
+          });
 
       final classData = await _client
           .from('classes')
           .select('id, name, code, instructor_id')
           .eq('code', cleanCode)
           .maybeSingle();
+      await profileSync;
 
       debugPrint(
           'SUPABASE JOIN DEBUG: class lookup for $cleanCode => ${classData == null ? 'NOT_FOUND' : classData['id']}');
@@ -338,7 +345,11 @@ class SupabaseService {
             "Invalid course code ($cleanCode). Please double-check and try again.");
       }
 
-      final classId = classData['id'];
+      final classId = classData['id']?.toString().trim();
+      if (classId == null || classId.isEmpty) {
+        throw Exception(
+            'Course information is incomplete. Ask the instructor for a new invitation.');
+      }
       final instructorId = classData['instructor_id'];
       final course = Course.fromMap(classData, isOwner: false);
 
@@ -458,16 +469,22 @@ class SupabaseService {
       if (questions.isNotEmpty) {
         final baseMillis = DateTime.now().millisecondsSinceEpoch;
         const uuid = Uuid();
-        final inserts = questions.asMap().entries
+        final inserts = questions
+            .asMap()
+            .entries
             .map((entry) => {
                   // Time-ordered IDs preserve the printed question order when
                   // fetched from Supabase, without a database migration.
-                  'id': uuid.v7(config: V7Options(baseMillis + entry.key, null)),
+                  'id':
+                      uuid.v7(config: V7Options(baseMillis + entry.key, null)),
                   'exam_id': examId,
                   'question_text': _storedQuestionText(entry.value),
-                  'correct_answer':
-                      (entry.value['correctAnswer'] ?? entry.value['answer'] ?? 'A').toString(),
-                  'question_type': (entry.value['questionType'] ?? 'MCQ').toString(),
+                  'correct_answer': (entry.value['correctAnswer'] ??
+                          entry.value['answer'] ??
+                          'A')
+                      .toString(),
+                  'question_type':
+                      (entry.value['questionType'] ?? 'MCQ').toString(),
                   'topic_tag': (entry.value['topicTag'] ?? title).toString(),
                 })
             .toList();
@@ -538,8 +555,11 @@ class SupabaseService {
       return await ApiService.getExamQuestions(examId);
     } catch (e) {
       debugPrint("ApiService getExamQuestions fallback ($e)...");
-      final response =
-          await _client.from('questions').select().eq('exam_id', examId).order('id');
+      final response = await _client
+          .from('questions')
+          .select()
+          .eq('exam_id', examId)
+          .order('id');
       final questions = List<Map<String, dynamic>>.from(response);
       questions.sort((a, b) {
         final typeOrder = (a['question_type'] == 'MCQ' ? 0 : 1)

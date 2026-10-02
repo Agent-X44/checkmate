@@ -257,7 +257,7 @@ def _course_invite_page(code: str = "", course_name: str | None = None,
         "s.textContent='Course code copied.';}catch(_){s.textContent="
         "'Copy is unavailable. Select and copy the course code above.';}}</script>"
         "<p id=\"copy-status\" aria-live=\"polite\"></p>"
-        if course_name is not None else f"<p class=\"message\">{safe_message}</p>"
+        if code else f"<p class=\"message\">{safe_message}</p>"
     )
     return HTMLResponse(
         content=(
@@ -288,21 +288,8 @@ def course_invitation(code: str = ""):
             message="This invitation link is missing a valid course code. Ask the instructor for a new link.",
             status_code=400,
         )
-    if not supabase:
-        return _course_invite_page(
-            message="Course invitations are temporarily unavailable. Please try again later.",
-            status_code=503,
-        )
-    course = _one("classes", "code", normalized_code, "name, code")
-    if not course:
-        return _course_invite_page(
-            message="This course code is invalid or no longer active. Ask the instructor for a new invitation.",
-            status_code=404,
-        )
-    return _course_invite_page(
-        normalized_code,
-        str(course.get("name") or "your course"),
-    )
+    # The authenticated app validates the code during enrollment; keep this landing independent of DB latency.
+    return _course_invite_page(normalized_code)
 
 
 @app.get("/.well-known/assetlinks.json")

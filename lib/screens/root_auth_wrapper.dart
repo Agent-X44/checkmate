@@ -43,7 +43,11 @@ class _RootAuthWrapperState extends State<RootAuthWrapper> {
         _isInitDone = true;
       });
       if (_user != null) {
-        Future.microtask(() => DeepLinkService().checkPendingJoinOnLogin());
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            DeepLinkService().checkPendingJoinOnLogin();
+          }
+        });
       }
       _setupAuthListener();
     }
@@ -65,7 +69,11 @@ class _RootAuthWrapperState extends State<RootAuthWrapper> {
           _user = newUser;
         });
         if (newUser != null) {
-          Future.microtask(() => DeepLinkService().checkPendingJoinOnLogin());
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              DeepLinkService().checkPendingJoinOnLogin();
+            }
+          });
         }
       }
     });

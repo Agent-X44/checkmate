@@ -19,6 +19,7 @@ class DashboardScreenState extends State<DashboardScreen> {
 
   List<Course> _myCourses = [];
   List<Course> _enrolledCourses = [];
+  final Map<String, Course> _confirmedJoinedCourses = {};
   bool _isInitialLoading = true;
   bool _loadFailed = false;
 
@@ -37,6 +38,7 @@ class DashboardScreenState extends State<DashboardScreen> {
   }
 
   void addEnrolledCourse(Course course) {
+    _confirmedJoinedCourses[course.id] = course;
     if (mounted) {
       setState(() {
         _enrolledCourses.removeWhere((existing) => existing.id == course.id);
@@ -51,6 +53,11 @@ class DashboardScreenState extends State<DashboardScreen> {
     try {
       final my = await SupabaseService.getCreatedCoursesDetails();
       final enrolled = await SupabaseService.getEnrolledCoursesDetails();
+      for (final course in _confirmedJoinedCourses.values) {
+        if (!enrolled.any((existing) => existing.id == course.id)) {
+          enrolled.insert(0, course);
+        }
+      }
       if (mounted) {
         setState(() {
           _myCourses = my;
@@ -224,7 +231,9 @@ class DashboardScreenState extends State<DashboardScreen> {
                       ),
                     ),
                     Icon(
-                      isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                      isExpanded
+                          ? Icons.keyboard_arrow_up
+                          : Icons.keyboard_arrow_down,
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
                   ],
@@ -242,9 +251,8 @@ class DashboardScreenState extends State<DashboardScreen> {
     final colors = theme.colorScheme;
     final user = Supabase.instance.client.auth.currentUser;
     final rawName = user?.userMetadata?['name']?.toString().trim();
-    final firstName = rawName == null || rawName.isEmpty
-        ? 'there'
-        : rawName.split(' ').first;
+    final firstName =
+        rawName == null || rawName.isEmpty ? 'there' : rawName.split(' ').first;
     final compact = MediaQuery.textScalerOf(context).scale(1) > 1.3;
 
     return Center(
@@ -271,7 +279,8 @@ class DashboardScreenState extends State<DashboardScreen> {
               ),
               const SizedBox(height: 18),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 decoration: BoxDecoration(
                   color: colors.surfaceContainerLow,
                   borderRadius: BorderRadius.circular(18),
@@ -280,10 +289,14 @@ class DashboardScreenState extends State<DashboardScreen> {
                   builder: (context, constraints) {
                     final stacked = constraints.maxWidth < 320 || compact;
                     final created = _buildSummaryStat(
-                        context, Icons.edit_note_outlined, 'Created',
+                        context,
+                        Icons.edit_note_outlined,
+                        'Created',
                         '${_myCourses.length}');
                     final enrolled = _buildSummaryStat(
-                        context, Icons.school_outlined, 'Enrolled',
+                        context,
+                        Icons.school_outlined,
+                        'Enrolled',
                         '${_enrolledCourses.length}');
                     if (stacked) {
                       return Column(
@@ -321,9 +334,8 @@ class DashboardScreenState extends State<DashboardScreen> {
       BuildContext context, IconData icon, String label, String value) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final accent = theme.brightness == Brightness.dark
-        ? colors.secondary
-        : colors.primary;
+    final accent =
+        theme.brightness == Brightness.dark ? colors.secondary : colors.primary;
     return Row(
       children: [
         Icon(icon, size: 23, color: accent),
@@ -354,7 +366,8 @@ class DashboardScreenState extends State<DashboardScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.3;
+                final largeText =
+                    MediaQuery.textScalerOf(context).scale(1) > 1.3;
                 final columns =
                     !largeText && constraints.maxWidth >= 680 ? 2 : 1;
                 final cardWidth =
@@ -421,7 +434,9 @@ class DashboardScreenState extends State<DashboardScreen> {
                   borderRadius: BorderRadius.circular(15),
                 ),
                 child: Icon(
-                  course.isOwner ? Icons.menu_book_outlined : Icons.school_outlined,
+                  course.isOwner
+                      ? Icons.menu_book_outlined
+                      : Icons.school_outlined,
                   color: dark ? const Color(0xFF141318) : Colors.white,
                   size: 27,
                 ),
