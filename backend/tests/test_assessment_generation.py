@@ -212,6 +212,43 @@ def test_existing_questions_keep_duplicates_across_stream_batches(monkeypatch):
     assert "positions 16 through 16" in prompts[1]
 
 
+@pytest.mark.parametrize("source_mode", ["existing-questions", "topic"])
+def test_existing_questions_accepts_alias_or_detected_bank_with_repeated_items(
+        monkeypatch, source_mode):
+    import ai_service
+
+    async def fake_stream(system_prompt, user_prompt, schema_class, array_key,
+                          item_class, model_override=None, max_tokens=8192,
+                          temperature=0.3, on_partial=None, max_items=None):
+        assert "positions 1 through 2" in user_prompt
+        yield {**_mcq(1, key="A"), "questionText": "What is 1 plus 0?",
+               "options": ["A. 1", "B. 2", "C. 3", "D. 4"]}
+        yield {**_mcq(1, key="A"), "questionText": "What is 1 plus 0?",
+               "options": ["A. 1", "B. 2", "C. 3", "D. 4"]}
+
+    monkeypatch.setattr(ai_service, "stream_structured_array", fake_stream)
+    material = "\n".join([
+        "1. What is 1 plus 0?",
+        "A. 1",
+        "B. 2",
+        "C. 3",
+        "D. 4",
+        "Answer: A",
+        "2. What is 1 plus 0?",
+        "A. 1",
+        "B. 2",
+        "C. 3",
+        "D. 4",
+        "Answer: A",
+    ])
+    result = asyncio.run(generate_verified_questions(
+        material, 2, 0, source_mode=source_mode,
+    ))
+    assert len(result) == 2
+    assert all(question["questionText"] == "What is 1 plus 0?" for question in result)
+    assert all(question["correctAnswer"] == "A" for question in result)
+
+
 def test_existing_questions_with_missing_key_fail_without_replacement(monkeypatch):
     import ai_service
 

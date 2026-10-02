@@ -40,7 +40,13 @@ from ai_service import (
     HF_MODEL_REASONING,
     client as hf_client
 )
-from assessment_generation import AssessmentValidationError, clean_option_label, generate_verified_questions, validate_distribution
+from assessment_generation import (
+    AssessmentValidationError,
+    clean_option_label,
+    generate_verified_questions,
+    normalize_source_mode,
+    validate_distribution,
+)
 from result_analysis import class_summary, enrich_answers, grade_context, question_counts, student_summary, student_overview_summary, topic_counts
 from scores_export import build_scores_workbook
 from ai_instructions import (
@@ -309,9 +315,14 @@ async def generate_exam_stream(
     except AssessmentValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    source_mode = normalize_source_mode(source_mode)
     task_key = (class_id, topic, assessment_type, source_mode, mcq_count, tf_count)
 
     filename = file.filename if file else None
+    logger.info(
+        "Starting assessment stream (source_mode=%s, uploaded_file=%s)",
+        source_mode, bool(filename),
+    )
     content_bytes = await file.read() if file else None
     if content_bytes and len(content_bytes) > 10 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Uploaded files must be 10 MB or smaller.")

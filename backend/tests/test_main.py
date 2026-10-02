@@ -97,6 +97,33 @@ async def test_stream_keeps_exact_requested_types_without_persisting(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_stream_normalizes_existing_questions_mode_before_generation(monkeypatch):
+    async def fake_generate(material, mcq_count, tf_count, source_mode, report,
+                            on_question, on_draft):
+        assert source_mode == "existing_questions"
+        return [{
+            "questionType": "MCQ", "questionText": "Which value is even?",
+            "options": ["1", "2", "3", "5"], "correctAnswer": "B",
+        }]
+
+    monkeypatch.setattr(main, "generate_verified_questions", fake_generate)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post("/generate-exam-stream", data={
+            "topic": "1. Which value is even?\nA. 1\nB. 2\nC. 3\nD. 5\nAnswer: B",
+            "class_id": "existing-questions-course",
+            "question_count": "1", "mcq_count": "1", "tf_count": "0",
+            "include_mcq": "true", "include_tf": "false",
+            "source_mode": "existing-questions",
+        })
+
+    events = [json.loads(line[6:]) for line in response.text.splitlines()
+              if line.startswith("data: ")]
+    assert response.status_code == 200
+    assert events[-1]["type"] == "complete"
+    assert events[-1]["questions"][0]["correctAnswer"] == "B"
+
+
+@pytest.mark.asyncio
 async def test_stream_rejects_type_count_mismatch():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         response = await ac.post("/generate-exam-stream", data={

@@ -17,6 +17,43 @@ class AssessmentValidationError(ValueError):
     pass
 
 
+def normalize_source_mode(source_mode):
+    value = str(source_mode or "").strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "existing_question": "existing_questions",
+        "existing_questions": "existing_questions",
+        "existing_question_mode": "existing_questions",
+        "existing_questions_mode": "existing_questions",
+        "existingquestions": "existing_questions",
+        "existing": "existing_questions",
+        "supplied_questions": "existing_questions",
+        "supplied": "existing_questions",
+    }
+    return aliases.get(value, value)
+
+
+def _looks_like_existing_question_bank(material, mcq_count, tf_count):
+    text = str(material or "")
+    if len(text) < 40:
+        return False
+    question_markers = re.findall(r"(?m)^\s*\d+\s*[.)]\s+\S", text)
+    if len(question_markers) < min(2, mcq_count + tf_count):
+        return False
+    has_answer_key_header = bool(re.search(
+        r"(?im)^\s*(?:answer\s*key|answers)\s*:?\s*$", text,
+    ))
+    has_inline_answer = bool(re.search(
+        r"(?i)\b(?:correct\s+answer|answer|ans)\s*(?::|=|\bis\b|-)\s*"
+        r"(?:option\s*)?(?:true|false|[A-D])\b", text,
+    ))
+    if not (has_answer_key_header or has_inline_answer):
+        return False
+    if mcq_count:
+        return all(re.search(rf"(?im)^\s*{letter}[\).]\s+\S", text)
+                   for letter in "ABCD")
+    return bool(re.search(r"(?i)\b(?:true|false)\b", text))
+
+
 def validate_distribution(total, mcq_count, tf_count, include_mcq, include_tf):
     if not 1 <= total <= 50:
         raise AssessmentValidationError("Choose between 1 and 50 questions.")
@@ -511,6 +548,15 @@ async def generate_verified_questions(material, mcq_count, tf_count,
     Returns only complete, type-correct assessments. Any unresolved key blocks
     completion instead of falling back to a guessed or placeholder answer.
     """
+    source_mode = normalize_source_mode(source_mode)
+    if mcq_count < 0 or tf_count < 0 or mcq_count + tf_count < 1:
+        raise AssessmentValidationError("An assessment needs a positive question count.")
+    if source_mode == "existing_questions" or _looks_like_existing_question_bank(
+        material, mcq_count, tf_count,
+    ):
+        return await format_existing_questions(
+            material, mcq_count, tf_count, on_progress, on_question, on_draft,
+        )
     from ai_instructions import (
         SYSTEM_ANSWER_AUDIT, SYSTEM_ASSESSMENT_DESIGN,
         get_assessment_prompt,
@@ -520,12 +566,6 @@ async def generate_verified_questions(material, mcq_count, tf_count,
         HF_MODEL_REASONING, Question, stream_structured_array,
     )
 
-    if mcq_count < 0 or tf_count < 0 or mcq_count + tf_count < 1:
-        raise AssessmentValidationError("An assessment needs a positive question count.")
-    if source_mode == "existing_questions":
-        return await format_existing_questions(
-            material, mcq_count, tf_count, on_progress, on_question, on_draft,
-        )
     accepted = []
     seen = set()
     rejected_texts = []
@@ -583,10 +623,10 @@ async def generate_verified_questions(material, mcq_count, tf_count,
                         item = normalize_questions([raw], 1 if kind == "MCQ" else 0,
                                                    1 if kind == "TF" else 0)[0]
                         key = re.sub(r"\W+", "", item["questionText"].casefold())
-                        if source_mode != "existing_questions" and (key in seen or any(
+                        if key in seen or any(
                             key == re.sub(r"\W+", "", prior_item["questionText"].casefold())
                             for prior_item in proposed
-                        )):
+                        ):
                             duplicate_in_batch = True
                             if item["questionText"] not in rejected_texts:
                                 rejected_texts.append(item["questionText"])
