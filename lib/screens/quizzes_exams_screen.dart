@@ -783,10 +783,37 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                 .where((exam) => widget.isOwner || exam['is_approved'] == true)
                 .toList();
 
+            int getStatusWeight(Map<String, dynamic> exam) {
+              if (exam['results_released'] == true) return 3;
+              if (exam['is_approved'] == true) return 2;
+              return 1; // Draft
+            }
+
+            int getTypeWeight(Map<String, dynamic> exam) {
+              final title = exam['title'] ?? '';
+              if (title.contains('[Exam]')) return 1;
+              return 2; // Quiz
+            }
+
             visibleExams.sort((a, b) {
+              // 1. Sort by Status (Drafts -> Approved -> Released)
+              final statusA = getStatusWeight(a);
+              final statusB = getStatusWeight(b);
+              if (statusA != statusB) {
+                return statusA.compareTo(statusB);
+              }
+
+              // 2. Sort by Type (Exams -> Quizzes -> Other)
+              final typeA = getTypeWeight(a);
+              final typeB = getTypeWeight(b);
+              if (typeA != typeB) {
+                return typeA.compareTo(typeB);
+              }
+
+              // 3. Sort by Date Created (Newest first)
               final dateA = DateTime.tryParse(a['created_at']?.toString() ?? '') ?? DateTime(2000);
               final dateB = DateTime.tryParse(b['created_at']?.toString() ?? '') ?? DateTime(2000);
-              return dateB.compareTo(dateA); // Newest first
+              return dateB.compareTo(dateA);
             });
 
             String getStatusGroup(Map<String, dynamic> exam) {
@@ -1034,6 +1061,12 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
             final isReleased = exam['results_released'] == true;
 
             final isExam = (exam['title'] ?? '').contains('[Exam]');
+            final examType = isExam ? 'Exam' : 'Quiz';
+            
+            final itemColor = isExam
+                ? colors.tertiary
+                : actionColor;
+
             // Clean title for display by removing tags
             String displayTitle = exam['title'] ?? 'Untitled';
             displayTitle = displayTitle
@@ -1124,14 +1157,14 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                           width: 40,
                           height: 40,
                           decoration: BoxDecoration(
-                            color: actionColor.withValues(alpha: 0.12),
+                            color: itemColor.withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Icon(
                             isExam
                                 ? Icons.assignment_outlined
                                 : Icons.quiz_outlined,
-                            color: actionColor,
+                            color: itemColor,
                           ),
                         ),
                         title: Text(
@@ -1146,15 +1179,36 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                         subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const SizedBox(height: 2),
-                            Text(
-                              _formatDate(exam['created_at']?.toString()),
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: colors.onSurfaceVariant.withValues(alpha: 0.8),
-                              ),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: itemColor.withValues(alpha: 0.1),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(color: itemColor.withValues(alpha: 0.2)),
+                                  ),
+                                  child: Text(
+                                    examType,
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                      color: itemColor,
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  _formatDate(exam['created_at']?.toString()),
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: colors.onSurfaceVariant.withValues(alpha: 0.8),
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(height: 2),
+                            const SizedBox(height: 4),
                             Text(
                               info['isDraftPending'] == true
                                   ? 'Questions pending'
