@@ -1,6 +1,7 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/supabase_service.dart';
 import '../utils/ui_utils.dart';
 
@@ -105,6 +106,15 @@ class _LoginScreenState extends State<LoginScreen>
           );
           setState(() => _isLoginMode = true);
         }
+      }
+    } on AuthException catch (error) {
+      if (mounted) {
+        _triggerShake();
+        setState(() {
+          _emailError = true;
+          _passwordError = true;
+        });
+        CheckMateUi.showTopPrompt(context, error.message);
       }
     } catch (e) {
       if (mounted) {

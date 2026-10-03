@@ -233,14 +233,14 @@ async def status():
     }
 
 
-def _course_invite_page(code: str = "", course_name: str | None = None,
+def _course_invite_page(joinCode: str = "", course_name: str | None = None,
                         message: str = "", status_code: int = 200) -> HTMLResponse:
-    safe_code = html.escape(code)
+    safe_code = html.escape(joinCode)
     safe_name = html.escape(course_name or "your course")
     safe_message = html.escape(message)
     app_link = html.escape(
-        f"checkmate://join?code={code}", quote=True,
-    ) if code else "checkmate://"
+        f"checkmate://join?joinCode={joinCode}", quote=True,
+    ) if joinCode else "checkmate://"
     course_content = (
         f"<p class=\"course\">You are invited to join <strong>{safe_name}</strong>.</p>"
         f"<a class=\"button\" href=\"{app_link}\">Open CheckMate</a>"
@@ -281,8 +281,8 @@ def _course_invite_page(code: str = "", course_name: str | None = None,
 
 
 @app.get("/join", response_class=HTMLResponse)
-def course_invitation(code: str = ""):
-    normalized_code = code.strip().upper()
+def course_invitation(joinCode: str = ""):
+    normalized_code = joinCode.strip().upper()
     if not re.fullmatch(r"[A-Z0-9]{5,8}", normalized_code):
         return _course_invite_page(
             message="This invitation link is missing a valid course code. Ask the instructor for a new link.",

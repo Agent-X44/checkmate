@@ -14,6 +14,10 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 /// Enforces:
 /// - BR-01: Course invitations require student confirmation before enrollment
 class DeepLinkService {
+  static const _pendingJoinPreference = 'pending_join_code';
+  static const _handledJoinPreference = 'handled_join_link';
+  static const _handledJoinCooldown = Duration(minutes: 5);
+
   static final DeepLinkService _instance = DeepLinkService._internal();
   factory DeepLinkService() => _instance;
   DeepLinkService._internal();
@@ -22,6 +26,9 @@ class DeepLinkService {
   StreamSubscription<Uri>? _linkSubscription;
   String? _pendingJoinCode;
   bool _processingPendingJoin = false;
+  String? _lastReceivedJoinCode;
+  DateTime? _lastReceivedJoinAt;
+  String? _activeJoinCode;
   static final StreamController<Course> _joinedCourses =
       StreamController<Course>.broadcast();
 
@@ -32,7 +39,7 @@ class DeepLinkService {
   /// Opens the app when installed, otherwise the web landing offers the APK.
   static String buildInviteLink(String joinCode) {
     return Uri.https(inviteHost, '/join', {
-      'code': _normalizeCode(joinCode),
+      'joinCode': _normalizeCode(joinCode),
     }).toString();
   }
 
@@ -41,7 +48,7 @@ class DeepLinkService {
     return Uri(
       scheme: 'checkmate',
       host: 'join',
-      queryParameters: {'code': _normalizeCode(joinCode)},
+      queryParameters: {'joinCode': _normalizeCode(joinCode)},
     ).toString();
   }
 
@@ -50,7 +57,7 @@ class DeepLinkService {
   }
 
   static String? extractJoinCode(Uri uri) {
-    var code = uri.queryParameters['code'] ?? uri.queryParameters['joinCode'];
+    var code = uri.queryParameters['joinCode'] ?? uri.queryParameters['code'];
     if ((code == null || code.isEmpty) && uri.pathSegments.isNotEmpty) {
       final segments = uri.pathSegments;
       if (segments.first.toLowerCase() == 'join' && segments.length > 1) {
@@ -103,6 +110,21 @@ class DeepLinkService {
     final code = _extractCodeFromUri(uri);
     if (code == null) return;
 
+    if (await _wasRecentlyHandled(code)) {
+      await _clearPendingJoinCode();
+      debugPrint('DEEP_LINK: Ignoring recently handled invite $code');
+      return;
+    }
+
+    final now = DateTime.now();
+    if (_lastReceivedJoinCode == code &&
+        _lastReceivedJoinAt != null &&
+        now.difference(_lastReceivedJoinAt!) < const Duration(seconds: 3)) {
+      return;
+    }
+    _lastReceivedJoinCode = code;
+    _lastReceivedJoinAt = now;
+
     debugPrint('DEEP_LINK: Extracted join code -> $code');
 
     final user = SupabaseService.currentUser;
@@ -122,6 +144,7 @@ class DeepLinkService {
           context,
           'Invitation received for course $code! Please log in to join.',
           isError: false,
+          fallbackOverlay: navigatorKey.currentState?.overlay,
         );
       }
     }
@@ -132,47 +155,63 @@ class DeepLinkService {
     final normalizedCode = code.trim().toUpperCase();
     final context = navigatorKey.currentContext;
 
+    if (_activeJoinCode == normalizedCode) return;
+    _activeJoinCode = normalizedCode;
+
     debugPrint(
         'DEEP LINK JOIN DEBUG: start joinCode=$normalizedCode user=${SupabaseService.currentUser?.id ?? 'null'}');
 
     if (context == null || !context.mounted) {
       await _savePendingJoinCode(normalizedCode);
+      _activeJoinCode = null;
       return;
     }
 
-    final shouldJoin = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Join course?'),
-        content: Text(
-            'Would you like to join the course with code $normalizedCode?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('CANCEL'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('JOIN'),
-          ),
-        ],
-      ),
-    );
-
-    if (shouldJoin != true) {
-      await _clearPendingJoinCode();
-      return;
-    }
-
+    var progressDialogShown = false;
     try {
-      final currentContext = navigatorKey.currentContext;
-      if (currentContext != null && currentContext.mounted) {
-        CheckMateUi.showTopPrompt(
-          currentContext,
-          'Joining course ($normalizedCode)...',
-          isError: false,
-        );
+      final shouldJoin = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Join course?'),
+          content: Text(
+              'Would you like to join the course with code $normalizedCode?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('CANCEL'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('JOIN COURSE'),
+            ),
+          ],
+        ),
+      );
+
+      if (shouldJoin != true) {
+        await _markJoinHandled(normalizedCode);
+        await _clearPendingJoinCode();
+        return;
       }
+
+      // Consume the link before the request so a failure cannot prompt again on next login.
+      await _markJoinHandled(normalizedCode);
+      await _clearPendingJoinCode();
+      showDialog<void>(
+        context: navigatorKey.currentContext ?? context,
+        barrierDismissible: false,
+        builder: (_) => const AlertDialog(
+          content: Row(
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(width: 20),
+              Expanded(child: Text('Joining course...')),
+            ],
+          ),
+        ),
+      );
+      progressDialogShown = true;
+
       final course = await SupabaseService.joinClass(normalizedCode).timeout(
         const Duration(seconds: 8),
         onTimeout: () => throw Exception(
@@ -181,31 +220,58 @@ class DeepLinkService {
 
       debugPrint(
           'DEEP LINK JOIN DEBUG: success for $normalizedCode -> ${course.name}');
+      final navigator = navigatorKey.currentState;
+      if (progressDialogShown && navigator != null && navigator.canPop()) {
+        navigator.pop();
+        progressDialogShown = false;
+      }
       notifyCourseJoined(course);
-      await _clearPendingJoinCode();
 
       final currentCtx = navigatorKey.currentContext;
       if (currentCtx != null && currentCtx.mounted) {
-        CheckMateUi.showTopPrompt(
-          currentCtx,
-          'Successfully joined course: ${course.name}!',
-          isError: false,
-        );
+        try {
+          CheckMateUi.showTopPrompt(
+            currentCtx,
+            'Successfully joined course: ${course.name}!',
+            isError: false,
+            fallbackOverlay: navigatorKey.currentState?.overlay,
+          );
+        } catch (e) {
+          debugPrint('Error showing success prompt: $e');
+        }
       }
     } catch (e, stackTrace) {
+      final navigator = navigatorKey.currentState;
+      if (progressDialogShown && navigator != null && navigator.canPop()) {
+        navigator.pop();
+        progressDialogShown = false;
+      }
       debugPrint('DEEP LINK JOIN DEBUG: failed for $normalizedCode :: $e');
       debugPrintStack(
           stackTrace: stackTrace, label: 'Deep link course join failure');
       final errorMsg = e.toString().replaceAll('Exception: ', '');
       final currentCtx = navigatorKey.currentContext;
       if (currentCtx != null && currentCtx.mounted) {
-        final isAlreadyEnrolled = errorMsg.contains('already enrolled');
-        CheckMateUi.showTopPrompt(
-          currentCtx,
-          errorMsg,
-          isError: !isAlreadyEnrolled,
-        );
+        try {
+          await showDialog<void>(
+            context: currentCtx,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('Could not join course'),
+              content: Text(errorMsg),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          );
+        } catch (e) {
+           debugPrint('Error showing error dialog: $e');
+        }
       }
+    } finally {
+      _activeJoinCode = null;
     }
   }
 
@@ -222,6 +288,10 @@ class DeepLinkService {
     }
 
     if (code != null && code.isNotEmpty) {
+      if (await _wasRecentlyHandled(code)) {
+        await _clearPendingJoinCode();
+        return;
+      }
       debugPrint('DEEP_LINK: Processing pending join code after auth -> $code');
       _processingPendingJoin = true;
       try {
@@ -235,7 +305,7 @@ class DeepLinkService {
   Future<void> _savePendingJoinCode(String code) async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('pending_join_code', code);
+      await prefs.setString(_pendingJoinPreference, code);
     } catch (error) {
       debugPrint('Failed to persist pending join code: $error');
     }
@@ -245,10 +315,44 @@ class DeepLinkService {
     _pendingJoinCode = null;
     try {
       final prefs = await SharedPreferences.getInstance();
-      await prefs.remove('pending_join_code');
+      await prefs.remove(_pendingJoinPreference);
     } catch (error) {
       debugPrint('Could not clear the saved invitation code: $error');
     }
+  }
+
+  Future<void> _markJoinHandled(String code) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _handledJoinPreference,
+        '$code:${DateTime.now().millisecondsSinceEpoch}',
+      );
+    } catch (error) {
+      debugPrint('Could not save handled invitation state: $error');
+    }
+  }
+
+  Future<bool> _wasRecentlyHandled(String code) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final value = prefs.getString(_handledJoinPreference);
+      if (value == null) return false;
+
+      final separator = value.lastIndexOf(':');
+      if (separator < 0 || value.substring(0, separator) != code) return false;
+      final timestamp = int.tryParse(value.substring(separator + 1));
+      if (timestamp == null) return false;
+
+      final age = DateTime.now().difference(
+        DateTime.fromMillisecondsSinceEpoch(timestamp),
+      );
+      if (age >= Duration.zero && age < _handledJoinCooldown) return true;
+      await prefs.remove(_handledJoinPreference);
+    } catch (error) {
+      debugPrint('Could not read handled invitation state: $error');
+    }
+    return false;
   }
 
   void dispose() {

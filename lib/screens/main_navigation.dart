@@ -77,7 +77,9 @@ class _MainNavigationState extends State<MainNavigation> {
               .removeWhere((existing) => existing.id == course.id);
           _drawerCachedCourses.insert(0, course);
         });
-        _dashboardKey.currentState?.addEnrolledCourse(course);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _dashboardKey.currentState?.addEnrolledCourse(course);
+        });
       }
       unawaited(_refreshDrawerCourses());
     });
@@ -244,8 +246,8 @@ class _MainNavigationState extends State<MainNavigation> {
             onPressed: () async {
               String input = joinCtrl.text.trim();
               if (input.isEmpty) return;
-              if (input.contains('code=')) {
-                input = Uri.tryParse(input)?.queryParameters['code'] ?? input;
+              if (input.contains('code=') || input.contains('joinCode=')) {
+                input = Uri.tryParse(input)?.queryParameters['joinCode'] ?? Uri.tryParse(input)?.queryParameters['code'] ?? input;
               }
               final nav = Navigator.of(dialogContext);
               try {

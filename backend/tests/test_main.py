@@ -31,7 +31,7 @@ async def test_course_invitation_landing_does_not_wait_for_database(monkeypatch)
         response = await ac.get("/join", params={"code": "join42"})
 
     assert response.status_code == 200
-    assert 'href="checkmate://join?code=JOIN42"' in response.text
+    assert 'href="checkmate://join?joinCode=JOIN42"' in response.text
     assert "JOIN42" in response.text
     assert "your course" in response.text
     assert "releases/latest/download/CheckMate.apk" in response.text

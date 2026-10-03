@@ -782,6 +782,19 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
             final visibleExams = (exams ?? const <Map<String, dynamic>>[])
                 .where((exam) => widget.isOwner || exam['is_approved'] == true)
                 .toList();
+
+            visibleExams.sort((a, b) {
+              final dateA = DateTime.tryParse(a['created_at']?.toString() ?? '') ?? DateTime(2000);
+              final dateB = DateTime.tryParse(b['created_at']?.toString() ?? '') ?? DateTime(2000);
+              return dateB.compareTo(dateA); // Newest first
+            });
+
+            String getStatusGroup(Map<String, dynamic> exam) {
+              if (exam['results_released'] == true) return 'Released';
+              if (exam['is_approved'] == true) return 'Approved';
+              return 'Draft';
+            }
+
             if (visibleExams.isEmpty) {
               return ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
@@ -829,30 +842,33 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        _buildSection(
-                            context,
-                            "Quizzes",
-                            visibleExams
-                                .where((e) =>
-                                    (e['title'] ?? '').contains('[Quiz]'))
-                                .toList()),
-                        const SizedBox(height: 24),
-                        _buildSection(
-                            context,
-                            "Exams",
-                            visibleExams
-                                .where((e) =>
-                                    (e['title'] ?? '').contains('[Exam]'))
-                                .toList()),
-                        const SizedBox(height: 24),
-                        _buildSection(
-                            context,
-                            "Other Assessments",
-                            visibleExams
-                                .where((e) =>
-                                    !(e['title'] ?? '').contains('[Quiz]') &&
-                                    !(e['title'] ?? '').contains('[Exam]'))
-                                .toList()),
+                        if (visibleExams.any((e) => getStatusGroup(e) == 'Draft')) ...[
+                          _buildSection(
+                              context,
+                              "Drafts",
+                              visibleExams
+                                  .where((e) => getStatusGroup(e) == 'Draft')
+                                  .toList()),
+                          const SizedBox(height: 24),
+                        ],
+                        if (visibleExams.any((e) => getStatusGroup(e) == 'Approved')) ...[
+                          _buildSection(
+                              context,
+                              "Approved",
+                              visibleExams
+                                  .where((e) => getStatusGroup(e) == 'Approved')
+                                  .toList()),
+                          const SizedBox(height: 24),
+                        ],
+                        if (visibleExams.any((e) => getStatusGroup(e) == 'Released')) ...[
+                          _buildSection(
+                              context,
+                              "Released",
+                              visibleExams
+                                  .where((e) => getStatusGroup(e) == 'Released')
+                                  .toList()),
+                          const SizedBox(height: 24),
+                        ],
                       ],
                     ),
                   ),
@@ -885,6 +901,14 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
             )
           : null,
     );
+  }
+
+  String _formatDate(String? isoDate) {
+    if (isoDate == null || isoDate.isEmpty) return 'Unknown date';
+    final date = DateTime.tryParse(isoDate);
+    if (date == null) return 'Unknown date';
+    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    return '${months[date.month - 1]} ${date.day}, ${date.year}';
   }
 
   Map<String, dynamic> _getExamTemplateInfo(Map<String, dynamic> exam) {
@@ -1009,6 +1033,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
             final isApproved = exam['is_approved'] == true;
             final isReleased = exam['results_released'] == true;
 
+            final isExam = (exam['title'] ?? '').contains('[Exam]');
             // Clean title for display by removing tags
             String displayTitle = exam['title'] ?? 'Untitled';
             displayTitle = displayTitle
@@ -1103,7 +1128,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Icon(
-                            title == 'Exams'
+                            isExam
                                 ? Icons.assignment_outlined
                                 : Icons.quiz_outlined,
                             color: actionColor,
@@ -1118,16 +1143,30 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                             fontWeight: FontWeight.w700,
                           ),
                         ),
-                        subtitle: Text(
-                          info['isDraftPending'] == true
-                              ? 'Questions pending'
-                              : "${info['totalItems']} items • ${info['templateName']}",
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: colors.onSurfaceVariant,
-                          ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const SizedBox(height: 2),
+                            Text(
+                              _formatDate(exam['created_at']?.toString()),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colors.onSurfaceVariant.withValues(alpha: 0.8),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              info['isDraftPending'] == true
+                                  ? 'Questions pending'
+                                  : "${info['totalItems']} items • ${info['templateName']}",
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colors.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
                         ),
                         trailing: widget.isOwner
                             ? PopupMenuButton<String>(

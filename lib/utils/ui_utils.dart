@@ -2,8 +2,13 @@ import 'package:flutter/material.dart';
 
 class CheckMateUi {
   /// Shows a subtle, brand-aligned prompt at the top of the screen.
-  static void showTopPrompt(BuildContext context, String message, {bool isError = true}) {
-    final overlay = Overlay.of(context);
+  static void showTopPrompt(BuildContext context, String message, {bool isError = true, OverlayState? fallbackOverlay}) {
+    final overlay = Overlay.maybeOf(context) ?? fallbackOverlay;
+    if (overlay == null) {
+      debugPrint('No overlay found to show prompt: $message');
+      return;
+    }
+    
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     

@@ -305,80 +305,99 @@ class SupabaseService {
 
   static Future<Course> joinClass(String classCode) async {
     return await (() async {
-      final user = currentUser;
-      if (user == null) throw Exception("Not authenticated");
+      var step = 'validating the invitation';
+      try {
+        final user = currentUser;
+        if (user == null) throw Exception("Not authenticated");
 
-      final cleanCode = normalizeJoinCode(classCode);
-      debugPrint(
-          'SUPABASE JOIN DEBUG: request classCode="$classCode" normalized="$cleanCode" user=${user.id}');
-
-      if (cleanCode.length < 5 || cleanCode.length > 8) {
-        throw Exception("Invalid course code format. Please try again.");
-      }
-
-      final profileSync = _client
-          .from('profiles')
-          .upsert({
-            'id': user.id,
-            'name': user.userMetadata?['name'] ??
-                user.email?.split('@')[0] ??
-                'Student',
-            'email': user.email ?? '',
-            'role': 'Student',
-          })
-          .then<void>((_) {})
-          .catchError((Object error) {
-            debugPrint("Student profile synchronization error: $error");
-          });
-
-      final classData = await _client
-          .from('classes')
-          .select('id, name, code, instructor_id')
-          .eq('code', cleanCode)
-          .maybeSingle();
-      await profileSync;
-
-      debugPrint(
-          'SUPABASE JOIN DEBUG: class lookup for $cleanCode => ${classData == null ? 'NOT_FOUND' : classData['id']}');
-      if (classData == null) {
-        throw Exception(
-            "Invalid course code ($cleanCode). Please double-check and try again.");
-      }
-
-      final classId = classData['id']?.toString().trim();
-      if (classId == null || classId.isEmpty) {
-        throw Exception(
-            'Course information is incomplete. Ask the instructor for a new invitation.');
-      }
-      final instructorId = classData['instructor_id'];
-      final course = Course.fromMap(classData, isOwner: false);
-
-      if (user.id == instructorId) {
-        throw Exception("You can't join the course you've created.");
-      }
-
-      final existing = await _client
-          .from('enrollments')
-          .select('id')
-          .eq('user_id', user.id)
-          .eq('class_id', classId)
-          .maybeSingle();
-
-      if (existing != null) {
+        final cleanCode = normalizeJoinCode(classCode);
         debugPrint(
-            'SUPABASE JOIN DEBUG: already enrolled user=${user.id} class=$classId');
+            'SUPABASE JOIN DEBUG: request classCode="$classCode" normalized="$cleanCode" user=${user.id}');
+
+        if (cleanCode.length < 5 || cleanCode.length > 8) {
+          throw Exception("Invalid course code format. Please try again.");
+        }
+
+        step = 'synchronizing your student profile';
+        final profileSync = _client
+            .from('profiles')
+            .upsert({
+              'id': user.id,
+              'name': user.userMetadata?['name'] ??
+                  user.email?.split('@')[0] ??
+                  'Student',
+              'email': user.email ?? '',
+              'role': 'Student',
+            })
+            .then<void>((_) {})
+            .catchError((Object error) {
+              debugPrint("Student profile synchronization error: $error");
+            });
+
+        step = 'looking up the course';
+        final classRows = await _client
+            .from('classes')
+            .select('id, name, code, instructor_id')
+            .eq('code', cleanCode)
+            .limit(1);
+        await profileSync;
+        if (classRows.isEmpty) {
+          throw Exception(
+              "Invalid course code ($cleanCode). Please double-check and try again.");
+        }
+        final classData = Map<String, dynamic>.from(classRows.first);
+
+        debugPrint(
+            'SUPABASE JOIN DEBUG: class lookup for $cleanCode => ${classData['id']}');
+        final classId = classData['id']?.toString().trim();
+        if (classId == null || classId.isEmpty) {
+          throw Exception(
+              'Course information is incomplete. Ask the instructor for a new invitation.');
+        }
+        final instructorId = classData['instructor_id']?.toString().trim();
+        if (instructorId == null || instructorId.isEmpty) {
+          throw Exception(
+              'Course information is incomplete. Ask the instructor for a new invitation.');
+        }
+        final course = Course.fromMap(classData, isOwner: false);
+
+        if (user.id == instructorId) {
+          throw Exception("You can't join the course you've created.");
+        }
+
+        step = 'checking your existing enrollment';
+        final existingRows = await _client
+            .from('enrollments')
+            .select('id')
+            .eq('user_id', user.id)
+            .eq('class_id', classId)
+            .limit(1);
+
+        if (existingRows.isNotEmpty) {
+          debugPrint(
+              'SUPABASE JOIN DEBUG: already enrolled user=${user.id} class=$classId');
+          return course;
+        }
+
+        step = 'saving your enrollment';
+        await _client.from('enrollments').insert({
+          'user_id': user.id,
+          'class_id': classId,
+          'role': 'Student',
+        });
+
+        debugPrint(
+            'SUPABASE JOIN DEBUG: enrolled user=${user.id} class=$classId');
         return course;
+      } catch (error, stackTrace) {
+        debugPrint('SUPABASE JOIN DEBUG: failure while $step :: $error');
+        debugPrintStack(
+            stackTrace: stackTrace, label: 'Supabase course join failure');
+        Error.throwWithStackTrace(
+          Exception('Course join failed while $step: $error'),
+          stackTrace,
+        );
       }
-
-      await _client.from('enrollments').insert({
-        'user_id': user.id,
-        'class_id': classId,
-        'role': 'Student',
-      });
-
-      debugPrint(
-          'SUPABASE JOIN DEBUG: enrolled user=${user.id} class=$classId');
-      return course;
     }())
         .timeout(
       const Duration(seconds: 8),

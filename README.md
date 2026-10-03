@@ -32,3 +32,9 @@ professors regarding their results.
 
 - **School Administrators and Independent Testing Centers:** Oversee macro-level 
 performance and class-wide academic metrics through exported data.
+
+## Email verification setup
+
+CheckMate uses Supabase Auth for sign-up and verification emails. See
+[the Resend SMTP setup guide](docs/RESEND_SMTP_SETUP.md) to configure delivery
+through Resend.

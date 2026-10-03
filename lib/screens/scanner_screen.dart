@@ -689,11 +689,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
     if (clean.isEmpty) return null;
 
     // 1. URL with ?code= or ?joinCode=
-    if (clean.contains('code=')) {
+    if (clean.contains('code=') || clean.contains('joinCode=')) {
       final uri = Uri.tryParse(clean);
       if (uri != null) {
         final codeParam =
-            uri.queryParameters['code'] ?? uri.queryParameters['joinCode'];
+            uri.queryParameters['joinCode'] ?? uri.queryParameters['code'];
         if (codeParam != null && codeParam.trim().isNotEmpty) {
           return codeParam.trim().toUpperCase();
         }

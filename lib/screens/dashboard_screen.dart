@@ -195,9 +195,13 @@ class DashboardScreenState extends State<DashboardScreen> {
       try {
         await SupabaseService.unenrollClass(course.id);
         if (mounted) {
+          _confirmedJoinedCourses.remove(course.id);
+          setState(() {
+            _enrolledCourses.removeWhere((enrolled) => enrolled.id == course.id);
+          });
           CheckMateUi.showTopPrompt(context, 'Left course successfully',
               isError: false);
-          _refreshAll();
+          await _refreshAll();
         }
       } catch (e) {
         if (mounted) {
