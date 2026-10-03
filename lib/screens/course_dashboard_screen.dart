@@ -148,7 +148,7 @@ class _CourseDashboardScreenState extends State<CourseDashboardScreen> {
                             const SizedBox(height: 5),
                             Text(
                               isTeacherView
-                                  ? 'Teaching · Code ${widget.course.joinCode}'
+                                  ? 'Teaching'
                                   : 'With ${widget.course.instructor}',
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,

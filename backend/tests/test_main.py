@@ -21,20 +21,84 @@ async def test_read_root():
 
 
 @pytest.mark.asyncio
-async def test_course_invitation_landing_does_not_wait_for_database(monkeypatch):
-    def fail_if_queried(*_args, **_kwargs):
-        raise AssertionError("Invitation landing must not query the database")
-
-    monkeypatch.setattr(main, "supabase", None)
-    monkeypatch.setattr(main, "_one", fail_if_queried)
+async def test_email_verified_page_shows_success_without_exposing_confirmation_code():
+    confirmation_code = "private-confirmation-code"
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        response = await ac.get("/join", params={"code": "join42"})
+        response = await ac.get("/email-verified", params={"code": confirmation_code})
 
     assert response.status_code == 200
-    assert 'href="checkmate://join?joinCode=JOIN42"' in response.text
-    assert "JOIN42" in response.text
-    assert "your course" in response.text
-    assert "releases/latest/download/CheckMate.apk" in response.text
+    assert response.headers["content-type"].startswith("text/html")
+    assert "Your email address has been confirmed." in response.text
+    assert "checkmate://" in response.text
+    assert confirmation_code not in response.text
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["referrer-policy"] == "no-referrer"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "params",
+    [{}, {"error_code": "otp_expired"}, {"code": "abc", "error_description": "secret diagnostic"}],
+)
+async def test_email_verified_page_shows_recovery_for_missing_or_error_link(params):
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get("/email-verified", params=params)
+
+    assert response.status_code == 400
+    assert "This link is missing, expired, or already used." in response.text
+    assert "Confirmation link unavailable" in response.text
+    assert "otp_expired" not in response.text
+    assert "secret diagnostic" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_course_invitation_accepts_private_token_without_showing_course_code(monkeypatch):
+    class ValidInvitation:
+        def execute(self):
+            return SimpleNamespace(data=True)
+
+    class InvitationDatabase:
+        def rpc(self, name, params):
+            assert name == "is_course_invitation_valid"
+            assert params["p_token"] == "a" * 64
+            return ValidInvitation()
+
+    monkeypatch.setattr(main, "supabase", InvitationDatabase())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get("/join", params={"inviteToken": "a" * 64})
+
+    assert response.status_code == 200
+    assert f'href="checkmate://join?inviteToken={"a" * 64}"' in response.text
+    assert "Course Code" not in response.text
+    assert "This private invitation link expires in 7 days." in response.text
+
+
+@pytest.mark.asyncio
+async def test_course_invitation_rejects_expired_private_token(monkeypatch):
+    class ExpiredInvitation:
+        def execute(self):
+            return SimpleNamespace(data=False)
+
+    class InvitationDatabase:
+        def rpc(self, *_args, **_kwargs):
+            return ExpiredInvitation()
+
+    monkeypatch.setattr(main, "supabase", InvitationDatabase())
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get("/join", params={"inviteToken": "b" * 64})
+
+    assert response.status_code == 410
+    assert "invitation has expired" in response.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_legacy_code_invitation_links_are_invalidated():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get("/join", params={"joinCode": "JOIN42"})
+
+    assert response.status_code == 410
+    assert "older invitation link is no longer valid" in response.text
+    assert "JOIN42" not in response.text
 
 
 @pytest.mark.asyncio
@@ -49,15 +113,12 @@ async def test_android_app_links_association_contains_application_and_signing_ce
 
 
 @pytest.mark.asyncio
-async def test_course_invitation_landing_rejects_invalid_and_defers_code_lookup():
+async def test_course_invitation_landing_rejects_invalid_token():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        invalid = await ac.get("/join", params={"code": "bad"})
-        assert invalid.status_code == 400
-        assert "missing a valid course code" in invalid.text
-        unknown = await ac.get("/join", params={"code": "JOIN42"})
+        invalid = await ac.get("/join", params={"inviteToken": "short"})
 
-    assert unknown.status_code == 200
-    assert "JOIN42" in unknown.text
+    assert invalid.status_code == 400
+    assert "invitation link is invalid" in invalid.text.lower()
 
 
 def test_legacy_double_labeled_choices_are_restored_once():

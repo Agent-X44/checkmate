@@ -233,63 +233,179 @@ async def status():
     }
 
 
-def _course_invite_page(joinCode: str = "", course_name: str | None = None,
-                        message: str = "", status_code: int = 200) -> HTMLResponse:
-    safe_code = html.escape(joinCode)
-    safe_name = html.escape(course_name or "your course")
-    safe_message = html.escape(message)
-    app_link = html.escape(
-        f"checkmate://join?joinCode={joinCode}", quote=True,
-    ) if joinCode else "checkmate://"
-    course_content = (
-        f"<p class=\"course\">You are invited to join <strong>{safe_name}</strong>.</p>"
-        f"<a class=\"button\" href=\"{app_link}\">Open CheckMate</a>"
-        "<p>If CheckMate is not installed, download the APK and then enter this course code:</p>"
-        f"<div class=\"code\" id=\"course-code\">{safe_code}</div>"
-        "<button class=\"copy\" type=\"button\" onclick=\"copyCode()\">Copy course code</button>"
-        "<div class=\"stores\"><a href=\"https://github.com/Agent-X44/checkmate/releases/latest/download/CheckMate.apk\">"
-        "Download CheckMate APK</a></div>"
-        "<script>async function copyCode(){const c=document.getElementById('course-code').textContent;"
-        "const s=document.getElementById('copy-status');try{if(navigator.clipboard&&window.isSecureContext){"
-        "await navigator.clipboard.writeText(c);}else{const t=document.createElement('textarea');"
-        "t.value=c;t.style.position='fixed';t.style.opacity='0';document.body.appendChild(t);t.select();"
-        "const ok=document.execCommand('copy');t.remove();if(!ok)throw new Error('copy failed');}"
-        "s.textContent='Course code copied.';}catch(_){s.textContent="
-        "'Copy is unavailable. Select and copy the course code above.';}}</script>"
-        "<p id=\"copy-status\" aria-live=\"polite\"></p>"
-        if code else f"<p class=\"message\">{safe_message}</p>"
+@app.get("/email-verified", response_class=HTMLResponse)
+def email_verified(
+    code: str | None = None,
+    error: str | None = None,
+    error_code: str | None = None,
+    error_description: str | None = None,
+):
+    confirmed = bool(code and not (error or error_code or error_description))
+    title = "Email confirmed" if confirmed else "Confirmation link unavailable"
+    icon = (
+        '<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="23" '
+        'fill="#dcfce7"/><path d="m14 24 7 7 14-15" fill="none" stroke="#15803d" '
+        'stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+        if confirmed else
+        '<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="23" '
+        'fill="#fff1d6"/><path d="M24 13v13m0 8h.02" fill="none" stroke="#b45309" '
+        'stroke-width="3.5" stroke-linecap="round"/></svg>'
+    )
+    eyebrow = "ACCOUNT VERIFIED" if confirmed else "LINK NOT VERIFIED"
+    heading = "You're all set." if confirmed else "Let's get you back on track."
+    message = (
+        "Your email address has been confirmed. Open CheckMate and sign in to continue."
+        if confirmed else
+        "This link is missing, expired, or already used. Return to CheckMate and request "
+        "a new confirmation email before trying again."
     )
     return HTMLResponse(
         content=(
             "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-            "<meta name=\"theme-color\" content=\"#101014\"><title>CheckMate course invitation</title>"
-            "<style>body{margin:0;background:#101014;color:#f7f7fa;font:16px system-ui,sans-serif;"
-            "display:grid;min-height:100vh;place-items:center}.card{box-sizing:border-box;width:min(92vw,480px);"
-            "padding:32px;border:1px solid #393940;border-radius:24px;background:#1e1e24;text-align:center}"
-            "h1{font-size:28px}.course{color:#c9c9d1}.button,.copy{display:inline-block;border:0;border-radius:12px;"
-            "padding:14px 20px;margin:8px;background:#8b91ff;color:#101014;font-weight:700;text-decoration:none}"
-            ".code{font-size:30px;letter-spacing:5px;font-weight:800;margin:16px}.copy{background:#33333b;color:#fff}"
-            ".stores{display:flex;justify-content:center;gap:20px;margin-top:20px}.stores a{color:#b7baff}"
-            ".message{color:#ffb4ab}</style></head><body><main class=\"card\">"
-            "<h1>CheckMate course invitation</h1>"
-            f"{course_content}</main></body></html>"
+            "<meta name=\"theme-color\" content=\"#f4f6fb\"><title>"
+            f"{title} · CheckMate</title><style>"
+            "*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;"
+            "padding:24px;background:radial-gradient(ellipse at 50% 0,#e5eaff 0,transparent 52%),"
+            "#f4f6fb;color:#172033;font:16px/1.6 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}"
+            ".card{width:min(100%,460px);padding:clamp(28px,8vw,48px);border:1px solid #e6e9f0;"
+            "border-radius:28px;background:#fff;box-shadow:0 24px 70px #26345b14;text-align:center}"
+            ".brand{display:inline-flex;align-items:center;gap:9px;margin-bottom:40px;color:#25315b;"
+            "font-size:17px;font-weight:750;letter-spacing:-.4px}.brand-mark{display:grid;place-items:center;"
+            "width:30px;height:30px;border-radius:10px;background:#4658d9;color:white;font-size:14px}"
+            ".icon{width:64px;height:64px;margin:0 auto 22px}.icon svg{display:block;width:100%;height:100%}"
+            ".eyebrow{margin:0 0 8px;color:#64708a;font-size:11px;font-weight:750;letter-spacing:1.7px}"
+            "h1{margin:0;color:#18213b;font-size:clamp(28px,7vw,36px);line-height:1.15;letter-spacing:-1.2px}"
+            ".message{margin:16px auto 28px;max-width:330px;color:#667085}"
+            ".button{display:flex;min-height:52px;align-items:center;justify-content:center;gap:9px;"
+            "border-radius:14px;background:#4658d9;color:#fff;font-weight:700;text-decoration:none;"
+            "transition:background .15s,transform .15s}.button:hover{background:#3849c3;transform:translateY(-1px)}"
+            ".footnote{margin:22px 0 0;color:#8992a5;font-size:13px}"
+            "@media(prefers-reduced-motion:reduce){.button{transition:none}}</style>"
+            "<meta name=\"referrer\" content=\"no-referrer\"></head><body><main class=\"card\">"
+            "<div class=\"brand\"><span class=\"brand-mark\" aria-hidden=\"true\">C</span>CheckMate</div>"
+            f"<div class=\"icon\">{icon}</div><p class=\"eyebrow\">{eyebrow}</p>"
+            f"<h1>{heading}</h1><p class=\"message\">{message}</p>"
+            "<a class=\"button\" href=\"checkmate://\">Open CheckMate <span aria-hidden=\"true\">&#8594;</span></a>"
+            "<p class=\"footnote\">"
+            + ("You can close this page once the app opens." if confirmed
+               else "For your security, confirmation links can only be used once.")
+            + "</p></main></body></html>"
+        ),
+        status_code=200 if confirmed else 400,
+        headers={
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; "
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        },
+    )
+
+
+def _course_invite_page(message: str, status_code: int) -> HTMLResponse:
+    safe_message = html.escape(message)
+    return HTMLResponse(
+        content=(
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+            "<meta name=\"theme-color\" content=\"#f4f6fb\"><title>Invitation unavailable · CheckMate</title>"
+            "<style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;"
+            "padding:24px;background:#f4f6fb;color:#172033;font:16px/1.6 system-ui,sans-serif}"
+            ".card{width:min(100%,460px);padding:clamp(28px,8vw,48px);border:1px solid #e6e9f0;"
+            "border-radius:28px;background:#fff;box-shadow:0 24px 70px #26345b14;text-align:center}"
+            ".mark{display:grid;place-items:center;width:34px;height:34px;margin:0 auto 30px;"
+            "border-radius:11px;background:#4658d9;color:white;font-weight:750}"
+            "h1{margin:0;color:#18213b;font-size:30px;letter-spacing:-.8px}"
+            "p{margin:16px 0 0;color:#667085}</style>"
+            "<meta name=\"referrer\" content=\"no-referrer\"></head><body><main class=\"card\">"
+            "<div class=\"mark\" aria-hidden=\"true\">C</div><h1>Invitation unavailable</h1>"
+            f"<p>{safe_message}</p></main></body></html>"
         ),
         status_code=status_code,
-        headers={"Cache-Control": "no-store"},
+        headers={
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; "
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        },
+    )
+
+
+def _private_course_invite_page(invite_token: str) -> HTMLResponse:
+    app_link = html.escape(
+        f"checkmate://join?inviteToken={invite_token}", quote=True,
+    )
+    return HTMLResponse(
+        content=(
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+            "<meta name=\"theme-color\" content=\"#f4f6fb\"><title>Course invitation · CheckMate</title>"
+            "<style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;"
+            "padding:24px;background:radial-gradient(ellipse at 50% 0,#e5eaff 0,transparent 52%),"
+            "#f4f6fb;color:#172033;font:16px/1.6 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}"
+            ".card{width:min(100%,460px);padding:clamp(28px,8vw,48px);border:1px solid #e6e9f0;"
+            "border-radius:28px;background:#fff;box-shadow:0 24px 70px #26345b14;text-align:center}"
+            ".brand{display:inline-flex;align-items:center;gap:9px;margin-bottom:40px;color:#25315b;"
+            "font-size:17px;font-weight:750}.mark{display:grid;place-items:center;width:30px;height:30px;"
+            "border-radius:10px;background:#4658d9;color:white}.icon{width:64px;height:64px;margin:0 auto 22px;"
+            "display:grid;place-items:center;border-radius:50%;background:#e7eaff;color:#4658d9;font-size:30px}"
+            ".eyebrow{margin:0 0 8px;color:#64708a;font-size:11px;font-weight:750;letter-spacing:1.7px}"
+            "h1{margin:0;color:#18213b;font-size:clamp(28px,7vw,36px);line-height:1.15;letter-spacing:-1px}"
+            ".message{margin:16px auto 28px;max-width:330px;color:#667085}"
+            ".button{display:flex;min-height:52px;align-items:center;justify-content:center;gap:9px;"
+            "border-radius:14px;background:#4658d9;color:#fff;font-weight:700;text-decoration:none}"
+            ".footnote{margin:22px 0 0;color:#8992a5;font-size:13px}</style>"
+            "<meta name=\"referrer\" content=\"no-referrer\"></head><body><main class=\"card\">"
+            "<div class=\"brand\"><span class=\"mark\" aria-hidden=\"true\">C</span>CheckMate</div>"
+            "<div class=\"icon\" aria-hidden=\"true\">&#8594;</div><p class=\"eyebrow\">COURSE INVITATION</p>"
+            "<h1>You're invited.</h1><p class=\"message\">Open this invitation in CheckMate to join your course. "
+            "Sign in or create an account if prompted.</p>"
+            f"<a class=\"button\" href=\"{app_link}\">Open CheckMate <span aria-hidden=\"true\">&#8594;</span></a>"
+            "<p class=\"footnote\">This private invitation link expires in 7 days.</p>"
+            "</main></body></html>"
+        ),
+        headers={
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; "
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        },
     )
 
 
 @app.get("/join", response_class=HTMLResponse)
-def course_invitation(joinCode: str = ""):
-    normalized_code = joinCode.strip().upper()
-    if not re.fullmatch(r"[A-Z0-9]{5,8}", normalized_code):
+def course_invitation(
+    inviteToken: str | None = None,
+    code: str = "",
+    joinCode: str | None = None,
+):
+    if not inviteToken:
         return _course_invite_page(
-            message="This invitation link is missing a valid course code. Ask the instructor for a new link.",
+            message="This older invitation link is no longer valid. Ask the instructor to share a new invitation.",
+            status_code=410 if code or joinCode else 400,
+        )
+    if not re.fullmatch(r"[A-Fa-f0-9]{64}", inviteToken):
+        return _course_invite_page(
+            message="This invitation link is invalid. Ask the instructor to share a new invitation.",
             status_code=400,
         )
-    # The authenticated app validates the code during enrollment; keep this landing independent of DB latency.
-    return _course_invite_page(normalized_code)
+    if not supabase:
+        return _course_invite_page(
+            message="Course invitations are temporarily unavailable. Please try again later.",
+            status_code=503,
+        )
+    result = supabase.rpc(
+        "is_course_invitation_valid", {"p_token": inviteToken},
+    ).execute()
+    if not result.data:
+        return _course_invite_page(
+            message="This invitation has expired or is no longer active. Ask the instructor to share a new invitation.",
+            status_code=410,
+        )
+    return _private_course_invite_page(inviteToken)
 
 
 @app.get("/.well-known/assetlinks.json")

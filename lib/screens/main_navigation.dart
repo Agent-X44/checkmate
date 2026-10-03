@@ -127,7 +127,7 @@ class _MainNavigationState extends State<MainNavigation> {
               ListTile(
                 leading: Icon(Icons.group_add_outlined, color: accentColor),
                 title: const Text('Join a course'),
-                subtitle: const Text('Enter a course code'),
+                subtitle: const Text('Enter course code or invitation link'),
                 onTap: () {
                   Navigator.pop(sheetContext);
                   _showJoinDialog();
@@ -224,14 +224,15 @@ class _MainNavigationState extends State<MainNavigation> {
         title: const Text('Join a Course'),
         content: TextField(
           controller: joinCtrl,
-          maxLength: 8,
-          textCapitalization: TextCapitalization.characters,
+          maxLength: 512,
+          textCapitalization: TextCapitalization.none,
+          keyboardType: TextInputType.url,
           style: TextStyle(color: isDark ? Colors.white : Colors.black),
           cursorColor: accentColor,
           decoration: InputDecoration(
-            labelText: 'Course Code',
+            labelText: 'Course code or invite link',
             labelStyle: TextStyle(color: isDark ? Colors.white70 : Colors.grey),
-            counterText: "",
+            counterText: '',
             focusedBorder: UnderlineInputBorder(
                 borderSide: BorderSide(color: accentColor)),
           ),
@@ -244,14 +245,26 @@ class _MainNavigationState extends State<MainNavigation> {
                       TextStyle(color: isDark ? Colors.white70 : Colors.grey))),
           ElevatedButton(
             onPressed: () async {
-              String input = joinCtrl.text.trim();
+              var input = joinCtrl.text.trim();
               if (input.isEmpty) return;
-              if (input.contains('code=') || input.contains('joinCode=')) {
-                input = Uri.tryParse(input)?.queryParameters['joinCode'] ?? Uri.tryParse(input)?.queryParameters['code'] ?? input;
+              final inviteUri = Uri.tryParse(input);
+              if (inviteUri != null &&
+                  inviteUri.queryParameters.containsKey('inviteToken')) {
+                input = inviteUri.queryParameters['inviteToken'] ?? '';
+              } else if (inviteUri != null &&
+                  (inviteUri.queryParameters.containsKey('joinCode') ||
+                      inviteUri.queryParameters.containsKey('code'))) {
+                CheckMateUi.showTopPrompt(
+                  context,
+                  'This old invitation link is no longer valid. Ask the instructor to share a new link.',
+                );
+                return;
               }
               final nav = Navigator.of(dialogContext);
               try {
-                final course = await SupabaseService.joinClass(input);
+                final course = DeepLinkService.isInviteToken(input)
+                    ? await SupabaseService.joinCourseWithInvitation(input)
+                    : await SupabaseService.joinClass(input);
                 nav.pop();
                 if (!mounted) return;
                 setState(() {

@@ -14,8 +14,8 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 /// Enforces:
 /// - BR-01: Course invitations require student confirmation before enrollment
 class DeepLinkService {
-  static const _pendingJoinPreference = 'pending_join_code';
-  static const _handledJoinPreference = 'handled_join_link';
+  static const _pendingJoinPreference = 'pending_invite_token';
+  static const _handledJoinPreference = 'handled_invite_token';
   static const _handledJoinCooldown = Duration(minutes: 5);
 
   static final DeepLinkService _instance = DeepLinkService._internal();
@@ -37,19 +37,35 @@ class DeepLinkService {
   static const String inviteHost = 'noelpi-checkmate-backend.hf.space';
 
   /// Opens the app when installed, otherwise the web landing offers the APK.
-  static String buildInviteLink(String joinCode) {
+  static String buildInviteLink(String inviteToken) {
     return Uri.https(inviteHost, '/join', {
-      'joinCode': _normalizeCode(joinCode),
+      'inviteToken': _normalizeInviteToken(inviteToken),
     }).toString();
   }
 
-  /// Builds custom scheme deep link for direct app launch
-  static String buildCustomSchemeLink(String joinCode) {
+  /// Builds a private custom-scheme link for direct app launch.
+  static String buildCustomSchemeLink(String inviteToken) {
     return Uri(
       scheme: 'checkmate',
       host: 'join',
-      queryParameters: {'joinCode': _normalizeCode(joinCode)},
+      queryParameters: {'inviteToken': _normalizeInviteToken(inviteToken)},
     ).toString();
+  }
+
+  static String _normalizeInviteToken(String value) {
+    final token = value.trim().toLowerCase();
+    if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(token)) {
+      throw const FormatException('Invalid course invitation link.');
+    }
+    return token;
+  }
+
+  static bool isInviteToken(String value) =>
+      RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(value.trim());
+
+  static String? extractInviteToken(Uri uri) {
+    final token = uri.queryParameters['inviteToken'];
+    return token != null && isInviteToken(token) ? token.toLowerCase() : null;
   }
 
   static String _normalizeCode(String value) {
@@ -100,49 +116,44 @@ class DeepLinkService {
     });
   }
 
-  /// Parse URI and extract course join code
-  String? _extractCodeFromUri(Uri uri) {
-    return extractJoinCode(uri);
-  }
-
-  /// Handle incoming Uri
+  /// Handle incoming private invitation links. Legacy course-code links are ignored.
   Future<void> _handleUri(Uri uri) async {
-    final code = _extractCodeFromUri(uri);
-    if (code == null) return;
+    final token = extractInviteToken(uri);
+    if (token == null) return;
 
-    if (await _wasRecentlyHandled(code)) {
+    if (await _wasRecentlyHandled(token)) {
       await _clearPendingJoinCode();
-      debugPrint('DEEP_LINK: Ignoring recently handled invite $code');
+      debugPrint('DEEP_LINK: Ignoring recently handled invitation');
       return;
     }
 
     final now = DateTime.now();
-    if (_lastReceivedJoinCode == code &&
+    if (_lastReceivedJoinCode == token &&
         _lastReceivedJoinAt != null &&
         now.difference(_lastReceivedJoinAt!) < const Duration(seconds: 3)) {
       return;
     }
-    _lastReceivedJoinCode = code;
+    _lastReceivedJoinCode = token;
     _lastReceivedJoinAt = now;
 
-    debugPrint('DEEP_LINK: Extracted join code -> $code');
+    debugPrint('DEEP_LINK: Received private course invitation');
 
     final user = SupabaseService.currentUser;
     if (user != null) {
-      _pendingJoinCode = code;
-      await _savePendingJoinCode(code);
+      _pendingJoinCode = token;
+      await _savePendingJoinCode(token);
       SchedulerBinding.instance.addPostFrameCallback((_) {
         unawaited(checkPendingJoinOnLogin());
       });
     } else {
-      _pendingJoinCode = code;
-      await _savePendingJoinCode(code);
+      _pendingJoinCode = token;
+      await _savePendingJoinCode(token);
 
       final context = navigatorKey.currentContext;
       if (context != null && context.mounted) {
         CheckMateUi.showTopPrompt(
           context,
-          'Invitation received for course $code! Please log in to join.',
+          'Course invitation received. Please log in to join.',
           isError: false,
           fallbackOverlay: navigatorKey.currentState?.overlay,
         );
@@ -150,19 +161,16 @@ class DeepLinkService {
     }
   }
 
-  /// Process joining a course using join code
-  Future<void> processJoinCode(String code) async {
-    final normalizedCode = code.trim().toUpperCase();
+  /// Process joining a course using a private invitation token.
+  Future<void> processJoinCode(String token) async {
+    final inviteToken = _normalizeInviteToken(token);
     final context = navigatorKey.currentContext;
 
-    if (_activeJoinCode == normalizedCode) return;
-    _activeJoinCode = normalizedCode;
-
-    debugPrint(
-        'DEEP LINK JOIN DEBUG: start joinCode=$normalizedCode user=${SupabaseService.currentUser?.id ?? 'null'}');
+    if (_activeJoinCode == inviteToken) return;
+    _activeJoinCode = inviteToken;
 
     if (context == null || !context.mounted) {
-      await _savePendingJoinCode(normalizedCode);
+      await _savePendingJoinCode(inviteToken);
       _activeJoinCode = null;
       return;
     }
@@ -173,8 +181,7 @@ class DeepLinkService {
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: const Text('Join course?'),
-          content: Text(
-              'Would you like to join the course with code $normalizedCode?'),
+          content: const Text('Would you like to join this course?'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext, false),
@@ -189,13 +196,13 @@ class DeepLinkService {
       );
 
       if (shouldJoin != true) {
-        await _markJoinHandled(normalizedCode);
+        await _markJoinHandled(inviteToken);
         await _clearPendingJoinCode();
         return;
       }
 
       // Consume the link before the request so a failure cannot prompt again on next login.
-      await _markJoinHandled(normalizedCode);
+      await _markJoinHandled(inviteToken);
       await _clearPendingJoinCode();
       showDialog<void>(
         context: navigatorKey.currentContext ?? context,
@@ -212,14 +219,14 @@ class DeepLinkService {
       );
       progressDialogShown = true;
 
-      final course = await SupabaseService.joinClass(normalizedCode).timeout(
+      final course =
+          await SupabaseService.joinCourseWithInvitation(inviteToken).timeout(
         const Duration(seconds: 8),
         onTimeout: () => throw Exception(
             'Course join timed out. Please check your network and try again.'),
       );
 
-      debugPrint(
-          'DEEP LINK JOIN DEBUG: success for $normalizedCode -> ${course.name}');
+      debugPrint('DEEP LINK JOIN DEBUG: joined course ${course.name}');
       final navigator = navigatorKey.currentState;
       if (progressDialogShown && navigator != null && navigator.canPop()) {
         navigator.pop();
@@ -246,7 +253,7 @@ class DeepLinkService {
         navigator.pop();
         progressDialogShown = false;
       }
-      debugPrint('DEEP LINK JOIN DEBUG: failed for $normalizedCode :: $e');
+      debugPrint('DEEP LINK JOIN DEBUG: invitation join failed :: $e');
       debugPrintStack(
           stackTrace: stackTrace, label: 'Deep link course join failure');
       final errorMsg = e.toString().replaceAll('Exception: ', '');
@@ -267,7 +274,7 @@ class DeepLinkService {
             ),
           );
         } catch (e) {
-           debugPrint('Error showing error dialog: $e');
+          debugPrint('Error showing error dialog: $e');
         }
       }
     } finally {
@@ -283,7 +290,7 @@ class DeepLinkService {
     if (code == null || code.isEmpty) {
       try {
         final prefs = await SharedPreferences.getInstance();
-        code = prefs.getString('pending_join_code');
+        code = prefs.getString(_pendingJoinPreference);
       } catch (_) {}
     }
 
@@ -292,7 +299,11 @@ class DeepLinkService {
         await _clearPendingJoinCode();
         return;
       }
-      debugPrint('DEEP_LINK: Processing pending join code after auth -> $code');
+      if (!isInviteToken(code)) {
+        await _clearPendingJoinCode();
+        return;
+      }
+      debugPrint('DEEP_LINK: Processing pending private invitation after auth');
       _processingPendingJoin = true;
       try {
         await processJoinCode(code);

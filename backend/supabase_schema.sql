@@ -173,13 +173,27 @@ WITH CHECK (auth.uid() = instructor_id);
 CREATE POLICY "Users can view classes to join or if enrolled" ON classes FOR SELECT TO authenticated
 USING (true);
 
+REVOKE SELECT ON TABLE classes FROM PUBLIC, anon, authenticated;
+GRANT SELECT (id, name, instructor_id, created_at) ON TABLE classes TO authenticated;
+REVOKE INSERT ON TABLE classes FROM PUBLIC, anon, authenticated;
+GRANT INSERT (id, name, code, instructor_id, created_at) ON TABLE classes TO authenticated;
+REVOKE UPDATE ON TABLE classes FROM PUBLIC, anon, authenticated;
+REVOKE SELECT (code) ON TABLE classes FROM PUBLIC, anon, authenticated;
+REVOKE UPDATE (code) ON TABLE classes FROM PUBLIC, anon, authenticated;
+GRANT UPDATE (name) ON TABLE classes TO authenticated;
+REVOKE INSERT ON TABLE enrollments FROM PUBLIC, anon, authenticated;
+REVOKE UPDATE ON TABLE enrollments FROM PUBLIC, anon, authenticated;
+
 -- Enrollments RLS Policies
 ALTER TABLE enrollments ENABLE ROW LEVEL SECURITY;
 ALTER TABLE answer_sheets ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "Users manage own enrollments" ON enrollments FOR ALL TO authenticated
 USING (auth.uid() = user_id OR class_id IN (SELECT id FROM classes WHERE instructor_id = auth.uid()))
-WITH CHECK (auth.uid() = user_id);
+WITH CHECK (
+    auth.uid() = user_id
+    AND class_id IS NOT NULL
+);
 
 CREATE POLICY "Users can view all enrollments" ON enrollments FOR SELECT TO authenticated
 USING (true);

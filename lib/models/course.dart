@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:math' as math;
 import '../utils/ui_utils.dart';
 
 class ChatMessage {
@@ -216,10 +217,8 @@ class Course {
 
 String generateJoinCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  return List.generate(
-      6,
-      (index) => chars[(DateTime.now().microsecondsSinceEpoch + index) %
-          chars.length]).join();
+  final random = math.Random.secure();
+  return List.generate(8, (_) => chars[random.nextInt(chars.length)]).join();
 }
 
 // Empty global state for production use

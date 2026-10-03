@@ -174,16 +174,46 @@ class SupabaseService {
           'code': code,
           'instructor_id': user.id,
         })
-        .select('*, profiles(*)')
+        .select('id, name, instructor_id, created_at, profiles(name)')
         .single();
 
-    return Course.fromMap(response, isOwner: true);
+    return Course.fromMap({...response, 'code': code}, isOwner: true);
   }
 
   static Future<String> resetCourseCode(String classId) async {
     final newCode = generateJoinCode();
-    await _client.from('classes').update({'code': newCode}).eq('id', classId);
-    return newCode;
+    final result = await _client.rpc('reset_owned_course_code', params: {
+      'p_class_id': classId,
+      'p_new_code': newCode,
+    });
+    if (result is! String || result.isEmpty) {
+      throw StateError('The course code could not be reset.');
+    }
+    return result;
+  }
+
+  static Future<String> getOwnedCourseCode(String classId) async {
+    final code = await _client
+        .rpc('get_owned_course_code', params: {'p_class_id': classId});
+    if (code is! String || code.isEmpty) {
+      throw StateError('The course code could not be loaded.');
+    }
+    return code;
+  }
+
+  static Future<String> createCourseInvitationToken(String classId) async {
+    final response = await _client.rpc(
+      'issue_course_invitation',
+      params: {'p_class_id': classId},
+    );
+    if (response is! List || response.isEmpty || response.first is! Map) {
+      throw StateError('Could not create a course invitation link.');
+    }
+    final token = (response.first as Map)['invite_token'];
+    if (token is! String || !RegExp(r'^[A-Fa-f0-9]{64}$').hasMatch(token)) {
+      throw StateError('The invitation service returned an invalid link.');
+    }
+    return token;
   }
 
   static Future<void> renameClass(String classId, String newName) async {
@@ -293,30 +323,29 @@ class SupabaseService {
     return value.replaceAll(RegExp(r'[^A-Za-z0-9]'), '').trim().toUpperCase();
   }
 
-  static Future<Map<String, dynamic>?> getCourseDataByCode(
-      String classCode) async {
-    final cleanCode = normalizeJoinCode(classCode);
-    return await _client
-        .from('classes')
-        .select('id, name, code, instructor_id')
-        .eq('code', cleanCode)
-        .maybeSingle();
+  static Future<Course> joinClass(String classCode) async {
+    return _joinCourse(
+      'join_course_with_code',
+      {'p_code': normalizeJoinCode(classCode)},
+    );
   }
 
-  static Future<Course> joinClass(String classCode) async {
+  static Future<Course> joinCourseWithInvitation(String token) async {
+    return _joinCourse(
+      'join_course_with_invitation',
+      {'p_token': token},
+    );
+  }
+
+  static Future<Course> _joinCourse(
+    String rpcName,
+    Map<String, dynamic> params,
+  ) async {
     return await (() async {
       var step = 'validating the invitation';
       try {
         final user = currentUser;
         if (user == null) throw Exception("Not authenticated");
-
-        final cleanCode = normalizeJoinCode(classCode);
-        debugPrint(
-            'SUPABASE JOIN DEBUG: request classCode="$classCode" normalized="$cleanCode" user=${user.id}');
-
-        if (cleanCode.length < 5 || cleanCode.length > 8) {
-          throw Exception("Invalid course code format. Please try again.");
-        }
 
         step = 'synchronizing your student profile';
         final profileSync = _client
@@ -334,21 +363,13 @@ class SupabaseService {
               debugPrint("Student profile synchronization error: $error");
             });
 
-        step = 'looking up the course';
-        final classRows = await _client
-            .from('classes')
-            .select('id, name, code, instructor_id')
-            .eq('code', cleanCode)
-            .limit(1);
         await profileSync;
-        if (classRows.isEmpty) {
-          throw Exception(
-              "Invalid course code ($cleanCode). Please double-check and try again.");
+        step = 'validating the invitation';
+        final response = await _client.rpc(rpcName, params: params);
+        if (response is! List || response.isEmpty || response.first is! Map) {
+          throw StateError('This invitation is invalid or no longer active.');
         }
-        final classData = Map<String, dynamic>.from(classRows.first);
-
-        debugPrint(
-            'SUPABASE JOIN DEBUG: class lookup for $cleanCode => ${classData['id']}');
+        final classData = Map<String, dynamic>.from(response.first as Map);
         final classId = classData['id']?.toString().trim();
         if (classId == null || classId.isEmpty) {
           throw Exception(
@@ -360,34 +381,7 @@ class SupabaseService {
               'Course information is incomplete. Ask the instructor for a new invitation.');
         }
         final course = Course.fromMap(classData, isOwner: false);
-
-        if (user.id == instructorId) {
-          throw Exception("You can't join the course you've created.");
-        }
-
-        step = 'checking your existing enrollment';
-        final existingRows = await _client
-            .from('enrollments')
-            .select('id')
-            .eq('user_id', user.id)
-            .eq('class_id', classId)
-            .limit(1);
-
-        if (existingRows.isNotEmpty) {
-          debugPrint(
-              'SUPABASE JOIN DEBUG: already enrolled user=${user.id} class=$classId');
-          return course;
-        }
-
-        step = 'saving your enrollment';
-        await _client.from('enrollments').insert({
-          'user_id': user.id,
-          'class_id': classId,
-          'role': 'Student',
-        });
-
-        debugPrint(
-            'SUPABASE JOIN DEBUG: enrolled user=${user.id} class=$classId');
+        debugPrint('SUPABASE JOIN DEBUG: joined class=$classId');
         return course;
       } catch (error, stackTrace) {
         debugPrint('SUPABASE JOIN DEBUG: failure while $step :: $error');
@@ -431,11 +425,12 @@ class SupabaseService {
 
     final response = await _client
         .from('enrollments')
-        .select('*, classes(*, profiles(*))')
+        .select(
+            'id, user_id, class_id, role, classes(id, name, instructor_id, created_at, profiles(name))')
         .eq('user_id', user.id);
 
     return (response as List).map((m) {
-      final classData = m['classes'];
+      final classData = Map<String, dynamic>.from(m['classes'] as Map);
       return Course.fromMap(classData, isOwner: false);
     }).toList();
   }
@@ -446,12 +441,14 @@ class SupabaseService {
 
     final response = await _client
         .from('classes')
-        .select('*, profiles(*)')
+        .select('id, name, instructor_id, created_at, profiles(name)')
         .eq('instructor_id', user.id);
 
-    return (response as List)
-        .map((m) => Course.fromMap(m, isOwner: true))
-        .toList();
+    return Future.wait((response as List).map((row) async {
+      final classData = Map<String, dynamic>.from(row as Map);
+      classData['code'] = await getOwnedCourseCode(classData['id'].toString());
+      return Course.fromMap(classData, isOwner: true);
+    }));
   }
 
   // --- DATABASE: EXAMS (BR-02, BR-03) ---

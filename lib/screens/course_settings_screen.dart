@@ -25,47 +25,94 @@ class CourseSettingsScreen extends StatefulWidget {
 }
 
 class _CourseSettingsScreenState extends State<CourseSettingsScreen> {
-  late String _currentJoinCode;
+  String _currentJoinCode = '';
+  bool _codeLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _currentJoinCode = widget.course.joinCode;
+    _loadCourseCode();
+  }
+
+  Future<void> _loadCourseCode() async {
+    try {
+      final code = await SupabaseService.getOwnedCourseCode(widget.course.id);
+      if (!mounted) return;
+      setState(() {
+        _currentJoinCode = code;
+        _codeLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _codeLoading = false);
+      CheckMateUi.showTopPrompt(
+          context, 'Could not load the manual course code: $error');
+    }
+  }
+
+  Future<String> _createInviteLink() async {
+    final token =
+        await SupabaseService.createCourseInvitationToken(widget.course.id);
+    return DeepLinkService.buildInviteLink(token);
   }
 
   Future<void> _copyLink() async {
-    final link = DeepLinkService.buildInviteLink(_currentJoinCode);
-    await Clipboard.setData(ClipboardData(text: link));
-    if (mounted) {
+    try {
+      final link = await _createInviteLink();
+      await Clipboard.setData(ClipboardData(text: link));
+      if (!mounted) return;
       CheckMateUi.showTopPrompt(
         context,
-        'Invitation link copied. Course code: $_currentJoinCode',
+        'Private invitation link copied. It expires in 7 days.',
         isError: false,
       );
+    } catch (error) {
+      if (mounted) {
+        CheckMateUi.showTopPrompt(
+            context, 'Could not create invitation link: $error');
+      }
     }
   }
 
   Future<void> _shareInviteLink() async {
-    final link = DeepLinkService.buildInviteLink(_currentJoinCode);
-    await Share.share(
-      'Join my course "${widget.course.name}" on CheckMate.\n'
-      'Open this invitation: $link\n'
-      'It opens CheckMate if installed; otherwise download the APK and enter course code: $_currentJoinCode',
-      subject: 'Join ${widget.course.name} on CheckMate',
-    );
+    try {
+      final link = await _createInviteLink();
+      if (!mounted) return;
+      await Share.share(
+        'Join my course "${widget.course.name}" on CheckMate.\n'
+        'Open this private invitation: $link\n'
+        'This link expires in 7 days.',
+        subject: 'Join ${widget.course.name} on CheckMate',
+      );
+    } catch (error) {
+      if (mounted) {
+        CheckMateUi.showTopPrompt(
+            context, 'Could not create invitation link: $error');
+      }
+    }
   }
 
-  void _showQrDialog() {
-    final screenContext = context;
+  Future<void> _showQrDialog() async {
+    late final String link;
+    try {
+      link = await _createInviteLink();
+    } catch (error) {
+      if (mounted) {
+        CheckMateUi.showTopPrompt(
+            context, 'Could not create invitation link: $error');
+      }
+      return;
+    }
+    if (!mounted) return;
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final accentColor =
         isDark ? theme.colorScheme.secondary : theme.colorScheme.primary;
-    final qrData = DeepLinkService.buildInviteLink(_currentJoinCode);
+    final qrData = link;
     final qrSize = (MediaQuery.sizeOf(context).width - 152).clamp(80.0, 200.0);
 
     showDialog(
-      context: screenContext,
+      context: context,
       builder: (context) => AlertDialog(
         scrollable: true,
         title: const Text('Course QR Code'),
@@ -96,30 +143,23 @@ class _CourseSettingsScreenState extends State<CourseSettingsScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            Text('Code: $_currentJoinCode',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 18,
-                  color: isDark ? Colors.white : Colors.black,
-                )),
+            const Text('Private invite link · expires in 7 days'),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () async {
               await Clipboard.setData(
-                ClipboardData(
-                    text: DeepLinkService.buildInviteLink(_currentJoinCode)),
+                ClipboardData(text: link),
               );
-              if (!screenContext.mounted) return;
+              if (!context.mounted) return;
               Navigator.pop(context);
-              if (screenContext.mounted) {
-                CheckMateUi.showTopPrompt(
-                  screenContext,
-                  'Invitation link copied. Course code: $_currentJoinCode',
-                  isError: false,
-                );
-              }
+              if (!mounted) return;
+              CheckMateUi.showTopPrompt(
+                this.context,
+                'Private invitation link copied.',
+                isError: false,
+              );
             },
             child: Text('COPY LINK', style: TextStyle(color: accentColor)),
           ),
@@ -140,7 +180,8 @@ class _CourseSettingsScreenState extends State<CourseSettingsScreen> {
       setState(() {
         _currentJoinCode = newCode;
       });
-      CheckMateUi.showTopPrompt(context, 'Course code reset successfully!',
+      CheckMateUi.showTopPrompt(
+          context, 'Course code reset. Existing invitation links were revoked.',
           isError: false);
     } catch (e) {
       if (mounted) {
@@ -245,12 +286,22 @@ class _CourseSettingsScreenState extends State<CourseSettingsScreen> {
                           color: inviteForeground.withValues(alpha: 0.8),
                         )),
                     const SizedBox(height: 6),
-                    SelectableText(
-                      _currentJoinCode,
-                      style: theme.textTheme.headlineMedium?.copyWith(
-                        color: inviteForeground,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 2,
+                    if (_codeLoading)
+                      const LinearProgressIndicator()
+                    else
+                      SelectableText(
+                        _currentJoinCode,
+                        style: theme.textTheme.headlineMedium?.copyWith(
+                          color: inviteForeground,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 2,
+                        ),
+                      ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Invitation links expire 7 days after creation or reset.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: inviteForeground.withValues(alpha: 0.8),
                       ),
                     ),
                     const SizedBox(height: 20),

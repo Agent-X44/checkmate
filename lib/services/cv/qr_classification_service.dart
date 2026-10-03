@@ -26,9 +26,16 @@ class QrClassificationService {
   static String? extractInviteCode(String raw) {
     final clean = raw.trim();
     if (clean.isEmpty) return null;
+    if (DeepLinkService.isInviteToken(clean)) return clean.toLowerCase();
 
     final uri = Uri.tryParse(clean);
     if (uri != null && uri.scheme.isNotEmpty) {
+      final token = DeepLinkService.extractInviteToken(uri);
+      if (token != null) return token;
+      if (uri.queryParameters.containsKey('joinCode') ||
+          uri.queryParameters.containsKey('code')) {
+        return null;
+      }
       final code = DeepLinkService.extractJoinCode(uri);
       if (code != null && !_isSheetIdentifier(code)) return code;
     }

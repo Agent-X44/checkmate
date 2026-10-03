@@ -343,7 +343,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
       // SUPPRESS PAPER DETECTION: This is a Course Invitation QR, NOT an OMR Answer Sheet!
       _detectionCounter = 0;
       _rawCorners = null;
-      _lastQrDebugText = 'QR: course invite $inviteCode';
+      _lastQrDebugText = DeepLinkService.isInviteToken(inviteCode)
+          ? 'QR: private course invitation'
+          : 'QR: course code';
 
       // Render Google Lens-style yellow bounding box overlay around the Course QR code
       if (message.qrCorners != null && message.qrCorners!.length >= 8) {
@@ -395,7 +397,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
         if (inviteCode == null) {
           _tryLockSheetQr(candidateQr);
         } else {
-          _lastQrDebugText = 'QR: invite candidate $inviteCode';
+          _lastQrDebugText = DeepLinkService.isInviteToken(inviteCode)
+              ? 'QR: private invitation candidate'
+              : 'QR: course code candidate';
         }
       } else {
         _lastQrDebugText = 'QR: waiting';
@@ -453,8 +457,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
   Future<void> _joinCourseFromPrompt(
       String inviteCode, BuildContext bottomSheetContext) async {
     final normalizedCode = _normalizeJoinCode(inviteCode);
-    debugPrint(
-        'JOIN COURSE BUTTON: pressed raw="$inviteCode" normalized="$normalizedCode"');
+    final isPrivateInvite = DeepLinkService.isInviteToken(inviteCode);
+    debugPrint('JOIN COURSE BUTTON: privateInvite=$isPrivateInvite');
 
     var progressDialogOpen = true;
     showDialog<void>(
@@ -471,9 +475,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
       ),
     );
     try {
-      debugPrint(
-          'JOIN COURSE: starting direct Supabase join for $normalizedCode');
-      final course = await SupabaseService.joinClass(normalizedCode).timeout(
+      final join = isPrivateInvite
+          ? SupabaseService.joinCourseWithInvitation(normalizedCode)
+          : SupabaseService.joinClass(normalizedCode);
+      final course = await join.timeout(
         const Duration(seconds: 15),
         onTimeout: () => throw Exception(
           'Joining the course timed out. Check your connection and try again.',
@@ -493,7 +498,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
         Navigator.of(bottomSheetContext, rootNavigator: true).pop();
       }
 
-      debugPrint('JOIN COURSE: success for $normalizedCode -> ${course.name}');
+      debugPrint('JOIN COURSE: success -> ${course.name}');
       DeepLinkService.notifyCourseJoined(course);
       final targetContext = navigatorKey.currentContext ?? context;
       if (targetContext.mounted) {
@@ -504,7 +509,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
         );
       }
     } catch (e, stackTrace) {
-      debugPrint('JOIN COURSE: failed for $normalizedCode :: $e');
+      debugPrint('JOIN COURSE: failed privateInvite=$isPrivateInvite :: $e');
       debugPrintStack(stackTrace: stackTrace, label: 'Course join failure');
       if (progressDialogOpen && bottomSheetContext.mounted) {
         Navigator.of(bottomSheetContext, rootNavigator: true).pop();
@@ -594,7 +599,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Course Code: $normalizedInviteCode',
+                DeepLinkService.isInviteToken(inviteCode)
+                    ? 'Private course invitation'
+                    : 'Course Code: $normalizedInviteCode',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w600,
@@ -688,25 +695,14 @@ class _ScannerScreenState extends State<ScannerScreen> {
     final clean = raw.trim();
     if (clean.isEmpty) return null;
 
-    // 1. URL with ?code= or ?joinCode=
-    if (clean.contains('code=') || clean.contains('joinCode=')) {
-      final uri = Uri.tryParse(clean);
-      if (uri != null) {
-        final codeParam =
-            uri.queryParameters['joinCode'] ?? uri.queryParameters['code'];
-        if (codeParam != null && codeParam.trim().isNotEmpty) {
-          return codeParam.trim().toUpperCase();
-        }
-      }
-    }
-
-    // 2. Extract from URL (Any domain, looking for code param or short alphanumeric path segment)
+    // Invitation URLs now carry a private token; old code-bearing URLs are invalid.
     final uri = Uri.tryParse(clean);
     if (uri != null && uri.scheme.isNotEmpty) {
-      final codeParam =
-          uri.queryParameters['code'] ?? uri.queryParameters['joinCode'];
-      if (codeParam != null && codeParam.trim().isNotEmpty) {
-        return codeParam.trim().toUpperCase();
+      final inviteToken = DeepLinkService.extractInviteToken(uri);
+      if (inviteToken != null) return inviteToken;
+      if (uri.queryParameters.containsKey('code') ||
+          uri.queryParameters.containsKey('joinCode')) {
+        return null;
       }
       if (uri.pathSegments.isNotEmpty) {
         // Check if any of the last path segments is a valid 5-8 char code (e.g. /course/EDJNRU)
@@ -723,7 +719,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
       }
     }
 
-    // 3. Format: "Code: EDJNRU" or "Code EDJNRU" or "JOIN: EDJNRU"
+    // Plain course codes remain available for manual instructor-shared entry.
     if (clean.toUpperCase().contains("CODE") ||
         clean.toUpperCase().contains("JOIN")) {
       final match = RegExp(r'[A-Z0-9]{5,8}').firstMatch(
@@ -1111,7 +1107,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
             ];
 
       if (inviteCode != null) {
-        _lastQrDebugText = 'QR: invite candidate $inviteCode';
+        _lastQrDebugText = DeepLinkService.isInviteToken(inviteCode)
+            ? 'QR: private invitation candidate'
+            : 'QR: course code candidate';
         if (mounted) {
           setState(() {
             _detectedQrCorners = normalizedCorners;
@@ -1213,7 +1211,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
                               painter: QrBoundingBoxPainter(
                                 corners: _detectedQrCorners!,
                                 label: inviteCode != null
-                                    ? "Course Code: $inviteCode"
+                                    ? (DeepLinkService.isInviteToken(inviteCode)
+                                        ? 'Private invitation'
+                                        : 'Course Code: $inviteCode')
                                     : "LOCKED: ${lockedQr.sheetIdentifier}",
                                 color: inviteCode != null
                                     ? (isDark
