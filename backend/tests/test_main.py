@@ -3,7 +3,9 @@ import os
 import sys
 import pytest
 import json
+from pathlib import Path
 from types import SimpleNamespace
+from xml.etree import ElementTree
 from httpx import AsyncClient, ASGITransport
 
 # Add parent directory to path so 'main' can be imported
@@ -29,10 +31,60 @@ async def test_email_verified_page_shows_success_without_exposing_confirmation_c
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/html")
     assert "Your email address has been confirmed." in response.text
-    assert "checkmate://" in response.text
+    assert 'href="https://noelpi-checkmate-backend.hf.space/open-app"' in response.text
+    assert 'target="_blank" rel="noopener"' in response.text
+    assert 'src="/assets/icon.png"' in response.text
     assert confirmation_code not in response.text
     assert response.headers["cache-control"] == "no-store"
     assert response.headers["referrer-policy"] == "no-referrer"
+
+
+@pytest.mark.asyncio
+async def test_open_app_fallback_shows_install_and_sign_in_guidance():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get("/open-app")
+
+    assert response.status_code == 200
+    assert "Install CheckMate" in response.text
+    assert "sign in with this email address" in response.text
+    assert 'src="/assets/icon.png"' in response.text
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
+async def test_checkmate_icon_is_available_to_confirmation_pages():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get("/assets/icon.png")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "image/png"
+    assert response.content.startswith(b"\x89PNG\r\n\x1a\n")
+
+
+def test_android_app_links_include_email_launch_fallback_path():
+    manifest_path = (
+        Path(__file__).resolve().parents[2]
+        / "android"
+        / "app"
+        / "src"
+        / "main"
+        / "AndroidManifest.xml"
+    )
+    manifest = ElementTree.parse(manifest_path).getroot()
+    android_ns = "{http://schemas.android.com/apk/res/android}"
+    verified_filters = [
+        intent_filter
+        for intent_filter in manifest.findall(".//intent-filter")
+        if intent_filter.get(f"{android_ns}autoVerify") == "true"
+    ]
+
+    assert any(
+        data.get(f"{android_ns}scheme") == "https"
+        and data.get(f"{android_ns}host") == "noelpi-checkmate-backend.hf.space"
+        and data.get(f"{android_ns}pathPrefix") == "/open-app"
+        for intent_filter in verified_filters
+        for data in intent_filter.findall("data")
+    )
 
 
 @pytest.mark.asyncio
