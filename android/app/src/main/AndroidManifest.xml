@@ -51,6 +51,10 @@
                     android:scheme="https"
                     android:host="noelpi-checkmate-backend.hf.space"
                     android:pathPrefix="/join" />
+                <data
+                    android:scheme="https"
+                    android:host="noelpi-checkmate-backend.hf.space"
+                    android:pathPrefix="/open-app" />
             </intent-filter>
             <!-- Disable Flutter's default deep link routing to prevent "unhandled /?joinCode=..." errors.
                  The app_links plugin handles the URI manually instead. -->

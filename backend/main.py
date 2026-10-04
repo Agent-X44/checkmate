@@ -19,7 +19,7 @@ import time
 import re
 from io import BytesIO
 from fastapi import FastAPI, HTTPException, Body, Depends, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
@@ -86,6 +86,8 @@ logger = logging.getLogger("CheckMateBackend")
 load_dotenv()
 
 app = FastAPI(title="CheckMate Compliance API")
+CHECKMATE_ICON_PATH = os.path.join(os.path.dirname(__file__), "assets", "icon.png")
+APP_LAUNCH_URL = "https://noelpi-checkmate-backend.hf.space/open-app"
 
 active_generations = {}
 background_tasks_refs = set()
@@ -233,6 +235,11 @@ async def status():
     }
 
 
+@app.get("/assets/icon.png", include_in_schema=False)
+def checkmate_icon():
+    return FileResponse(CHECKMATE_ICON_PATH, media_type="image/png")
+
+
 @app.get("/email-verified", response_class=HTMLResponse)
 def email_verified(
     code: str | None = None,
@@ -271,8 +278,8 @@ def email_verified(
             ".card{width:min(100%,460px);padding:clamp(28px,8vw,48px);border:1px solid #e6e9f0;"
             "border-radius:28px;background:#fff;box-shadow:0 24px 70px #26345b14;text-align:center}"
             ".brand{display:inline-flex;align-items:center;gap:9px;margin-bottom:40px;color:#25315b;"
-            "font-size:17px;font-weight:750;letter-spacing:-.4px}.brand-mark{display:grid;place-items:center;"
-            "width:30px;height:30px;border-radius:10px;background:#4658d9;color:white;font-size:14px}"
+            "font-size:17px;font-weight:750;letter-spacing:-.4px}.brand img{width:34px;height:34px;"
+            "object-fit:contain;border-radius:8px}"
             ".icon{width:64px;height:64px;margin:0 auto 22px}.icon svg{display:block;width:100%;height:100%}"
             ".eyebrow{margin:0 0 8px;color:#64708a;font-size:11px;font-weight:750;letter-spacing:1.7px}"
             "h1{margin:0;color:#18213b;font-size:clamp(28px,7vw,36px);line-height:1.15;letter-spacing:-1.2px}"
@@ -283,10 +290,11 @@ def email_verified(
             ".footnote{margin:22px 0 0;color:#8992a5;font-size:13px}"
             "@media(prefers-reduced-motion:reduce){.button{transition:none}}</style>"
             "<meta name=\"referrer\" content=\"no-referrer\"></head><body><main class=\"card\">"
-            "<div class=\"brand\"><span class=\"brand-mark\" aria-hidden=\"true\">C</span>CheckMate</div>"
+            "<div class=\"brand\"><img src=\"/assets/icon.png\" alt=\"\" aria-hidden=\"true\">CheckMate</div>"
             f"<div class=\"icon\">{icon}</div><p class=\"eyebrow\">{eyebrow}</p>"
             f"<h1>{heading}</h1><p class=\"message\">{message}</p>"
-            "<a class=\"button\" href=\"checkmate://\">Open CheckMate <span aria-hidden=\"true\">&#8594;</span></a>"
+            f"<a class=\"button\" href=\"{APP_LAUNCH_URL}\" target=\"_blank\" rel=\"noopener\">"
+            "Open CheckMate <span aria-hidden=\"true\">&#8594;</span></a>"
             "<p class=\"footnote\">"
             + ("You can close this page once the app opens." if confirmed
                else "For your security, confirmation links can only be used once.")
@@ -297,7 +305,38 @@ def email_verified(
             "Cache-Control": "no-store",
             "Referrer-Policy": "no-referrer",
             "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; "
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; "
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        },
+    )
+
+
+@app.get("/open-app", response_class=HTMLResponse)
+def open_app_fallback():
+    return HTMLResponse(
+        content=(
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+            "<meta name=\"theme-color\" content=\"#f4f6fb\"><title>Open CheckMate · CheckMate</title>"
+            "<style>*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;"
+            "padding:24px;background:#f4f6fb;color:#172033;font:16px/1.6 system-ui,sans-serif}"
+            ".card{width:min(100%,460px);padding:clamp(28px,8vw,48px);border:1px solid #e6e9f0;"
+            "border-radius:28px;background:#fff;box-shadow:0 24px 70px #26345b14;text-align:center}"
+            ".brand{display:inline-flex;align-items:center;gap:9px;margin-bottom:40px;color:#25315b;"
+            "font-size:17px;font-weight:750}.brand img{width:34px;height:34px;object-fit:contain;"
+            "border-radius:8px}h1{margin:0;color:#18213b;font-size:30px;letter-spacing:-.8px}"
+            "p{margin:16px 0 0;color:#667085}</style><meta name=\"referrer\" content=\"no-referrer\">"
+            "</head><body><main class=\"card\"><div class=\"brand\">"
+            "<img src=\"/assets/icon.png\" alt=\"\" aria-hidden=\"true\">CheckMate</div>"
+            "<h1>Open CheckMate</h1><p>Your email is confirmed. Install CheckMate, then open the app "
+            "and sign in with this email address. You can return to the confirmation page afterward.</p>"
+            "</main></body></html>"
+        ),
+        headers={
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; "
             "base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
         },
     )
