@@ -4,6 +4,7 @@
     tools:ignore="MissingVersion,OldTargetApi,GoogleAppIndexingWarning">
 
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.INTERNET"/>
 
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="37" />
 
@@ -12,6 +13,9 @@
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         tools:ignore="Instantiatable">
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="checkmate_updates" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

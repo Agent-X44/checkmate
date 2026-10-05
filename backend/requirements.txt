@@ -11,5 +11,7 @@ python-docx
 PyPDF2
 python-pptx
 openpyxl>=3.1,<4
+qrcode>=8,<9
 huggingface_hub
 tenacity
+firebase-admin>=7.1,<8

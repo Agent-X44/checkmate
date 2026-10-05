@@ -32,7 +32,8 @@ class MainNavigation extends StatefulWidget {
   State<MainNavigation> createState() => _MainNavigationState();
 }
 
-class _MainNavigationState extends State<MainNavigation> {
+class _MainNavigationState extends State<MainNavigation>
+    with WidgetsBindingObserver {
   int _selectedIndex = 0;
   late final Stream<List<AppNotification>> _notificationStream =
       NotificationService.streamMine();
@@ -68,6 +69,8 @@ class _MainNavigationState extends State<MainNavigation> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(NotificationService.startForCurrentUser());
     _refreshDrawerCourses();
     _joinedCourseSubscription = DeepLinkService.joinedCourses.listen((course) {
       if (mounted) {
@@ -81,12 +84,21 @@ class _MainNavigationState extends State<MainNavigation> {
           _dashboardKey.currentState?.addEnrolledCourse(course);
         });
       }
+
       unawaited(_refreshDrawerCourses());
     });
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(NotificationService.startForCurrentUser());
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _joinedCourseSubscription.cancel();
     super.dispose();
   }

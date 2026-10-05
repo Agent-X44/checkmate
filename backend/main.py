@@ -11,6 +11,7 @@ MAINTENANCE NOTES:
 
 import asyncio
 import html
+import hmac
 import os
 import json
 import logging
@@ -18,10 +19,12 @@ import uuid
 import time
 import re
 from io import BytesIO
-from fastapi import FastAPI, HTTPException, Body, Depends, UploadFile, File, Form
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from fastapi import FastAPI, HTTPException, Body, Depends, Header, UploadFile, File, Form
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, Field
+import qrcode
+from qrcode.image.svg import SvgPathImage
 from dotenv import load_dotenv
 from supabase import create_client
 import PyPDF2
@@ -50,6 +53,7 @@ from assessment_generation import (
 )
 from result_analysis import class_summary, enrich_answers, grade_context, question_counts, student_summary, student_overview_summary, topic_counts
 from scores_export import build_scores_workbook
+from push_notifications import PushConfigurationError, dispatch_notification
 from ai_instructions import (
     SYSTEM_CLASS_ANALYSIS,
     SYSTEM_STUDENT_MENTOR,
@@ -92,9 +96,109 @@ APP_LAUNCH_URL = "https://noelpi-checkmate-backend.hf.space/open-app"
 active_generations = {}
 background_tasks_refs = set()
 
+
+@app.post("/webhooks/user-notifications")
+async def deliver_user_notification(
+    payload: dict = Body(...),
+    webhook_secret: str | None = Header(
+        default=None, alias="X-CheckMate-Webhook-Secret"
+    ),
+):
+    if not SUPABASE_NOTIFICATION_WEBHOOK_SECRET:
+        raise HTTPException(
+            status_code=503, detail="Notification delivery is not configured."
+        )
+    if not webhook_secret or not hmac.compare_digest(
+        webhook_secret, SUPABASE_NOTIFICATION_WEBHOOK_SECRET
+    ):
+        raise HTTPException(status_code=401, detail="Invalid webhook secret.")
+    if not supabase_admin or not FIREBASE_SERVICE_ACCOUNT_JSON:
+        raise HTTPException(
+            status_code=503, detail="Notification delivery is not configured."
+        )
+
+    record = payload.get("record")
+    if (
+        payload.get("type") != "INSERT"
+        or payload.get("table") != "user_notifications"
+        or payload.get("schema") != "public"
+        or not isinstance(record, dict)
+    ):
+        raise HTTPException(status_code=400, detail="Invalid notification event.")
+
+    kind = record.get("kind")
+    if kind not in {"announcement", "message", "module_upload", "result"}:
+        raise HTTPException(status_code=400, detail="Unsupported notification type.")
+    required_fields = ("id", "recipient_id", "title", "body")
+    if any(
+        not isinstance(record.get(field), str) or not record[field]
+        for field in required_fields
+    ):
+        raise HTTPException(status_code=400, detail="Notification data is incomplete.")
+
+    class_id = record.get("class_id")
+    if not isinstance(class_id, str) or not class_id:
+        raise HTTPException(status_code=400, detail="Notification class is missing.")
+    try:
+        enrollment = (
+            supabase_admin.table("enrollments")
+            .select("user_id")
+            .eq("class_id", class_id)
+            .eq("user_id", record["recipient_id"])
+            .eq("role", "Student")
+            .maybe_single()
+            .execute()
+            .data
+        )
+    except Exception as error:
+        logger.exception("Could not verify notification recipient enrollment")
+        raise HTTPException(
+            status_code=502, detail="Could not verify notification recipient."
+        ) from error
+    if not enrollment:
+        return {"sent": 0, "failed": 0, "skipped": "recipient is not a student"}
+
+    try:
+        result = dispatch_notification(
+            supabase_admin, FIREBASE_SERVICE_ACCOUNT_JSON, record
+        )
+    except PushConfigurationError as error:
+        logger.error("Notification delivery configuration error: %s", error)
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except Exception as error:
+        logger.exception("FCM delivery failed for notification %s", record["id"])
+        raise HTTPException(status_code=502, detail="Push delivery failed.") from error
+    if result["failed"] > 0:
+        logger.warning(
+            "FCM partially delivered notification %s (%d sent, %d failed).",
+            record["id"],
+            result["sent"],
+            result["failed"],
+        )
+        raise HTTPException(
+            status_code=502, detail="Some notification devices were not reached."
+        )
+    return result
+
+
 # --- DATABASE ---
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+def _deployment_setting(name: str, platform_name: str) -> str:
+    """Accept underscore-free secret names used by some deployment dashboards."""
+    return os.getenv(name, os.getenv(platform_name, ""))
+
+
+SUPABASE_URL = _deployment_setting("SUPABASE_URL", "SUPABASEURL")
+SUPABASE_KEY = _deployment_setting("SUPABASE_KEY", "SUPABASEKEY")
+SUPABASE_SERVICE_ROLE_KEY = _deployment_setting(
+    "SUPABASE_SERVICE_ROLE_KEY", "SUPABASESERVICEROLEKEY"
+)
+SUPABASE_NOTIFICATION_WEBHOOK_SECRET = _deployment_setting(
+    "SUPABASE_NOTIFICATION_WEBHOOK_SECRET",
+    "SUPABASENOTIFICATIONWEBHOOKSECRET",
+)
+FIREBASE_SERVICE_ACCOUNT_JSON = _deployment_setting(
+    "FIREBASE_SERVICE_ACCOUNT_JSON", "FIREBASESERVICEACCOUNTJSON"
+)
 supabase = None
 if SUPABASE_URL and SUPABASE_KEY:
     try:
@@ -102,6 +206,12 @@ if SUPABASE_URL and SUPABASE_KEY:
         logger.info("Supabase client initialized successfully.")
     except Exception as e:
         logger.error(f"Failed to initialize Supabase client: {e}")
+supabase_admin = None
+if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
+    try:
+        supabase_admin = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
+    except Exception as e:
+        logger.error(f"Failed to initialize notification admin client: {e}")
 
 # --- SECURITY ---
 security = HTTPBearer()
@@ -374,8 +484,10 @@ def _course_invite_page(message: str, status_code: int) -> HTMLResponse:
 
 def _private_course_invite_page(invite_token: str) -> HTMLResponse:
     app_link = html.escape(
-        f"checkmate://join?inviteToken={invite_token}", quote=True,
+        f"https://noelpi-checkmate-backend.hf.space/join?inviteToken={invite_token}",
+        quote=True,
     )
+    qr_link = html.escape(f"/join/qr?inviteToken={invite_token}", quote=True)
     return HTMLResponse(
         content=(
             "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
@@ -387,21 +499,32 @@ def _private_course_invite_page(invite_token: str) -> HTMLResponse:
             ".card{width:min(100%,460px);padding:clamp(28px,8vw,48px);border:1px solid #e6e9f0;"
             "border-radius:28px;background:#fff;box-shadow:0 24px 70px #26345b14;text-align:center}"
             ".brand{display:inline-flex;align-items:center;gap:9px;margin-bottom:40px;color:#25315b;"
-            "font-size:17px;font-weight:750}.mark{display:grid;place-items:center;width:30px;height:30px;"
-            "border-radius:10px;background:#4658d9;color:white}.icon{width:64px;height:64px;margin:0 auto 22px;"
+            "font-size:17px;font-weight:750}.brand img{width:34px;height:34px;object-fit:contain;"
+            "border-radius:8px}.icon{width:64px;height:64px;margin:0 auto 22px;"
             "display:grid;place-items:center;border-radius:50%;background:#e7eaff;color:#4658d9;font-size:30px}"
             ".eyebrow{margin:0 0 8px;color:#64708a;font-size:11px;font-weight:750;letter-spacing:1.7px}"
             "h1{margin:0;color:#18213b;font-size:clamp(28px,7vw,36px);line-height:1.15;letter-spacing:-1px}"
             ".message{margin:16px auto 28px;max-width:330px;color:#667085}"
             ".button{display:flex;min-height:52px;align-items:center;justify-content:center;gap:9px;"
             "border-radius:14px;background:#4658d9;color:#fff;font-weight:700;text-decoration:none}"
-            ".footnote{margin:22px 0 0;color:#8992a5;font-size:13px}</style>"
+            ".footnote{margin:22px 0 0;color:#8992a5;font-size:13px}.desktop-help{margin-top:28px;"
+            "padding-top:24px;border-top:1px solid #e6e9f0}.desktop-help p{margin:0 auto 14px;"
+            "max-width:320px;color:#667085;font-size:14px}.desktop-help img{width:176px;height:176px;"
+            "image-rendering:pixelated}.desktop-help small{display:block;color:#8992a5}"
+            "@media(max-width:600px){.desktop-help{margin-top:18px;padding-top:16px}}"
+            "@media(hover:hover) and (pointer:fine){.button{display:none}}"
+            "</style>"
             "<meta name=\"referrer\" content=\"no-referrer\"></head><body><main class=\"card\">"
-            "<div class=\"brand\"><span class=\"mark\" aria-hidden=\"true\">C</span>CheckMate</div>"
+            "<div class=\"brand\"><img src=\"/assets/icon.png\" alt=\"\" aria-hidden=\"true\">CheckMate</div>"
             "<div class=\"icon\" aria-hidden=\"true\">&#8594;</div><p class=\"eyebrow\">COURSE INVITATION</p>"
             "<h1>You're invited.</h1><p class=\"message\">Open this invitation in CheckMate to join your course. "
             "Sign in or create an account if prompted.</p>"
             f"<a class=\"button\" href=\"{app_link}\">Open CheckMate <span aria-hidden=\"true\">&#8594;</span></a>"
+            "<section class=\"desktop-help\" aria-label=\"Join from a computer\">"
+            "<p><strong>Joining from a computer?</strong><br>Scan this code with your phone to open the "
+            "same invitation in CheckMate.</p>"
+            f"<img src=\"{qr_link}\" alt=\"QR code for this private CheckMate course invitation\">"
+            "<small>This code contains your private invitation. Do not share it.</small></section>"
             "<p class=\"footnote\">This private invitation link expires in 7 days.</p>"
             "</main></body></html>"
         ),
@@ -409,8 +532,29 @@ def _private_course_invite_page(invite_token: str) -> HTMLResponse:
             "Cache-Control": "no-store",
             "Referrer-Policy": "no-referrer",
             "X-Content-Type-Options": "nosniff",
-            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; "
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; "
             "base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+        },
+    )
+
+
+@app.get("/join/qr", include_in_schema=False)
+def course_invitation_qr(inviteToken: str | None = None):
+    if not inviteToken or not re.fullmatch(r"[A-Fa-f0-9]{64}", inviteToken):
+        raise HTTPException(status_code=400, detail="Invalid course invitation link")
+    invite_url = (
+        f"https://noelpi-checkmate-backend.hf.space/join?inviteToken={inviteToken}"
+    )
+    image = qrcode.make(invite_url, image_factory=SvgPathImage, box_size=8, border=4)
+    output = BytesIO()
+    image.save(output)
+    return Response(
+        content=output.getvalue(),
+        media_type="image/svg+xml",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
         },
     )
 
