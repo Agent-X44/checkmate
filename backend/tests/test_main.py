@@ -120,9 +120,34 @@ async def test_course_invitation_accepts_private_token_without_showing_course_co
         response = await ac.get("/join", params={"inviteToken": "a" * 64})
 
     assert response.status_code == 200
-    assert f'href="checkmate://join?inviteToken={"a" * 64}"' in response.text
+    assert f'href="https://noelpi-checkmate-backend.hf.space/join?inviteToken={"a" * 64}"' in response.text
+    assert f'src="/join/qr?inviteToken={"a" * 64}"' in response.text
+    assert "Joining from a computer?" in response.text
+    assert 'src="/assets/icon.png"' in response.text
+    assert "@media(hover:hover) and (pointer:fine){.button{display:none}}" in response.text
+    assert "img-src 'self'" in response.headers["content-security-policy"]
     assert "Course Code" not in response.text
     assert "This private invitation link expires in 7 days." in response.text
+
+
+@pytest.mark.asyncio
+async def test_course_invitation_qr_encodes_private_https_invite():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get("/join/qr", params={"inviteToken": "a" * 64})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+    assert response.content.startswith(b"<?xml")
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
+async def test_course_invitation_qr_rejects_invalid_token():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.get("/join/qr", params={"inviteToken": "invalid"})
+
+    assert response.status_code == 400
+    assert "Invalid course invitation link" in response.text
 
 
 @pytest.mark.asyncio

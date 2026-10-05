@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/supabase_service.dart';
+import '../services/notification_service.dart';
 import '../services/deep_link_service.dart';
 import 'login_screen.dart';
 import 'main_navigation.dart';
@@ -97,6 +98,7 @@ class _RootAuthWrapperState extends State<RootAuthWrapper> {
         themeMode: widget.themeMode,
         onThemeChanged: widget.onThemeChanged,
         onLogout: () async {
+          await NotificationService.stopForCurrentUser();
           await SupabaseService.signOut();
         },
       );

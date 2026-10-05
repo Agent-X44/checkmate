@@ -5,6 +5,7 @@ import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'services/image_processor.dart';
 import 'services/deep_link_service.dart';
 import 'screens/root_auth_wrapper.dart';
+import 'screens/notifications_screen.dart';
 import 'theme/checkmate_theme.dart';
 
 List<CameraDescription> globalCameras = [];
@@ -91,6 +92,12 @@ class _CheckMateAppState extends State<CheckMateApp> {
       title: 'CheckMate',
       navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
+      routes: {
+        '/notifications': (context) => NotificationsScreen(
+              initialNotificationId:
+                  ModalRoute.of(context)?.settings.arguments as String?,
+            ),
+      },
       themeMode: _themeMode,
       theme: CheckMateTheme.light,
       darkTheme: CheckMateTheme.dark,
