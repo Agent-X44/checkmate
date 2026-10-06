@@ -1,5 +1,4 @@
 import 'dart:isolate';
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:opencv_dart/opencv_dart.dart' as cv;
@@ -10,6 +9,8 @@ import '../models/omr/qr_data.dart';
 import '../models/omr/templates/py_image_search_5.dart';
 import '../models/omr/templates/standard_50_questions.dart';
 import 'cv/perspective_service.dart';
+import 'cv/sheet_alignment_service.dart';
+import 'cv/fiducial_geometry.dart';
 import 'cv/threshold_service.dart';
 import 'cv/template_service.dart';
 import 'cv/bubble_detection_service.dart';
@@ -52,7 +53,7 @@ class ScanRequest {
 /// Request for full high-res OMR processing.
 class OmrRequest {
   final Uint8List bytes;
-  final List<double> corners; // Normalized corners from live detection
+  final List<double> corners; // Preview overlay only; capture is re-detected
   final BubbleSheetTemplate template;
   final SendPort? replyPort; // Made optional for Isolate.run compatibility
   final double stripHeightMultiplier;
@@ -70,6 +71,15 @@ class OmrRequest {
     this.customSetBubbles,
     this.expectedQr,
   });
+}
+
+/// No deterministic item grading may run on an unverified alignment.
+class SheetAlignmentException implements Exception {
+  const SheetAlignmentException();
+
+  @override
+  String toString() => 'Could not align the answer sheet. Keep all four corner '
+      'circles visible, move the camera closer to facing the sheet, and retake.';
 }
 
 /// Response containing detection results and optional debug imagery.
@@ -192,81 +202,12 @@ class ImageProcessor {
       final int finalW = processedMat.width;
       final int finalH = processedMat.height;
 
-      // 3. [LABEL: CV Pipeline] Aggressive Noise Suppression
-      final blurred = pool.add(cv.gaussianBlur(processedMat, (15, 15), 3.0));
-      final edged = pool.add(cv.canny(blurred, message.cannyThreshold1, message.cannyThreshold2));
-
-      final kernel = pool.add(cv.getStructuringElement(cv.MORPH_RECT, (9, 9)));
-      final closed = pool.add(cv.morphologyEx(edged, cv.MORPH_CLOSE, kernel));
-      final dilated = pool.add(cv.dilate(closed, kernel));
-
-      // 4. [LABEL: CV Pipeline] Contour Analysis for Paper Edge Detection
-      final (contours, _) = cv.findContours(dilated, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-
-      bool foundPaper = false;
-      List<double>? paperCorners;
-      Uint8List? debugBytes;
-
-      if (message.returnDebugImage) {
-        final (_, encoded) = cv.imencode(".jpg", dilated);
-        debugBytes = Uint8List.fromList(encoded);
-      }
-
-      if (contours.isNotEmpty) {
-        double maxArea = 0;
-        cv.VecPoint? bestContour;
-        for (var i = 0; i < contours.length; i++) {
-          final area = cv.contourArea(contours[i]);
-          if (area > maxArea) {
-            maxArea = area;
-            bestContour = contours[i];
-          }
-        }
-
-        if (bestContour != null) {
-          final perimeter = cv.arcLength(bestContour, true);
-          final approx = pool.add(cv.approxPolyDP(bestContour, 0.04 * perimeter, true));
-
-          final double imgArea = (finalW * finalH).toDouble();
-
-          if (maxArea > (imgArea * message.sensitivity) && approx.length == 4) {
-            // Calculate aspect ratio of the 4 corners to distinguish real A4 paper from square dialog boxes
-            final pts = approx.toList();
-            final d01 = math.sqrt(math.pow(pts[0].x - pts[1].x, 2) + math.pow(pts[0].y - pts[1].y, 2));
-            final d12 = math.sqrt(math.pow(pts[1].x - pts[2].x, 2) + math.pow(pts[1].y - pts[2].y, 2));
-            final d23 = math.sqrt(math.pow(pts[2].x - pts[3].x, 2) + math.pow(pts[2].y - pts[3].y, 2));
-            final d30 = math.sqrt(math.pow(pts[3].x - pts[0].x, 2) + math.pow(pts[3].y - pts[0].y, 2));
-
-            final sideA = (d01 + d23) / 2.0;
-            final sideB = (d12 + d30) / 2.0;
-
-            final maxSide = math.max(sideA, sideB);
-            final minSide = math.min(sideA, sideB);
-
-            if (minSide > 0) {
-              final paperRatio = maxSide / minSide;
-              // A4 paper aspect ratio is ~1.41.
-              // Extended the valid ratio to include long 30-question templates (which have aspect ratio ~2.2 to 2.5).
-              // Ratios between 1.20 and 2.90 are now valid paper sheets.
-              // Square dialog popups (ratio ~1.0) will be ignored as paper sheets!
-              if (paperRatio >= 1.20 && paperRatio <= 2.90) {
-                foundPaper = true;
-                paperCorners = [];
-                for (var i = 0; i < approx.length; i++) {
-                  paperCorners.add(approx[i].x.toDouble() / finalW);
-                  paperCorners.add(approx[i].y.toDouble() / finalH);
-                }
-              }
-            }
-          }
-        }
-      }
-
       // [LABEL: Feature Extraction] Real-time QR detection on the full live frame and the
       // high-resolution fallback. This is crucial when a QR occupies a large portion of a monitor
       // and the fiber of the phone camera sees glare, scanlines, or partial tilt.
       QrDetectionResult? qrResult = QrDetectionService.detectWithCorners(processedMat, fastMode: false);
       qrResult ??= _scanQrRegion(processedMat);
+      final alignmentQrCorners = qrResult?.corners;
       qrResult ??= QrDetectionService.detectWithCorners(smallMat, fastMode: true);
       qrResult ??= _scanQrRegion(mat);
       qrResult ??= QrDetectionService.detectWithCorners(mat, fastMode: true);
@@ -281,6 +222,25 @@ class ImageProcessor {
         debugPrint('LIVE QR: no QR detected in full frame or explicit ROI scan');
       } else {
         debugPrint('LIVE QR: ${detectedQr.sheetIdentifier}');
+      }
+
+      // Find the printed markers in this frame, without fixed corner zones or
+      // a paper-edge aspect-ratio gate that rejects foreshortened sheets.
+      final candidates = SheetAlignmentService.findCandidates(processedMat);
+      List<SheetPoint>? markerCorners;
+      for (final layout in [(0.681, 0.063), (0.320, 0.090)]) {
+        markerCorners = FiducialGeometry.selectMarkers(candidates,
+            imageArea: (finalW * finalH).toDouble(),
+            aspectRatio: layout.$1, diameterRatio: layout.$2,
+            qrCenter: _qrCenter(alignmentQrCorners, finalW, finalH));
+        if (markerCorners != null) break;
+      }
+      final foundPaper = markerCorners != null;
+      final paperCorners = markerCorners?.expand((p) =>
+          [p.x / finalW, p.y / finalH]).toList();
+      Uint8List? debugBytes;
+      if (message.returnDebugImage) {
+        debugBytes = Uint8List.fromList(cv.imencode('.jpg', processedMat).$2);
       }
 
       message.replyPort.send(ScanResponse(
@@ -371,83 +331,31 @@ class ImageProcessor {
     return null;
   }
 
-  /// Production-grade fiducial detection using Centroid analysis.
-  static List<cv.Point> _detectGlobalFiducials(cv.Mat colorSheet) {
-    if (colorSheet.isEmpty) return [];
-
-    final pool = CvPool();
-    try {
-      final gray = pool.add(cv.cvtColor(colorSheet, cv.COLOR_BGR2GRAY));
-      final blurred = pool.add(cv.gaussianBlur(gray, (5, 5), 1.5));
-
-      final int w = gray.width;
-      final int h = gray.height;
-
-      final List<cv.Rect> zones = [
-        cv.Rect(0, 0, (w * 0.30).toInt(), (h * 0.30).toInt()), // TL
-        cv.Rect((w * 0.70).toInt(), 0, (w * 0.30).toInt(), (h * 0.30).toInt()), // TR
-        cv.Rect((w * 0.70).toInt(), (h * 0.70).toInt(), (w * 0.30).toInt(), (h * 0.30).toInt()), // BR
-        cv.Rect(0, (h * 0.70).toInt(), (w * 0.30).toInt(), (h * 0.30).toInt()), // BL
-      ];
-
-      final List<cv.Point> finalPoints = [];
-
-      for (int zoneIdx = 0; zoneIdx < zones.length; zoneIdx++) {
-        final zone = zones[zoneIdx];
-        final zoneMat = pool.add(blurred.region(zone));
-
-        cv.Mat binary = pool.add(cv.Mat.empty());
-        binary = pool.add(cv.adaptiveThreshold(zoneMat, 255,
-            cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 51, 10));
-        
-        var (contours, _) = cv.findContours(binary, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-        
-        if (contours.isEmpty) {
-          final (_, b2) = cv.threshold(zoneMat, 100, 255, cv.THRESH_BINARY_INV);
-          binary = pool.add(b2);
-          final (c2, _) = cv.findContours(binary, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
-          contours = c2;
-        }
-
-        cv.Point? bestCentroid;
-        double bestScore = -1.0;
-
-        for (int i = 0; i < contours.length; i++) {
-          final area = cv.contourArea(contours[i]);
-          final perimeter = cv.arcLength(contours[i], true);
-          if (perimeter < 10) continue;
-
-          final double circularity = (4 * 3.14159 * area) / (perimeter * perimeter);
-
-          if (area > 200 && area < (zone.width * zone.height * 0.2)) {
-            final double score = circularity * area;
-            if (circularity > 0.2 && score > bestScore) {
-              final contourPts = contours[i].toList();
-              if (contourPts.isNotEmpty) {
-                double sumX = 0, sumY = 0;
-                for (var p in contourPts) {
-                  sumX += p.x;
-                  sumY += p.y;
-                }
-                bestScore = score;
-                bestCentroid = cv.Point(
-                  zone.x + (sumX / contourPts.length).round(),
-                  zone.y + (sumY / contourPts.length).round(),
-                );
-              }
-            }
-          }
-        }
-
-        if (bestCentroid != null) {
-          finalPoints.add(bestCentroid);
-        }
-      }
-
-      return finalPoints.length == 4 ? finalPoints : [];
-    } finally {
-      pool.disposeAll();
+  static SheetPoint? _qrCenter(List<double>? corners, int width, int height) {
+    if (corners == null || corners.length != 8) return null;
+    var x = 0.0;
+    var y = 0.0;
+    for (var i = 0; i < 4; i++) {
+      x += corners[i * 2];
+      y += corners[i * 2 + 1];
     }
+    return SheetPoint(x * width / 4, y * height / 4);
+  }
+
+  static BubbleSheetTemplate _processingTemplate(
+      BubbleSheetTemplate supplied, QrData? qr) {
+    // Metadata resolved before capture is authoritative. A short Sheet ID's
+    // legacy QR parser defaults to 50 questions and must not override it.
+    if (supplied.id != 'custom' || qr == null) return supplied;
+    final name = qr.templateName;
+    if (name != null && name.isNotEmpty) {
+      for (final template in AnswerSheetTemplateRegistry.all) {
+        if (template.name == name || template.id == name) return template;
+      }
+    }
+    if (qr.examCode.startsWith('CM50')) return Standard50QuestionsTemplate();
+    if (qr.examCode.contains('PY5')) return PyImageSearch5Template();
+    return supplied;
   }
 
   /// Internal isolated process for High-Res OMR
@@ -485,71 +393,36 @@ class ImageProcessor {
         }
       }
 
-      final rawImageQr = QrDetectionService.detectEntireImage(mat);
+      final capturedQr = QrDetectionService.detectWithCorners(mat);
+      final rawImageQr = capturedQr?.data;
       if (rawImageQr != null && rawImageQr.sheetIdentifier.isNotEmpty && rawImageQr.sheetIdentifier != "UNKNOWN") {
         debugPrint("OMR: Found QR on raw unwarped image -> ${rawImageQr.sheetIdentifier}");
       }
 
-      final int matW = mat.width;
-      final int matH = mat.height;
-
-      cv.VecPoint rawCorners;
-      if (message.corners.isEmpty || message.corners.length < 8) {
-        rawCorners = pool.add(cv.VecPoint.fromList([
-          cv.Point(0, 0),
-          cv.Point(matW, 0),
-          cv.Point(matW, matH),
-          cv.Point(0, matH),
-        ]));
-      } else {
-        rawCorners = pool.add(cv.VecPoint.fromList(
-          List.generate(message.corners.length ~/ 2, (i) {
-            return cv.Point(
-              (message.corners[i * 2] * matW).toInt(),
-              (message.corners[i * 2 + 1] * matH).toInt(),
-            );
-          }),
-        ));
+      final activeTemplate = _processingTemplate(
+          message.template, rawImageQr ?? message.expectedQr);
+      // Preview and still capture can differ in field of view, rotation, and
+      // timing. Resolve markers afresh in the decoded photograph.
+      final capturedMarkers = SheetAlignmentService.detectMarkers(mat,
+          aspectRatio: activeTemplate.fiducialAspectRatio,
+          diameterRatio: activeTemplate.fiducialDiameterRatio,
+          qrCenter: _qrCenter(capturedQr?.corners, mat.width, mat.height));
+      if (capturedMarkers == null) {
+        throw const SheetAlignmentException();
       }
-
-      final int targetWidth = message.template.targetWidth;
-      final double aspectRatio = message.template.paperAspectRatio;
-      final orderedCorners = pool.add(PerspectiveService.orderPoints(rawCorners));
-      
-      final double widthBottom = math.sqrt(math.pow(orderedCorners[2].x - orderedCorners[3].x, 2) + math.pow(orderedCorners[2].y - orderedCorners[3].y, 2));
-      final double widthTop = math.sqrt(math.pow(orderedCorners[1].x - orderedCorners[0].x, 2) + math.pow(orderedCorners[1].y - orderedCorners[0].y, 2));
-      final double heightRight = math.sqrt(math.pow(orderedCorners[1].y - orderedCorners[2].y, 2) + math.pow(orderedCorners[1].x - orderedCorners[2].x, 2));
-      final double heightLeft = math.sqrt(math.pow(orderedCorners[0].y - orderedCorners[3].y, 2) + math.pow(orderedCorners[0].x - orderedCorners[3].x, 2));
-      final double finalRatio = (aspectRatio > 0.1) ? aspectRatio : (math.max(widthBottom, widthTop) / math.max(heightRight, heightLeft));
-      final int targetHeight = (targetWidth / finalRatio).toInt();
-
-      final destPointsPadded = pool.add(PerspectiveService.getDestPoints(targetWidth, targetHeight, 0.08));
-      final mFwd = pool.add(cv.getPerspectiveTransform(orderedCorners, destPointsPadded));
-      var warped = pool.add(cv.warpPerspective(mat, mFwd, (targetWidth, targetHeight)));
-
-      final globalFiducials = _detectGlobalFiducials(warped);
-      if (globalFiducials.length == 4) {
-        debugPrint("OMR: Locked onto 4 fiducials. Snapping to perfect grid...");
-        final mRev = pool.add(cv.getPerspectiveTransform(destPointsPadded, orderedCorners));
-        final mappedFiducials = PerspectiveService.transformPoints(globalFiducials, mRev);
-        final destPointsExact = pool.add(PerspectiveService.getDestPoints(targetWidth, targetHeight, 0.0));
-        final finalCorners = pool.add(cv.VecPoint.fromList(mappedFiducials));
-        final finalOrdered = pool.add(PerspectiveService.orderPoints(finalCorners));
-        final mFinal = pool.add(cv.getPerspectiveTransform(finalOrdered, destPointsExact));
-        
-        warped = pool.add(cv.warpPerspective(mat, mFinal, (targetWidth, targetHeight)));
-      } else {
-        debugPrint("OMR: Square markers not found (${globalFiducials.length}/4). Using fallback crop.");
-        final destPointsExact = pool.add(PerspectiveService.getDestPoints(targetWidth, targetHeight, 0.0));
-        final mFinal = pool.add(cv.getPerspectiveTransform(orderedCorners, destPointsExact));
-        
-        warped = pool.add(cv.warpPerspective(mat, mFinal, (targetWidth, targetHeight)));
-      }
-
-      QrData? qrData;
-      BubbleSheetTemplate activeTemplate = message.template;
-
-      qrData = QrDetectionService.detectEntireImage(mat);
+      final targetWidth = activeTemplate.targetWidth;
+      final outputRatio = activeTemplate.paperAspectRatio > 0.1
+          ? activeTemplate.paperAspectRatio : activeTemplate.fiducialAspectRatio;
+      final targetHeight = (targetWidth / outputRatio).round();
+      final destination = pool.add(PerspectiveService.getDestPoints(
+          targetWidth, targetHeight, 0));
+      // Marker selection has already established cyclic order and axis
+      // assignment. Reordering here could undo that under extreme perspective.
+      final transform = pool.add(cv.getPerspectiveTransform(
+          capturedMarkers, destination));
+      final warped = pool.add(cv.warpPerspective(
+          mat, transform, (targetWidth, targetHeight)));
+      QrData? qrData = rawImageQr;
 
       if (qrData == null || qrData.examCode == "UNKNOWN") {
         final warpedQr = QrDetectionService.detectEntireImage(warped);
@@ -589,38 +462,7 @@ class ImageProcessor {
         }
       }
 
-      if (qrData != null) {
-        final currentQr = qrData;
-        final tName = currentQr.templateName;
-        if (tName != null && tName.isNotEmpty) {
-          try {
-             final matchingTemplate = AnswerSheetTemplateRegistry.all.firstWhere(
-                 (t) => t.name == tName || t.id == tName);
-             activeTemplate = matchingTemplate;
-          } catch (_) {}
-        } else if (message.template.id == 'custom') {
-          // Only fallback if message.template wasn't explicitly provided from DB metadata
-          if (currentQr.examCode.startsWith("CM50")) {
-            activeTemplate = Standard50QuestionsTemplate();
-          } else if (currentQr.examCode.contains("PY5")) {
-            activeTemplate = PyImageSearch5Template();
-          }
-        }
-        
-        if (qrData.examCode == "UNKNOWN" && message.template.id == 'custom') {
-          debugPrint("OMR: QR decoded failed, attempting geometric inference...");
-          activeTemplate = Standard50QuestionsTemplate();
-          qrData = QrData(
-            studentName: "Detected (Matching Template)",
-            examCode: "CM50-AUTO",
-            course: "Auto-Detected",
-            examTitle: activeTemplate.name,
-            sheetIdentifier: "CM50-AUTO",
-          );
-        }
-        
-        debugPrint("OMR: Active Template -> ${activeTemplate.name}");
-      }
+      debugPrint('OMR: Active Template -> ${activeTemplate.name}');
 
       final thresholded = pool.add(ThresholdService.applyOtsuThreshold(warped));
 
@@ -687,6 +529,8 @@ class ImageProcessor {
         detectedSet: detectedSet,
         templateName: activeTemplate.name,
       );
+    } on SheetAlignmentException {
+      rethrow;
     } catch (e, stack) {
       debugPrint("OMR PROCESSOR ERROR: $e\n$stack");
       return null;

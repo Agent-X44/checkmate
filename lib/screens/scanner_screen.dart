@@ -1526,6 +1526,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
           _showErrorSnackBar("Could not process sheet. Please try again.");
         }
       }
+    } on SheetAlignmentException catch (e) {
+      if (mounted) _showErrorSnackBar(e.toString());
     } catch (e) {
       if (mounted) _showErrorSnackBar("Capture failed: $e");
     } finally {

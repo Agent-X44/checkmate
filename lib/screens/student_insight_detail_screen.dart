@@ -421,8 +421,10 @@ class AnswerEvaluationList extends StatelessWidget {
       BuildContext context, Map<String, dynamic> item, int index) {
     final qNum = item['question_number'] ?? (index + 1);
     final qText = item['question_text']?.toString() ?? '';
-    final isCorrect = item['isCorrect'] == true;
-    final isAmbiguous = item['isAmbiguous'] == true;
+    final isAmbiguous = item['isAmbiguous'] == true ||
+        (item['multipleAnswers'] is List &&
+            (item['multipleAnswers'] as List).length > 1);
+    final isCorrect = !isAmbiguous && item['isCorrect'] == true;
     final answer = item['answer']?.toString();
     final correctAnswer = item['correct_answer']?.toString() ?? '';
     final isTf = item['question_type'] == 'TF';
@@ -434,8 +436,8 @@ class AnswerEvaluationList extends StatelessWidget {
       statusText = 'Correct';
       statusColor = Colors.green;
     } else if (isAmbiguous) {
-      statusText = 'Needs review';
-      statusColor = Colors.orange;
+      statusText = 'Incorrect';
+      statusColor = Colors.red;
     } else if (answer == null || answer.isEmpty) {
       statusText = 'Unanswered';
       statusColor = Colors.orange;

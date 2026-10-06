@@ -105,7 +105,7 @@ class SettingsScreen extends StatelessWidget {
               ),
               const ListTile(
                 title: Text('App Version'),
-                trailing: Text('1.0.0'),
+                trailing: Text('1.0.1'),
               ),
               Card(
                   child: ListTile(

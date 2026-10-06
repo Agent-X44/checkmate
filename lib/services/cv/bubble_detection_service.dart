@@ -1,51 +1,7 @@
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 
-class BubbleResult {
-  final String? answer;
-  final double confidence;
-  final bool isFilled;
-  final List<String> multipleAnswers;
-  final bool isAmbiguous;
-  final bool? isCorrect; // Added to store grading status
-
-  BubbleResult({
-    this.answer,
-    required this.confidence,
-    this.isFilled = false,
-    this.multipleAnswers = const [],
-    this.isAmbiguous = false,
-    this.isCorrect,
-  });
-
-  Map<String, dynamic> toMap() {
-    return {
-      'answer': answer,
-      'confidence': confidence,
-      'isFilled': isFilled,
-      'multipleAnswers': multipleAnswers,
-      'isAmbiguous': isAmbiguous,
-      'isCorrect': isCorrect,
-    };
-  }
-
-  BubbleResult copyWith({
-    String? answer,
-    double? confidence,
-    bool? isFilled,
-    List<String>? multipleAnswers,
-    bool? isAmbiguous,
-    bool? isCorrect,
-  }) {
-    return BubbleResult(
-      answer: answer ?? this.answer,
-      confidence: confidence ?? this.confidence,
-      isFilled: isFilled ?? this.isFilled,
-      multipleAnswers: multipleAnswers ?? this.multipleAnswers,
-      isAmbiguous: isAmbiguous ?? this.isAmbiguous,
-      isCorrect: isCorrect ?? this.isCorrect,
-    );
-  }
-}
+import '../../models/omr/bubble_result.dart';
+export '../../models/omr/bubble_result.dart';
 
 class BubbleDetectionService {
   /// Processes a single question row using HIGH-PRECISION GRID mapping.

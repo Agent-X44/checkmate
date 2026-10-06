@@ -1,27 +1,16 @@
 import 'dart:math' as math;
 import 'package:opencv_dart/opencv_dart.dart' as cv;
+import 'fiducial_geometry.dart';
 
 class PerspectiveService {
   /// Orders four points: [Top-Left, Top-Right, Bottom-Right, Bottom-Left].
-  /// Uses a robust sum-difference method for consistent OMR mapping.
+  /// Keeps the polygon's cyclic order, including under strong perspective.
   static cv.VecPoint orderPoints(cv.VecPoint pts) {
     if (pts.length != 4) return pts;
-    final points = pts.toList();
-
-    // Sum-Difference method (very robust for paper-like rectangles)
-    // TL: min(x+y), BR: max(x+y)
-    // TR: min(y-x), BL: max(y-x)
-    
-    points.sort((a, b) => (a.x + a.y).compareTo(b.x + b.y));
-    final tl = points[0];
-    final br = points[3];
-
-    final others = [points[1], points[2]];
-    others.sort((a, b) => (a.y - a.x).compareTo(b.y - b.x));
-    final tr = others[0];
-    final bl = others[1];
-
-    return cv.VecPoint.fromList([tl, tr, br, bl]);
+    final ordered = FiducialGeometry.orderQuad(pts.toList()
+        .map((p) => SheetPoint(p.x.toDouble(), p.y.toDouble())).toList());
+    return cv.VecPoint.fromList(ordered
+        .map((p) => cv.Point(p.x.round(), p.y.round())).toList());
   }
 
   /// Calculates the destination points for a warped paper based on aspect ratio and padding.
