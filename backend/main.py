@@ -883,8 +883,6 @@ async def delete_exam_endpoint(exam_id: str):
     if not supabase:
         raise HTTPException(status_code=500, detail="Database unconfigured")
     try:
-        supabase.table("ai_insights").delete().eq("exam_id", exam_id).execute()
-        
         sheet_res = supabase.table("answer_sheets").select("id").eq("exam_id", exam_id).execute()
         sheet_ids = [s['id'] for s in (sheet_res.data or [])]
         for s_id in sheet_ids:
@@ -989,11 +987,6 @@ async def delete_course(class_id: str):
         exam_ids = [e['id'] for e in (exam_res.data or [])]
         
         for exam_id in exam_ids:
-            try:
-                supabase.table("ai_insights").delete().eq("exam_id", exam_id).execute()
-            except Exception as e:
-                logger.warning(f"ai_insights delete notice: {e}")
-            
             try:
                 sheet_res = supabase.table("answer_sheets").select("id").eq("exam_id", exam_id).execute()
                 sheet_ids = [s['id'] for s in (sheet_res.data or [])]
