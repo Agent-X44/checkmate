@@ -436,8 +436,10 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                                   // Display student answer and evaluation
                                   final qNum = q['question_number'] ?? (index + 1);
                                   final qText = q['question_text']?.toString() ?? '';
-                                  final isCorrect = q['isCorrect'] == true;
-                                  final isAmbiguous = q['isAmbiguous'] == true;
+                                  final isAmbiguous = q['isAmbiguous'] == true ||
+                                      (q['multipleAnswers'] is List &&
+                                          (q['multipleAnswers'] as List).length > 1);
+                                  final isCorrect = !isAmbiguous && q['isCorrect'] == true;
                                   final answer = q['answer']?.toString();
                                   final correctAnswer = q['correct_answer']?.toString() ?? '';
                                   
@@ -447,8 +449,8 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                                     statusText = 'Correct';
                                     statusColor = Colors.green;
                                   } else if (isAmbiguous) {
-                                    statusText = 'Needs review';
-                                    statusColor = Colors.orange;
+                                    statusText = 'Incorrect';
+                                    statusColor = Colors.red;
                                   } else if (answer == null || answer.isEmpty) {
                                     statusText = 'Unanswered';
                                     statusColor = Colors.orange;

@@ -18,6 +18,13 @@ class BubbleSheetTemplate {
   /// instead of forcing a specific size.
   final double paperAspectRatio;
 
+  /// Physical ratio between the printed marker centers, used to validate
+  /// perspective geometry independently of the calibrated output image size.
+  final double fiducialAspectRatio;
+
+  /// Printed corner-circle diameter divided by the horizontal marker span.
+  final double fiducialDiameterRatio;
+
   /// The normalized regions (0.0 to 1.0) where answers are located.
   /// Each Rect represents a column of questions.
   final List<Rect> answerRegions;
@@ -56,6 +63,8 @@ class BubbleSheetTemplate {
     this.assetPath = 'assets/50_questions.png',
     this.pdfAlignment = const PdfAlignment(),
     this.paperAspectRatio = 0.707,
+    this.fiducialAspectRatio = 0.681,
+    this.fiducialDiameterRatio = 0.063,
     required this.answerRegions,
     this.qrRegion,
     this.setRegion,

@@ -1095,6 +1095,15 @@ async def batch_sync(sync_data: BatchSyncRequest, user=Depends(get_current_user)
                 raise HTTPException(status_code=422, detail="Sheet belongs to a different assessment")
             if r.total <= 0 or not 0 <= r.score <= r.total:
                 raise HTTPException(status_code=422, detail="Invalid local grade")
+            if any(
+                    (answer.get("isAmbiguous") is True or
+                     (isinstance(answer.get("multipleAnswers"), list) and
+                      len(answer["multipleAnswers"]) > 1)) and
+                    answer.get("isCorrect") is True
+                    for answer in r.answers):
+                raise HTTPException(
+                    status_code=422,
+                    detail="Ambiguous or multiple marked answers must be incorrect")
             if len(r.answers) == r.total and (
                     sum(answer.get("isCorrect") is True for answer in r.answers) != r.score):
                 raise HTTPException(status_code=422, detail="Local item results do not match the score")
@@ -1105,7 +1114,8 @@ async def batch_sync(sync_data: BatchSyncRequest, user=Depends(get_current_user)
                 "percentage": r.score / r.total * 100,
                 "answers": [{k: v for k, v in answer.items() if k in {
                     'question_number', 'question_id', 'question_text', 'question_type',
-                    'topic_tag', 'answer', 'correct_answer', 'confidence', 'isCorrect', 'isAmbiguous'
+                    'topic_tag', 'answer', 'correct_answer', 'confidence', 'isCorrect', 'isAmbiguous',
+                    'multipleAnswers'
                 }} for answer in r.answers],
             })
         if not saved_results:

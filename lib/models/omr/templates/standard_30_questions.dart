@@ -10,6 +10,8 @@ class Standard30QuestionsTemplate extends BubbleSheetTemplate {
           assetPath: 'assets/30_questions.png',
           pdfAlignment: const PdfAlignment.for30Questions(),
           paperAspectRatio: 0.449, // 545.27 / 1214.39
+          fiducialAspectRatio: 0.320,
+          fiducialDiameterRatio: 0.090,
           answerRegions: [
             const Rect.fromLTRB(0.134, 0.314, 0.990, 0.908),
           ],
