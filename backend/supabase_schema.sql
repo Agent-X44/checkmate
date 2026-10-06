@@ -7,7 +7,6 @@ CREATE TABLE profiles (
     id UUID PRIMARY KEY REFERENCES auth.users ON DELETE CASCADE,
     name TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
-    role TEXT CHECK (role IN ('Instructor', 'Student')),
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -15,11 +14,15 @@ CREATE TABLE profiles (
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger AS $$
 BEGIN
-  INSERT INTO public.profiles (id, name, email, role)
-  VALUES (new.id, new.raw_user_meta_data->>'name', new.email, 'Student'); -- Default to student
+  -- Roles belong to each class, not to the user's account (BR-01).
+  INSERT INTO public.profiles (id, name, email)
+  VALUES (new.id, coalesce(
+    nullif(btrim(new.raw_user_meta_data->>'name'), ''),
+    nullif(btrim(new.raw_user_meta_data->>'full_name'), ''),
+    nullif(split_part(new.email, '@', 1), ''), 'User'), new.email);
   RETURN new;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = '';
 
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
@@ -57,7 +60,6 @@ CREATE TABLE exams (
     total_questions INT DEFAULT 0,
     mcq_count INT DEFAULT 0,
     tf_count INT DEFAULT 0,
-    question_structure JSONB,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -78,9 +80,7 @@ CREATE TABLE answer_sheets (
     exam_id UUID REFERENCES exams(id),
     student_id UUID REFERENCES profiles(id),
     sheet_identifier TEXT UNIQUE NOT NULL,
-    set_type TEXT NOT NULL DEFAULT '1' CHECK (set_type IN ('1', '2', 'A', 'B')),
-    status TEXT DEFAULT 'Pending',
-    scanned_at TIMESTAMPTZ
+    set_type TEXT NOT NULL DEFAULT '1' CHECK (set_type IN ('1', '2', 'A', 'B'))
 );
 -- 7. Grades (score and itemized local OMR evaluations per sheet)
 CREATE TABLE grades (
@@ -94,17 +94,10 @@ CREATE TABLE grades (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 8. AI Insights (Enforces BR-09 and BR-10)
-CREATE TABLE ai_insights (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    exam_id UUID REFERENCES exams(id),
-    student_id UUID REFERENCES profiles(id), -- Null for class-wide insights
-    insight_text TEXT,
-    recommendation TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
+-- Personal AI feedback is cached in grades.student_insight. Class analysis
+-- reads persisted grades through FastAPI; no separate AI-insight table is used.
 
--- 9. Learning Materials (BR-01)
+-- 8. Learning Materials (BR-01)
 CREATE TABLE learning_materials (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     class_id UUID REFERENCES classes(id) ON DELETE CASCADE,
@@ -116,7 +109,7 @@ CREATE TABLE learning_materials (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 10. Course announcements and class comments (Course Stream in the UML)
+-- 9. Course announcements and class comments (Course Stream in the UML)
 CREATE TABLE class_announcements (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     class_id UUID NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
@@ -146,7 +139,6 @@ ALTER TABLE classes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE exams ENABLE ROW LEVEL SECURITY;
 ALTER TABLE questions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE grades ENABLE ROW LEVEL SECURITY;
-ALTER TABLE ai_insights ENABLE ROW LEVEL SECURITY;
 ALTER TABLE learning_materials ENABLE ROW LEVEL SECURITY;
 ALTER TABLE class_announcements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE announcement_comments ENABLE ROW LEVEL SECURITY;
@@ -267,24 +259,6 @@ USING (EXISTS (
 WITH CHECK (EXISTS (
   SELECT 1 FROM exams e JOIN classes c ON c.id = e.class_id
   WHERE e.id = questions.exam_id AND c.instructor_id = auth.uid()
-));
-
-CREATE POLICY "Instructors manage own AI insights" ON ai_insights
-FOR ALL TO authenticated
-USING (EXISTS (
-  SELECT 1 FROM exams e JOIN classes c ON c.id = e.class_id
-  WHERE e.id = ai_insights.exam_id AND c.instructor_id = auth.uid()
-))
-WITH CHECK (EXISTS (
-  SELECT 1 FROM exams e JOIN classes c ON c.id = e.class_id
-  WHERE e.id = ai_insights.exam_id AND c.instructor_id = auth.uid()
-));
-
-CREATE POLICY "Students read own released AI insights" ON ai_insights
-FOR SELECT TO authenticated
-USING (student_id = auth.uid() AND EXISTS (
-  SELECT 1 FROM exams e
-  WHERE e.id = ai_insights.exam_id AND e.results_released = TRUE
 ));
 
 CREATE POLICY "Class members read announcements" ON class_announcements

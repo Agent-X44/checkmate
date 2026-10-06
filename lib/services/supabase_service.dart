@@ -161,7 +161,6 @@ class SupabaseService {
         'name':
             user.userMetadata?['name'] ?? user.email?.split('@')[0] ?? 'User',
         'email': user.email ?? '',
-        'role': 'Instructor',
       });
     } catch (e) {
       debugPrint("Profile synchronization error: $e");
@@ -232,10 +231,6 @@ class SupabaseService {
       final examIds = (examRes as List).map((e) => e['id'].toString()).toList();
 
       for (final examId in examIds) {
-        try {
-          await _client.from('ai_insights').delete().eq('exam_id', examId);
-        } catch (_) {}
-
         try {
           final sheetRes = await _client
               .from('answer_sheets')
@@ -356,7 +351,6 @@ class SupabaseService {
                   user.email?.split('@')[0] ??
                   'Student',
               'email': user.email ?? '',
-              'role': 'Student',
             })
             .then<void>((_) {})
             .catchError((Object error) {
@@ -551,7 +545,6 @@ class SupabaseService {
     } catch (e) {
       debugPrint("ApiService deleteExamApi fallback ($e)...");
       await _client.from('questions').delete().eq('exam_id', examId);
-      await _client.from('ai_insights').delete().eq('exam_id', examId);
 
       final sheets = await _client
           .from('answer_sheets')

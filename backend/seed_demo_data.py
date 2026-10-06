@@ -44,8 +44,7 @@ def seed():
             supabase.table("profiles").insert({
                 "id": student_id,
                 "name": s["name"],
-                "email": s["email"],
-                "role": "Student"
+                "email": s["email"]
             }).execute()
             
             supabase.table("enrollments").insert({
