@@ -11,6 +11,7 @@ import '../services/image_processor.dart';
 import '../services/api_service.dart';
 import '../services/pending_grade_sync_service.dart';
 import '../services/cv/qr_classification_service.dart';
+import '../services/cv/camera_frame_service.dart';
 import '../services/supabase_service.dart';
 import '../services/deep_link_service.dart';
 import '../models/omr/processed_sheet.dart';
@@ -64,11 +65,20 @@ class _ScannerScreenState extends State<ScannerScreen> {
       !_isProcessing &&
       _controller != null &&
       _controller!.value.isInitialized &&
-      _paperDetected &&
-      _rawCorners != null &&
-      _rawCorners!.length >= 8 &&
       _lockedSheetQr != null &&
       _validatedSheetQr == _lockedSheetQr!.sheetIdentifier;
+
+  int get _frameRotationDegrees {
+    final controller = _controller;
+    if (controller == null) return 0;
+    return CameraFrameService.rotationDegrees(
+      sensorOrientation: controller.description.sensorOrientation,
+      orientation: controller.value.lockedCaptureOrientation ??
+          controller.value.deviceOrientation,
+      lensDirection: controller.description.lensDirection,
+      isIOS: Platform.isIOS,
+    );
+  }
 
   // Isolate state
   bool _isIsolateWorking = false;
@@ -941,7 +951,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
     }
     if (_isolateSendPort == null || _isIsolateWorking) return;
 
-    // Frame throttling (100ms interval = max ~10 FPS for CV isolate) keeps RAM & thermal usage stable at ResolutionPreset.high
+    // Frame throttling (100ms interval = max ~10 FPS for CV isolate) keeps
+    // memory and thermal usage stable while retaining a detailed still image.
     final now = DateTime.now();
     if (_lastFrameTime != null &&
         now.difference(_lastFrameTime!).inMilliseconds < 100) {
@@ -972,6 +983,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
         width: image.width,
         height: image.height,
         bytesPerRow: image.planes[0].bytesPerRow,
+        bytesPerPixel: image.format.group == ImageFormatGroup.bgra8888 ? 4 : 1,
+        rotationIndex: _frameRotationDegrees ~/ 90,
         replyPort: _mainReceivePort.sendPort,
         scanSession: _qrSession,
       ));
@@ -993,8 +1006,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
     if (cams.isEmpty) return;
 
     _controller = CameraController(
-      cams[0],
-      ResolutionPreset.high,
+      cams.firstWhere(
+          (camera) => camera.lensDirection == CameraLensDirection.back,
+          orElse: () => cams.first),
+      ResolutionPreset.veryHigh,
       enableAudio: false,
       imageFormatGroup: Platform.isAndroid
           ? ImageFormatGroup.nv21
@@ -1003,6 +1018,15 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
     try {
       await _controller!.initialize();
+      // Lock the native stream and still capture together. Locking only the
+      // screen leaves camera buffers free to change orientation as it tilts.
+      await _controller!.lockCaptureOrientation(DeviceOrientation.portraitUp);
+      try {
+        await _controller!.setFocusMode(FocusMode.auto);
+      } catch (_) {}
+      try {
+        await _controller!.setExposureMode(ExposureMode.auto);
+      } catch (_) {}
       await _controller!.startImageStream(_onCameraFrame);
       if (mounted) {
         setState(() {
@@ -1031,8 +1055,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
     if (_controller == null || !_controller!.value.isInitialized) return;
     try {
       final offset = details.localPosition;
-      final nx = offset.dy / widgetSize.height;
-      final ny = 1.0 - (offset.dx / widgetSize.width);
+      // The camera plugin already transforms preview coordinates to the
+      // sensor. Rotating here focuses a different region of a close sheet.
+      final nx = offset.dx / widgetSize.width;
+      final ny = offset.dy / widgetSize.height;
       setState(() => _focusPoint = offset);
       await _controller!
           .setFocusPoint(Offset(nx.clamp(0.05, 0.95), ny.clamp(0.05, 0.95)));
@@ -1053,19 +1079,31 @@ class _ScannerScreenState extends State<ScannerScreen> {
     _lastQrScanTime = now;
 
     try {
-      final isAndroid = Platform.isAndroid;
-      final inputFormat =
-          isAndroid ? InputImageFormat.nv21 : InputImageFormat.yuv420;
-      // Always supply complete concatenated plane buffer so ML Kit's NV21 native reader
-      // receives the full w * h * 1.5 byte array, avoiding native C++ buffer overflow crashes.
-      final bytes = _concatenatePlanes(image);
-      final bytesPerRow = image.planes.first.bytesPerRow;
+      final inputFormat = InputImageFormatValue.fromRawValue(image.format.raw);
+      if (image.planes.length != 1 ||
+          (Platform.isAndroid && inputFormat != InputImageFormat.nv21) ||
+          (Platform.isIOS && inputFormat != InputImageFormat.bgra8888) ||
+          inputFormat == null) {
+        return;
+      }
+      // NV21 and BGRA each arrive in one plane. Concatenating arbitrary YUV
+      // planes does not produce NV21 and can give the native decoder bad data.
+      final plane = image.planes.single;
+      final bytes = plane.bytes;
+      final bytesPerRow = plane.bytesPerRow;
+      final requiredLength = Platform.isAndroid
+          ? image.width * image.height * 3 ~/ 2
+          : bytesPerRow * image.height;
+      if (bytes.length < requiredLength) return;
+      final rotationDegrees = _frameRotationDegrees;
+      final rotation = InputImageRotationValue.fromRawValue(rotationDegrees);
+      if (rotation == null) return;
 
       final inputImage = InputImage.fromBytes(
         bytes: bytes,
         metadata: InputImageMetadata(
           size: Size(image.width.toDouble(), image.height.toDouble()),
-          rotation: InputImageRotation.rotation0deg,
+          rotation: rotation,
           format: inputFormat,
           bytesPerRow: bytesPerRow,
         ),
@@ -1092,11 +1130,15 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
       final inviteCode =
           QrClassificationService.extractInvitationCodeFromQr(candidate);
+      final uprightSize = CameraFrameService.uprightSize(
+          image.width, image.height, rotationDegrees);
       final normalizedCorners = barcodes.first.cornerPoints.length >= 4
           ? List.generate(4, (index) {
               final point = barcodes.first.cornerPoints[index];
-              final x = (point.x.toDouble() / image.width).clamp(0.0, 1.0);
-              final y = (point.y.toDouble() / image.height).clamp(0.0, 1.0);
+              final x =
+                  (point.x.toDouble() / uprightSize.width).clamp(0.0, 1.0);
+              final y =
+                  (point.y.toDouble() / uprightSize.height).clamp(0.0, 1.0);
               return Offset(x, y);
             })
           : const [
@@ -1126,14 +1168,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
     } catch (e) {
       debugPrint('QR decode failed: $e');
     }
-  }
-
-  Uint8List _concatenatePlanes(CameraImage image) {
-    final allBytes = WriteBuffer();
-    for (final plane in image.planes) {
-      allBytes.putUint8List(plane.bytes);
-    }
-    return allBytes.done().buffer.asUint8List();
   }
 
   @override
@@ -1342,6 +1376,15 @@ class _ScannerScreenState extends State<ScannerScreen> {
                               color: Colors.black)),
                     ),
                   ),
+                if (_canCapturePaper)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 24, right: 24, bottom: 14),
+                    child: Text(
+                      'Keep all four corner circles visible. Tap the sheet to focus.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.white, fontSize: 13),
+                    ),
+                  ),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -1408,7 +1451,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
         return;
       }
       _showErrorSnackBar(
-          'Align the answer sheet and wait until paper detection is active.');
+          'Show the answer-sheet QR code and wait for it to be verified.');
       return;
     }
 
@@ -1527,6 +1570,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
         }
       }
     } on SheetAlignmentException catch (e) {
+      if (mounted) _showErrorSnackBar(e.toString());
+    } on SheetIdentityException catch (e) {
       if (mounted) _showErrorSnackBar(e.toString());
     } catch (e) {
       if (mounted) _showErrorSnackBar("Capture failed: $e");

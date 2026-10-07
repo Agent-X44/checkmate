@@ -26,15 +26,48 @@ class QrPool {
 }
 
 class QrDetectionService {
+  /// Two narrow answer sheets may share a printed page. Use the QR that was
+  /// verified before capture instead of whichever code the decoder finds first.
+  static QrDetectionResult? detectMatchingSheet(cv.Mat input, String sheetId) {
+    final first = detectWithCorners(input);
+    if (first?.data.sheetIdentifier == sheetId || input.isEmpty) return first;
+    try {
+      final gray = input.channels == 1
+          ? input
+          : cv.cvtColor(input,
+              input.channels == 4 ? cv.COLOR_BGRA2GRAY : cv.COLOR_BGR2GRAY);
+      final detector = cv.QRCodeDetector.empty();
+      final (_, decoded, points, _) = detector.detectAndDecodeMulti(gray);
+      for (var i = 0; i < decoded.length; i++) {
+        final data = QrData.fromRaw(decoded[i]);
+        if (data.sheetIdentifier != sheetId || points.length < (i + 1) * 4) {
+          continue;
+        }
+        return QrDetectionResult(data: data, corners: [
+          for (var j = 0; j < 4; j++) ...[
+            points[i * 4 + j].x / input.width,
+            points[i * 4 + j].y / input.height,
+          ],
+        ]);
+      }
+    } catch (error) {
+      debugPrint('Capture QR selection failed: $error');
+    }
+    // Preserve a conflicting decoded identity so the capture gate can reject it.
+    return first;
+  }
+
   static QrData? detectQr(cv.Mat warped, ui.Rect region) {
     return detectWithCorners(warped, region: region)?.data;
   }
 
-  static QrDetectionResult? detectWithCorners(cv.Mat input, {ui.Rect? region, bool fastMode = false}) {
+  static QrDetectionResult? detectWithCorners(cv.Mat input,
+      {ui.Rect? region, bool fastMode = false}) {
     if (input.isEmpty) return null;
 
     final List<ui.Rect> regionStack = [];
-    if (region != null && region != const ui.Rect.fromLTRB(0.0, 0.0, 1.0, 1.0)) {
+    if (region != null &&
+        region != const ui.Rect.fromLTRB(0.0, 0.0, 1.0, 1.0)) {
       regionStack.add(region);
     }
     regionStack.addAll([
@@ -61,7 +94,8 @@ class QrDetectionService {
       final cv.Mat rot90 = cv.rotate(input, cv.ROTATE_90_CLOCKWISE);
       for (final regionCandidate in regionStack) {
         final result = _tryRegionWithRotation(
-          inputMat: rot90,
+          inputMat: input,
+          searchBaseMat: rot90,
           testRegion: regionCandidate,
           rotationCode: cv.ROTATE_90_CLOCKWISE,
           angleDegree: 90,
@@ -76,7 +110,8 @@ class QrDetectionService {
       final cv.Mat rot270 = cv.rotate(input, cv.ROTATE_90_COUNTERCLOCKWISE);
       for (final regionCandidate in regionStack) {
         final result = _tryRegionWithRotation(
-          inputMat: rot270,
+          inputMat: input,
+          searchBaseMat: rot270,
           testRegion: regionCandidate,
           rotationCode: cv.ROTATE_90_COUNTERCLOCKWISE,
           angleDegree: 270,
@@ -91,7 +126,8 @@ class QrDetectionService {
       final cv.Mat rot180 = cv.rotate(input, cv.ROTATE_180);
       for (final regionCandidate in regionStack) {
         final result = _tryRegionWithRotation(
-          inputMat: rot180,
+          inputMat: input,
+          searchBaseMat: rot180,
           testRegion: regionCandidate,
           rotationCode: cv.ROTATE_180,
           angleDegree: 180,
@@ -118,6 +154,7 @@ class QrDetectionService {
 
 QrDetectionResult? _tryRegionWithRotation({
   required cv.Mat inputMat,
+  cv.Mat? searchBaseMat,
   required ui.Rect testRegion,
   int? rotationCode,
   int angleDegree = 0,
@@ -125,18 +162,30 @@ QrDetectionResult? _tryRegionWithRotation({
 }) {
   final pool = QrPool();
   try {
-    cv.Mat searchBaseMat = inputMat;
-    if (rotationCode != null) {
-      searchBaseMat = pool.add(cv.rotate(inputMat, rotationCode));
-    }
+    // Decode in the rotated image exactly once; return corners in the original
+    // photograph's coordinates so alignment uses the same reference frame.
+    final cv.Mat searchBase = searchBaseMat ??
+        (rotationCode == null
+            ? inputMat
+            : pool.add(cv.rotate(inputMat, rotationCode)));
 
-    final offsetX = (testRegion.left * searchBaseMat.width).toInt().clamp(0, searchBaseMat.width - 1);
-    final offsetY = (testRegion.top * searchBaseMat.height).toInt().clamp(0, searchBaseMat.height - 1);
-    final int w = (testRegion.width * searchBaseMat.width).toInt().clamp(1, searchBaseMat.width - offsetX);
-    final int h = (testRegion.height * searchBaseMat.height).toInt().clamp(1, searchBaseMat.height - offsetY);
-    final searchMat = pool.add(searchBaseMat.region(cv.Rect(offsetX, offsetY, w, h)));
+    final offsetX = (testRegion.left * searchBase.width)
+        .toInt()
+        .clamp(0, searchBase.width - 1);
+    final offsetY = (testRegion.top * searchBase.height)
+        .toInt()
+        .clamp(0, searchBase.height - 1);
+    final int w = (testRegion.width * searchBase.width)
+        .toInt()
+        .clamp(1, searchBase.width - offsetX);
+    final int h = (testRegion.height * searchBase.height)
+        .toInt()
+        .clamp(1, searchBase.height - offsetY);
+    final searchMat =
+        pool.add(searchBase.region(cv.Rect(offsetX, offsetY, w, h)));
 
-    return _attemptDecode(inputMat, searchMat, offsetX, offsetY, angleDegree, fastMode: fastMode);
+    return _attemptDecode(inputMat, searchMat, offsetX, offsetY, angleDegree,
+        fastMode: fastMode);
   } catch (_) {
     return null;
   } finally {
@@ -154,13 +203,15 @@ QrDetectionResult? _attemptDecode(
 }) {
   final pool = QrPool();
   try {
-    final gray = pool.add(m.channels == 3 ? cv.cvtColor(m, cv.COLOR_BGR2GRAY) : m);
+    final gray =
+        pool.add(m.channels == 3 ? cv.cvtColor(m, cv.COLOR_BGR2GRAY) : m);
 
     // Strategy 1: Direct Grayscale Search
     final detector1 = pool.add(cv.QRCodeDetector.empty());
     final (text1, points1, _) = detector1.detectAndDecode(gray);
     if (text1.isNotEmpty) {
-      final corners = _extractNormalizedCorners(points1, offsetX, offsetY, fullInput.width, fullInput.height, rotation);
+      final corners = _extractNormalizedCorners(points1, offsetX, offsetY,
+          fullInput.width, fullInput.height, rotation);
       return QrDetectionResult(data: QrData.fromRaw(text1), corners: corners);
     }
 
@@ -168,7 +219,8 @@ QrDetectionResult? _attemptDecode(
     try {
       final adaptiveForTree = pool.add(cv.adaptiveThreshold(
           gray, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 21, 5));
-      final (contoursTree, hierarchy) = cv.findContours(adaptiveForTree, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE);
+      final (contoursTree, hierarchy) = cv.findContours(
+          adaptiveForTree, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE);
       pool.add(contoursTree);
       pool.add(hierarchy);
 
@@ -184,7 +236,8 @@ QrDetectionResult? _attemptDecode(
             final area = cv.contourArea(contoursTree[i]);
             if (area >= 30 && area <= (gray.width * gray.height * 0.6)) {
               final rect = cv.boundingRect(contoursTree[i]);
-              finderCenters.add(cv.Point(rect.x + rect.width ~/ 2, rect.y + rect.height ~/ 2));
+              finderCenters.add(cv.Point(
+                  rect.x + rect.width ~/ 2, rect.y + rect.height ~/ 2));
             }
           }
         }
@@ -207,13 +260,22 @@ QrDetectionResult? _attemptDecode(
         final cropW = (maxX + padX - cropX).clamp(1, gray.width - cropX);
         final cropH = (maxY + padY - cropY).clamp(1, gray.height - cropY);
 
-        final qrCrop = pool.add(gray.region(cv.Rect(cropX, cropY, cropW, cropH)));
+        final qrCrop =
+            pool.add(gray.region(cv.Rect(cropX, cropY, cropW, cropH)));
         final detectorFinder = pool.add(cv.QRCodeDetector.empty());
-        final (textFinder, pointsFinder, _) = detectorFinder.detectAndDecode(qrCrop);
+        final (textFinder, pointsFinder, _) =
+            detectorFinder.detectAndDecode(qrCrop);
 
         if (textFinder.isNotEmpty) {
-          final corners = _extractNormalizedCorners(pointsFinder, offsetX + cropX, offsetY + cropY, fullInput.width, fullInput.height, rotation);
-          return QrDetectionResult(data: QrData.fromRaw(textFinder), corners: corners);
+          final corners = _extractNormalizedCorners(
+              pointsFinder,
+              offsetX + cropX,
+              offsetY + cropY,
+              fullInput.width,
+              fullInput.height,
+              rotation);
+          return QrDetectionResult(
+              data: QrData.fromRaw(textFinder), corners: corners);
         }
       }
     } catch (_) {}
@@ -223,7 +285,8 @@ QrDetectionResult? _attemptDecode(
     final detectorMed = pool.add(cv.QRCodeDetector.empty());
     final (textMed, pointsMed, _) = detectorMed.detectAndDecode(median);
     if (textMed.isNotEmpty) {
-      final corners = _extractNormalizedCorners(pointsMed, offsetX, offsetY, fullInput.width, fullInput.height, rotation);
+      final corners = _extractNormalizedCorners(pointsMed, offsetX, offsetY,
+          fullInput.width, fullInput.height, rotation);
       return QrDetectionResult(data: QrData.fromRaw(textMed), corners: corners);
     }
 
@@ -233,21 +296,26 @@ QrDetectionResult? _attemptDecode(
     final detector2 = pool.add(cv.QRCodeDetector.empty());
     final (text2, points2, _) = detector2.detectAndDecode(adaptive);
     if (text2.isNotEmpty) {
-      final corners = _extractNormalizedCorners(points2, offsetX, offsetY, fullInput.width, fullInput.height, rotation);
+      final corners = _extractNormalizedCorners(points2, offsetX, offsetY,
+          fullInput.width, fullInput.height, rotation);
       return QrDetectionResult(data: QrData.fromRaw(text2), corners: corners);
     }
 
     // Strategy 5: CLAHE + Otsu's Thresholding (Screen Glare & uneven contrast)
-    final clahe = pool.add(cv.createCLAHE(clipLimit: 2.0, tileGridSize: (8, 8)));
+    final clahe =
+        pool.add(cv.createCLAHE(clipLimit: 2.0, tileGridSize: (8, 8)));
     final claheGray = pool.add(clahe.apply(gray));
-    final (_, otsuBinary) = cv.threshold(claheGray, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+    final (_, otsuBinary) =
+        cv.threshold(claheGray, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
     pool.add(otsuBinary);
 
     final detectorOtsu = pool.add(cv.QRCodeDetector.empty());
     final (textOtsu, pointsOtsu, _) = detectorOtsu.detectAndDecode(otsuBinary);
     if (textOtsu.isNotEmpty) {
-      final corners = _extractNormalizedCorners(pointsOtsu, offsetX, offsetY, fullInput.width, fullInput.height, rotation);
-      return QrDetectionResult(data: QrData.fromRaw(textOtsu), corners: corners);
+      final corners = _extractNormalizedCorners(pointsOtsu, offsetX, offsetY,
+          fullInput.width, fullInput.height, rotation);
+      return QrDetectionResult(
+          data: QrData.fromRaw(textOtsu), corners: corners);
     }
 
     if (!fastMode) {
@@ -257,7 +325,8 @@ QrDetectionResult? _attemptDecode(
       final detector3 = pool.add(cv.QRCodeDetector.empty());
       final (text3, points3, _) = detector3.detectAndDecode(inverted);
       if (text3.isNotEmpty) {
-        final corners = _extractNormalizedCorners(points3, offsetX, offsetY, fullInput.width, fullInput.height, rotation);
+        final corners = _extractNormalizedCorners(points3, offsetX, offsetY,
+            fullInput.width, fullInput.height, rotation);
         return QrDetectionResult(data: QrData.fromRaw(text3), corners: corners);
       }
 
@@ -266,47 +335,58 @@ QrDetectionResult? _attemptDecode(
       final detector4 = pool.add(cv.QRCodeDetector.empty());
       final (text4, points4, _) = detector4.detectAndDecode(equalized);
       if (text4.isNotEmpty) {
-        final corners = _extractNormalizedCorners(points4, offsetX, offsetY, fullInput.width, fullInput.height, rotation);
+        final corners = _extractNormalizedCorners(points4, offsetX, offsetY,
+            fullInput.width, fullInput.height, rotation);
         return QrDetectionResult(data: QrData.fromRaw(text4), corners: corners);
       }
 
       // Strategy 8: Perspective Quadrilateral Warping (3D Tilted QR Flattener)
-      final processed = pool.add(ImagePreprocessingService.prepareForQrSearch(gray));
-      final (contours, _) = cv.findContours(processed, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      final processed =
+          pool.add(ImagePreprocessingService.prepareForQrSearch(gray));
+      final (contours, _) =
+          cv.findContours(processed, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
       for (int i = 0; i < contours.length; i++) {
         final area = cv.contourArea(contours[i]);
         if (area < 300) continue;
 
         final perimeter = cv.arcLength(contours[i], true);
-        final approx = pool.add(cv.approxPolyDP(contours[i], 0.02 * perimeter, true));
+        final approx =
+            pool.add(cv.approxPolyDP(contours[i], 0.02 * perimeter, true));
 
         if (approx.length == 4) {
           try {
             final ordered = pool.add(PerspectiveService.orderPoints(approx));
-            final destExact = pool.add(PerspectiveService.getDestPoints(300, 300, 0.0));
-            final mWarp = pool.add(cv.getPerspectiveTransform(ordered, destExact));
-            final warpedQr = pool.add(cv.warpPerspective(gray, mWarp, (300, 300)));
+            final destExact =
+                pool.add(PerspectiveService.getDestPoints(300, 300, 0.0));
+            final mWarp =
+                pool.add(cv.getPerspectiveTransform(ordered, destExact));
+            final warpedQr =
+                pool.add(cv.warpPerspective(gray, mWarp, (300, 300)));
 
             final detector5 = pool.add(cv.QRCodeDetector.empty());
             final (text5, points5, _) = detector5.detectAndDecode(warpedQr);
 
             if (text5.isNotEmpty) {
-              final corners = _extractNormalizedCorners(ordered, offsetX, offsetY, fullInput.width, fullInput.height, rotation);
-              return QrDetectionResult(data: QrData.fromRaw(text5), corners: corners);
+              final corners = _extractNormalizedCorners(ordered, offsetX,
+                  offsetY, fullInput.width, fullInput.height, rotation);
+              return QrDetectionResult(
+                  data: QrData.fromRaw(text5), corners: corners);
             }
           } catch (_) {}
         }
       }
     }
-  } catch (_) {} finally {
+  } catch (_) {
+  } finally {
     pool.disposeAll();
   }
   return null;
 }
 
 List<double>? _extractNormalizedCorners(
-    dynamic pts, int offsetX, int offsetY, int fullW, int fullH, [int rotation = 0]) {
+    dynamic pts, int offsetX, int offsetY, int fullW, int fullH,
+    [int rotation = 0]) {
   try {
     if (fullW <= 0 || fullH <= 0) return null;
 
@@ -328,17 +408,17 @@ List<double>? _extractNormalizedCorners(
 
       if (rotation == 90) {
         final double origX = py;
-        final double origY = fullH - px;
+        final double origY = fullH - 1 - px;
         px = origX;
         py = origY;
       } else if (rotation == 270) {
-        final double origX = fullW - py;
+        final double origX = fullW - 1 - py;
         final double origY = px;
         px = origX;
         py = origY;
       } else if (rotation == 180) {
-        px = fullW - px;
-        py = fullH - py;
+        px = fullW - 1 - px;
+        py = fullH - 1 - py;
       }
 
       res.add((px / fullW).clamp(0.0, 1.0));
