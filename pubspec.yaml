@@ -21,6 +21,17 @@ version: 1.0.1+1
 environment:
   sdk: ^3.5.0
 
+# QRCodeDetector is in objdetect, which dartcv4 excludes by default.
+# Keep the native QR resolver available for capture-specific sheet alignment.
+hooks:
+  user_defines:
+    dartcv4:
+      include_modules:
+        - imgcodecs
+        - imgproc
+        - calib3d
+        - objdetect
+
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
 # consider running `flutter pub upgrade --major-versions`. Alternatively,

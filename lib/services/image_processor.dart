@@ -1,4 +1,5 @@
 import 'dart:isolate';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:opencv_dart/opencv_dart.dart' as cv;
@@ -8,13 +9,13 @@ import '../models/omr/processed_sheet.dart';
 import '../models/omr/qr_data.dart';
 import '../models/omr/templates/py_image_search_5.dart';
 import '../models/omr/templates/standard_50_questions.dart';
-import 'cv/perspective_service.dart';
 import 'cv/sheet_alignment_service.dart';
 import 'cv/fiducial_geometry.dart';
 import 'cv/threshold_service.dart';
 import 'cv/template_service.dart';
 import 'cv/bubble_detection_service.dart';
 import 'cv/qr_detection_service.dart';
+import 'cv/camera_frame_service.dart';
 
 // [LABEL: Request Models]
 
@@ -24,6 +25,7 @@ class ScanRequest {
   final int width;
   final int height;
   final int bytesPerRow;
+  final int bytesPerPixel;
   final SendPort replyPort;
   final int scanSession;
 
@@ -39,6 +41,7 @@ class ScanRequest {
     required this.width,
     required this.height,
     required this.bytesPerRow,
+    this.bytesPerPixel = 1,
     required this.replyPort,
     this.scanSession = 0,
     this.cannyThreshold1 = 50.0,
@@ -79,7 +82,20 @@ class SheetAlignmentException implements Exception {
 
   @override
   String toString() => 'Could not align the answer sheet. Keep all four corner '
-      'circles visible, move the camera closer to facing the sheet, and retake.';
+      'circles fully visible, hold steady for focus, and retake.';
+}
+
+class SheetIdentityException implements Exception {
+  final bool unreadable;
+
+  const SheetIdentityException({this.unreadable = false});
+
+  @override
+  String toString() => unreadable
+      ? 'Could not read the QR code in this photo. Keep it visible, tap to '
+          'focus, and retake.'
+      : 'The captured sheet differs from the selected student. '
+          'Scan its QR code again before capturing.';
 }
 
 /// Response containing detection results and optional debug imagery.
@@ -89,7 +105,8 @@ class ScanResponse {
   final List<double>? corners; // Normalized coordinates [x1, y1, ...]
   final Uint8List? debugImage;
   final QrData? detectedQr;
-  final List<double>? qrCorners; // Normalized QR corners [x0, y0, x1, y1, x2, y2, x3, y3]
+  final List<double>?
+      qrCorners; // Normalized QR corners [x0, y0, x1, y1, x2, y2, x3, y3]
 
   ScanResponse({
     required this.foundPaper,
@@ -115,9 +132,8 @@ class CvPool {
   }
 }
 
-
 /// Core Computer Vision engine for OMR processing.
-/// 
+///
 /// Enforces:
 /// - BR-06: Local Edge OMR processing (OpenCV on device)
 class ImageProcessor {
@@ -161,25 +177,15 @@ class ImageProcessor {
     final pool = CvPool();
     try {
       // 1. [LABEL: Data Ingestion] Mat Creation & Row Stride Handling
-      cv.Mat mat;
-      if (message.bytesPerRow != message.width) {
-        final cleanBytes = Uint8List(message.width * message.height);
-        for (int y = 0; y < message.height; y++) {
-          int start = y * message.bytesPerRow;
-          if (start + message.width <= message.bytes.length) {
-            cleanBytes.setRange(
-              y * message.width,
-              (y + 1) * message.width,
-              message.bytes.getRange(start, start + message.width),
-            );
-          }
-        }
-        mat = pool.add(cv.Mat.fromList(
-            message.height, message.width, cv.MatType.CV_8UC1, cleanBytes));
-      } else {
-        mat = pool.add(cv.Mat.fromList(
-            message.height, message.width, cv.MatType.CV_8UC1, message.bytes));
-      }
+      final luminance = CameraFrameService.luminance(
+        bytes: message.bytes,
+        width: message.width,
+        height: message.height,
+        bytesPerRow: message.bytesPerRow,
+        bytesPerPixel: message.bytesPerPixel,
+      );
+      final mat = pool.add(cv.Mat.fromList(
+          message.height, message.width, cv.MatType.CV_8UC1, luminance));
 
       // 2. [LABEL: Optimization] Keep a high-resolution QR search path for monitor-sized codes.
       // Some QR codes are still legible at ~800px, but large monitor-rendered codes need a second
@@ -187,7 +193,8 @@ class ImageProcessor {
       const double targetWidth = 1200.0;
       final double resizeScale = targetWidth / message.width;
       final int targetHeight = (message.height * resizeScale).toInt();
-      final smallMat = pool.add(cv.resize(mat, (targetWidth.toInt(), targetHeight)));
+      final smallMat =
+          pool.add(cv.resize(mat, (targetWidth.toInt(), targetHeight)));
 
       var processedMat = smallMat;
 
@@ -196,7 +203,8 @@ class ImageProcessor {
       } else if (message.rotationIndex == 2) {
         processedMat = pool.add(cv.rotate(smallMat, cv.ROTATE_180));
       } else if (message.rotationIndex == 3) {
-        processedMat = pool.add(cv.rotate(smallMat, cv.ROTATE_90_COUNTERCLOCKWISE));
+        processedMat =
+            pool.add(cv.rotate(smallMat, cv.ROTATE_90_COUNTERCLOCKWISE));
       }
 
       final int finalW = processedMat.width;
@@ -205,21 +213,31 @@ class ImageProcessor {
       // [LABEL: Feature Extraction] Real-time QR detection on the full live frame and the
       // high-resolution fallback. This is crucial when a QR occupies a large portion of a monitor
       // and the fiber of the phone camera sees glare, scanlines, or partial tilt.
-      QrDetectionResult? qrResult = QrDetectionService.detectWithCorners(processedMat, fastMode: false);
+      QrDetectionResult? qrResult =
+          QrDetectionService.detectWithCorners(processedMat, fastMode: false);
       qrResult ??= _scanQrRegion(processedMat);
-      final alignmentQrCorners = qrResult?.corners;
-      qrResult ??= QrDetectionService.detectWithCorners(smallMat, fastMode: true);
-      qrResult ??= _scanQrRegion(mat);
-      qrResult ??= QrDetectionService.detectWithCorners(mat, fastMode: true);
-      final rawFrameQr = qrResult == null ? QrDetectionService.detectEntireImage(mat) : null;
+      // All returned QR coordinates must describe the oriented preview frame.
+      // The full-resolution fallback has the same axes and field of view.
+      var orientedMat = mat;
+      if (message.rotationIndex == 1) {
+        orientedMat = pool.add(cv.rotate(mat, cv.ROTATE_90_CLOCKWISE));
+      } else if (message.rotationIndex == 2) {
+        orientedMat = pool.add(cv.rotate(mat, cv.ROTATE_180));
+      } else if (message.rotationIndex == 3) {
+        orientedMat = pool.add(cv.rotate(mat, cv.ROTATE_90_COUNTERCLOCKWISE));
+      }
+      qrResult ??= _scanQrRegion(orientedMat);
+      qrResult ??=
+          QrDetectionService.detectWithCorners(orientedMat, fastMode: true);
+      final rawFrameQr = qrResult == null
+          ? QrDetectionService.detectEntireImage(orientedMat)
+          : null;
       final detectedQr = qrResult?.data ?? rawFrameQr;
-      final qrCorners = qrResult?.corners ??
-          (detectedQr != null && detectedQr.sheetIdentifier.isNotEmpty && detectedQr.sheetIdentifier != 'UNKNOWN'
-              ? const [0.20, 0.20, 0.80, 0.20, 0.80, 0.80, 0.20, 0.80]
-              : null);
+      final qrCorners = qrResult?.corners;
 
       if (detectedQr == null) {
-        debugPrint('LIVE QR: no QR detected in full frame or explicit ROI scan');
+        debugPrint(
+            'LIVE QR: no QR detected in full frame or explicit ROI scan');
       } else {
         debugPrint('LIVE QR: ${detectedQr.sheetIdentifier}');
       }
@@ -231,13 +249,14 @@ class ImageProcessor {
       for (final layout in [(0.681, 0.063), (0.320, 0.090)]) {
         markerCorners = FiducialGeometry.selectMarkers(candidates,
             imageArea: (finalW * finalH).toDouble(),
-            aspectRatio: layout.$1, diameterRatio: layout.$2,
-            qrCenter: _qrCenter(alignmentQrCorners, finalW, finalH));
+            aspectRatio: layout.$1,
+            diameterRatio: layout.$2,
+            qrCenter: _qrCenter(qrCorners, finalW, finalH));
         if (markerCorners != null) break;
       }
       final foundPaper = markerCorners != null;
-      final paperCorners = markerCorners?.expand((p) =>
-          [p.x / finalW, p.y / finalH]).toList();
+      final paperCorners =
+          markerCorners?.expand((p) => [p.x / finalW, p.y / finalH]).toList();
       Uint8List? debugBytes;
       if (message.returnDebugImage) {
         debugBytes = Uint8List.fromList(cv.imencode('.jpg', processedMat).$2);
@@ -251,7 +270,6 @@ class ImageProcessor {
         detectedQr: detectedQr,
         qrCorners: qrCorners,
       ));
-
     } catch (e, stack) {
       debugPrint("LIVE SCAN ISOLATE ERROR: $e\n$stack");
       message.replyPort.send(ScanResponse(
@@ -270,8 +288,10 @@ class ImageProcessor {
       final int w = source.width;
       final int h = source.height;
       final List<cv.Rect> regions = [
-        cv.Rect((w * 0.55).toInt(), (h * 0.02).toInt(), (w * 0.40).toInt(), (h * 0.28).toInt()),
-        cv.Rect((w * 0.15).toInt(), (h * 0.02).toInt(), (w * 0.70).toInt(), (h * 0.32).toInt()),
+        cv.Rect((w * 0.55).toInt(), (h * 0.02).toInt(), (w * 0.40).toInt(),
+            (h * 0.28).toInt()),
+        cv.Rect((w * 0.15).toInt(), (h * 0.02).toInt(), (w * 0.70).toInt(),
+            (h * 0.32).toInt()),
         cv.Rect(0, 0, w, h),
       ];
 
@@ -292,21 +312,26 @@ class ImageProcessor {
                   points[3].y.toDouble() / crop.height,
                 ]
               : null;
-          final normalized = corners == null ? null : <double>[
-            ((region.x + points[0].x.toDouble()) / w).clamp(0.0, 1.0),
-            ((region.y + points[0].y.toDouble()) / h).clamp(0.0, 1.0),
-            ((region.x + points[1].x.toDouble()) / w).clamp(0.0, 1.0),
-            ((region.y + points[1].y.toDouble()) / h).clamp(0.0, 1.0),
-            ((region.x + points[2].x.toDouble()) / w).clamp(0.0, 1.0),
-            ((region.y + points[2].y.toDouble()) / h).clamp(0.0, 1.0),
-            ((region.x + points[3].x.toDouble()) / w).clamp(0.0, 1.0),
-            ((region.y + points[3].y.toDouble()) / h).clamp(0.0, 1.0),
-          ];
-          return QrDetectionResult(data: QrData.fromRaw(text), corners: normalized);
+          final normalized = corners == null
+              ? null
+              : <double>[
+                  ((region.x + points[0].x.toDouble()) / w).clamp(0.0, 1.0),
+                  ((region.y + points[0].y.toDouble()) / h).clamp(0.0, 1.0),
+                  ((region.x + points[1].x.toDouble()) / w).clamp(0.0, 1.0),
+                  ((region.y + points[1].y.toDouble()) / h).clamp(0.0, 1.0),
+                  ((region.x + points[2].x.toDouble()) / w).clamp(0.0, 1.0),
+                  ((region.y + points[2].y.toDouble()) / h).clamp(0.0, 1.0),
+                  ((region.x + points[3].x.toDouble()) / w).clamp(0.0, 1.0),
+                  ((region.y + points[3].y.toDouble()) / h).clamp(0.0, 1.0),
+                ];
+          return QrDetectionResult(
+              data: QrData.fromRaw(text), corners: normalized);
         }
 
-        final gray = pool.add(crop.channels == 3 ? cv.cvtColor(crop, cv.COLOR_BGR2GRAY) : crop);
-        final (_, binary) = cv.threshold(gray, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+        final gray = pool.add(
+            crop.channels == 3 ? cv.cvtColor(crop, cv.COLOR_BGR2GRAY) : crop);
+        final (_, binary) =
+            cv.threshold(gray, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
         final detector2 = pool.add(cv.QRCodeDetector.empty());
         final (text2, points2, _) = detector2.detectAndDecode(binary);
         if (text2.isNotEmpty) {
@@ -320,7 +345,8 @@ class ImageProcessor {
             ((region.x + points2[3].x.toDouble()) / w).clamp(0.0, 1.0),
             ((region.y + points2[3].y.toDouble()) / h).clamp(0.0, 1.0),
           ];
-          return QrDetectionResult(data: QrData.fromRaw(text2), corners: normalized);
+          return QrDetectionResult(
+              data: QrData.fromRaw(text2), corners: normalized);
         }
       }
     } catch (e) {
@@ -367,43 +393,32 @@ class ImageProcessor {
         return null;
       }
 
-      // Downsample oversized camera captures (e.g. 12MP/4K photos) to max 2000px width
-      // to prevent native Out-Of-Memory (OOM) crashes while preserving 100% OMR accuracy.
-      if (mat.width > 2000) {
-        final double scale = 2000.0 / mat.width;
-        final int newH = (mat.height * scale).toInt();
-        mat = pool.add(cv.resize(mat, (2000, newH)));
+      // Bound both axes while preserving far-marker detail for the retry pass.
+      final longestSide = math.max(mat.width, mat.height);
+      if (longestSide > 3000) {
+        final scale = 3000.0 / longestSide;
+        mat = pool.add(cv.resize(
+            mat, ((mat.width * scale).round(), (mat.height * scale).round())));
       }
 
-      if (message.expectedQr != null) {
-        final isInvite = message.expectedQr!.sheetIdentifier.contains("checkmate://join") || 
-                         (RegExp(r'^[A-Z0-9]{5,8}$').hasMatch(message.expectedQr!.sheetIdentifier.toUpperCase()) && !message.expectedQr!.sheetIdentifier.toUpperCase().contains("CM50"));
-        if (isInvite) {
-           debugPrint("OMR: Bypassing OMR for Course Invitation -> ${message.expectedQr!.sheetIdentifier}");
-           return ProcessedSheet(
-             warpedImage: message.bytes,
-             thresholdImage: message.bytes,
-             answerRegion: message.bytes,
-             questionImages: [],
-             results: [],
-             qrData: message.expectedQr,
-             detectedSet: "SET A",
-             templateName: message.template.name,
-           );
-        }
-      }
-
-      final capturedQr = QrDetectionService.detectWithCorners(mat);
+      final expectedId = message.expectedQr?.sheetIdentifier;
+      final capturedQr = expectedId == null
+          ? QrDetectionService.detectWithCorners(mat)
+          : QrDetectionService.detectMatchingSheet(mat, expectedId);
       final rawImageQr = capturedQr?.data;
-      if (rawImageQr != null && rawImageQr.sheetIdentifier.isNotEmpty && rawImageQr.sheetIdentifier != "UNKNOWN") {
-        debugPrint("OMR: Found QR on raw unwarped image -> ${rawImageQr.sheetIdentifier}");
+      _verifyCapturedIdentity(rawImageQr, expectedId);
+      if (rawImageQr != null &&
+          rawImageQr.sheetIdentifier.isNotEmpty &&
+          rawImageQr.sheetIdentifier != "UNKNOWN") {
+        debugPrint(
+            "OMR: Found QR on raw unwarped image -> ${rawImageQr.sheetIdentifier}");
       }
 
       final activeTemplate = _processingTemplate(
           message.template, rawImageQr ?? message.expectedQr);
       // Preview and still capture can differ in field of view, rotation, and
       // timing. Resolve markers afresh in the decoded photograph.
-      final capturedMarkers = SheetAlignmentService.detectMarkers(mat,
+      final capturedMarkers = SheetAlignmentService.detectMarkerPoints(mat,
           aspectRatio: activeTemplate.fiducialAspectRatio,
           diameterRatio: activeTemplate.fiducialDiameterRatio,
           qrCenter: _qrCenter(capturedQr?.corners, mat.width, mat.height));
@@ -412,16 +427,23 @@ class ImageProcessor {
       }
       final targetWidth = activeTemplate.targetWidth;
       final outputRatio = activeTemplate.paperAspectRatio > 0.1
-          ? activeTemplate.paperAspectRatio : activeTemplate.fiducialAspectRatio;
+          ? activeTemplate.paperAspectRatio
+          : activeTemplate.fiducialAspectRatio;
       final targetHeight = (targetWidth / outputRatio).round();
-      final destination = pool.add(PerspectiveService.getDestPoints(
-          targetWidth, targetHeight, 0));
+      final destination = pool.add(cv.VecPoint2f.fromList([
+        cv.Point2f(0, 0),
+        cv.Point2f(targetWidth.toDouble(), 0),
+        cv.Point2f(targetWidth.toDouble(), targetHeight.toDouble()),
+        cv.Point2f(0, targetHeight.toDouble()),
+      ]));
       // Marker selection has already established cyclic order and axis
       // assignment. Reordering here could undo that under extreme perspective.
-      final transform = pool.add(cv.getPerspectiveTransform(
-          capturedMarkers, destination));
-      final warped = pool.add(cv.warpPerspective(
-          mat, transform, (targetWidth, targetHeight)));
+      final sourcePoints = pool.add(cv.VecPoint2f.fromList(
+          capturedMarkers.map((p) => cv.Point2f(p.x, p.y)).toList()));
+      final transform =
+          pool.add(cv.getPerspectiveTransform2f(sourcePoints, destination));
+      final warped = pool
+          .add(cv.warpPerspective(mat, transform, (targetWidth, targetHeight)));
       QrData? qrData = rawImageQr;
 
       if (qrData == null || qrData.examCode == "UNKNOWN") {
@@ -431,8 +453,10 @@ class ImageProcessor {
         }
       }
 
-      if ((qrData == null || qrData.examCode == "UNKNOWN") && activeTemplate.qrRegion != null) {
-        final regionalQr = QrDetectionService.detectQr(warped, activeTemplate.qrRegion!);
+      if ((qrData == null || qrData.examCode == "UNKNOWN") &&
+          activeTemplate.qrRegion != null) {
+        final regionalQr =
+            QrDetectionService.detectQr(warped, activeTemplate.qrRegion!);
         if (regionalQr != null && regionalQr.examCode != "UNKNOWN") {
           qrData = regionalQr;
         }
@@ -446,23 +470,23 @@ class ImageProcessor {
       }
 
       if (qrData == null || qrData.examCode == "UNKNOWN") {
-        if (message.expectedQr != null && message.expectedQr!.examCode != "UNKNOWN") {
-          debugPrint("OMR: Could not find QR in warped image, falling back to scanner's locked QR data.");
-          qrData = message.expectedQr;
-        } else {
-          try {
-            debugPrint("OMR: QR completely failed, extracting ID dynamically via template constraints...");
-            final int targetH = (mat.height * (800.0 / mat.width)).toInt();
-            final smallMat = pool.add(cv.resize(mat, (800, targetH)));
-            final smallQr = QrDetectionService.detectEntireImage(smallMat);
-            if (smallQr != null && smallQr.examCode != "UNKNOWN") {
-              qrData = smallQr;
-            }
-          } catch (_) {}
-        }
+        try {
+          debugPrint(
+              "OMR: Retrying captured QR at an alternate image scale...");
+          final int targetH = (mat.height * (800.0 / mat.width)).toInt();
+          final smallMat = pool.add(cv.resize(mat, (800, targetH)));
+          final smallQr = QrDetectionService.detectEntireImage(smallMat);
+          if (smallQr != null && smallQr.examCode != "UNKNOWN") {
+            qrData = smallQr;
+          }
+        } catch (_) {}
       }
 
       debugPrint('OMR: Active Template -> ${activeTemplate.name}');
+
+      // A preview lock can be stale after moving the camera to another sheet.
+      // Only a QR decoded from this photograph may establish its identity.
+      _verifyCapturedIdentity(qrData, expectedId, requireDecoded: true);
 
       final thresholded = pool.add(ThresholdService.applyOtsuThreshold(warped));
 
@@ -484,11 +508,13 @@ class ImageProcessor {
       int calibratedY = activeTemplate.calibratedYOffset;
 
       final List<Rect> activeRegions = activeTemplate.answerRegions;
-      final int questionsPerRegion = (activeTemplate.totalQuestions / activeRegions.length).ceil();
+      final int questionsPerRegion =
+          (activeTemplate.totalQuestions / activeRegions.length).ceil();
 
       for (int i = 0; i < activeRegions.length; i++) {
         final region = activeRegions[i];
-        final regionMat = pool.add(TemplateService.extractRegion(thresholded, region));
+        final regionMat =
+            pool.add(TemplateService.extractRegion(thresholded, region));
         final questionsInThisRegion = (i == activeRegions.length - 1)
             ? activeTemplate.totalQuestions - (questionsPerRegion * i)
             : questionsPerRegion;
@@ -515,9 +541,12 @@ class ImageProcessor {
       }
 
       final warpedBytes = Uint8List.fromList(cv.imencode(".jpg", warped).$2);
-      final thresholdBytes = Uint8List.fromList(cv.imencode(".jpg", thresholded).$2);
-      final legacyAnswerArea = pool.add(TemplateService.extractRegion(warped, activeTemplate.answerRegions.first));
-      final answerAreaBytes = Uint8List.fromList(cv.imencode(".jpg", legacyAnswerArea).$2);
+      final thresholdBytes =
+          Uint8List.fromList(cv.imencode(".jpg", thresholded).$2);
+      final legacyAnswerArea = pool.add(TemplateService.extractRegion(
+          warped, activeTemplate.answerRegions.first));
+      final answerAreaBytes =
+          Uint8List.fromList(cv.imencode(".jpg", legacyAnswerArea).$2);
 
       return ProcessedSheet(
         warpedImage: warpedBytes,
@@ -531,6 +560,8 @@ class ImageProcessor {
       );
     } on SheetAlignmentException {
       rethrow;
+    } on SheetIdentityException {
+      rethrow;
     } catch (e, stack) {
       debugPrint("OMR PROCESSOR ERROR: $e\n$stack");
       return null;
@@ -539,7 +570,27 @@ class ImageProcessor {
     }
   }
 
-  static String? _detectSetFromBubbles(cv.Mat thresholded, List<Offset> setBubbles) {
+  static void _verifyCapturedIdentity(QrData? captured, String? expectedId,
+      {bool requireDecoded = false}) {
+    final decoded = captured != null &&
+        captured.sheetIdentifier.isNotEmpty &&
+        captured.sheetIdentifier != 'UNKNOWN';
+    if (requireDecoded && !decoded) {
+      throw const SheetIdentityException(unreadable: true);
+    }
+    if (captured != null &&
+        captured.sheetIdentifier.isNotEmpty &&
+        captured.sheetIdentifier != 'UNKNOWN' &&
+        expectedId != null &&
+        expectedId.isNotEmpty &&
+        expectedId != 'UNKNOWN' &&
+        captured.sheetIdentifier != expectedId) {
+      throw const SheetIdentityException();
+    }
+  }
+
+  static String? _detectSetFromBubbles(
+      cv.Mat thresholded, List<Offset> setBubbles) {
     final pool = CvPool();
     try {
       final List<double> fills = [];
@@ -572,7 +623,8 @@ class ImageProcessor {
   static String? _detectSetFromRegion(cv.Mat thresholded, Rect setRegion) {
     final pool = CvPool();
     try {
-      final setMat = pool.add(TemplateService.extractRegion(thresholded, setRegion));
+      final setMat =
+          pool.add(TemplateService.extractRegion(thresholded, setRegion));
       final result = BubbleDetectionService.detectFilledBubble(setMat, 2,
           isBinary: true, gridStart: 0.1, gridWidthRatio: 0.8);
       if (result.answer != null) {
