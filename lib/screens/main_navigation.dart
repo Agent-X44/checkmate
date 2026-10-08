@@ -5,6 +5,7 @@ import '../models/course.dart';
 import '../services/deep_link_service.dart';
 import '../services/notification_service.dart';
 import '../services/supabase_service.dart';
+import '../services/data_cache_service.dart';
 import '../utils/ui_utils.dart';
 import 'dashboard_screen.dart';
 import 'scanner_screen.dart';
@@ -42,27 +43,24 @@ class _MainNavigationState extends State<MainNavigation>
   final GlobalKey<DashboardScreenState> _dashboardKey =
       GlobalKey<DashboardScreenState>();
 
+  StreamSubscription<CacheChange>? _cacheSubscription;
   List<Course> _drawerCachedCourses = [];
   bool _isDrawerLoading = true;
   late final StreamSubscription<Course> _joinedCourseSubscription;
 
   Future<void> _refreshDrawerCourses() async {
+    final cached = await SupabaseService.cachedCourses();
+    if (mounted && cached.isNotEmpty) {
+      setState(() {
+        _drawerCachedCourses = cached;
+        _isDrawerLoading = false;
+      });
+    }
     try {
-      final results = await Future.wait([
-        SupabaseService.getCreatedCoursesDetails(),
-        SupabaseService.getEnrolledCoursesDetails(),
-      ]);
-      final all = [...results[0], ...results[1]];
-      if (mounted) {
-        setState(() {
-          _drawerCachedCourses = all;
-          _isDrawerLoading = false;
-        });
-      }
+      await SupabaseService.refreshCourses();
+      if (mounted) setState(() => _isDrawerLoading = false);
     } catch (_) {
-      if (mounted) {
-        setState(() => _isDrawerLoading = false);
-      }
+      if (mounted) setState(() => _isDrawerLoading = false);
     }
   }
 
@@ -71,6 +69,20 @@ class _MainNavigationState extends State<MainNavigation>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     unawaited(NotificationService.startForCurrentUser());
+    _cacheSubscription = DataCacheService.changes.listen((change) {
+      if (!mounted ||
+          change.kind != 'courses' ||
+          change.userId != SupabaseService.currentUser?.id) {
+        return;
+      }
+      setState(() {
+        _drawerCachedCourses = (change.value as List)
+            .map((row) => Course.fromMap(Map<String, dynamic>.from(row),
+                isOwner: row['_is_owner'] == true))
+            .toList();
+        _isDrawerLoading = false;
+      });
+    });
     _refreshDrawerCourses();
     _joinedCourseSubscription = DeepLinkService.joinedCourses.listen((course) {
       if (mounted) {
@@ -78,6 +90,7 @@ class _MainNavigationState extends State<MainNavigation>
           _selectedIndex = 0;
           _drawerCachedCourses
               .removeWhere((existing) => existing.id == course.id);
+          _drawerCachedCourses.removeWhere((c) => c.id == course.id);
           _drawerCachedCourses.insert(0, course);
         });
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -100,6 +113,7 @@ class _MainNavigationState extends State<MainNavigation>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _joinedCourseSubscription.cancel();
+    _cacheSubscription?.cancel();
     super.dispose();
   }
 
@@ -189,15 +203,20 @@ class _MainNavigationState extends State<MainNavigation>
                       TextStyle(color: isDark ? Colors.white70 : Colors.grey))),
           ElevatedButton(
             onPressed: () async {
-              if (nameCtrl.text.isEmpty) return;
+              if (nameCtrl.text.isEmpty) {
+                return;
+              }
               final nav = Navigator.of(dialogContext);
               try {
                 final newCourse = await SupabaseService.createClass(
                   name: nameCtrl.text,
                 );
                 nav.pop();
-                if (!mounted) return;
+                if (!mounted) {
+                  return;
+                }
                 setState(() {
+                  _drawerCachedCourses.removeWhere((c) => c.id == newCourse.id);
                   _drawerCachedCourses.insert(0, newCourse);
                 });
                 _dashboardKey.currentState?.addCreatedCourse(newCourse);
@@ -206,7 +225,9 @@ class _MainNavigationState extends State<MainNavigation>
                     context, 'Course created successfully!',
                     isError: false);
               } catch (e) {
-                if (!mounted) return;
+                if (!mounted) {
+                  return;
+                }
                 CheckMateUi.showTopPrompt(
                     context, 'Failed to create course: $e');
               }
@@ -258,7 +279,9 @@ class _MainNavigationState extends State<MainNavigation>
           ElevatedButton(
             onPressed: () async {
               var input = joinCtrl.text.trim();
-              if (input.isEmpty) return;
+              if (input.isEmpty) {
+                return;
+              }
               final inviteUri = Uri.tryParse(input);
               if (inviteUri != null &&
                   inviteUri.queryParameters.containsKey('inviteToken')) {
@@ -278,8 +301,11 @@ class _MainNavigationState extends State<MainNavigation>
                     ? await SupabaseService.joinCourseWithInvitation(input)
                     : await SupabaseService.joinClass(input);
                 nav.pop();
-                if (!mounted) return;
+                if (!mounted) {
+                  return;
+                }
                 setState(() {
+                  _drawerCachedCourses.removeWhere((c) => c.id == course.id);
                   _drawerCachedCourses.insert(0, course);
                 });
                 _dashboardKey.currentState?.addEnrolledCourse(course);
@@ -288,7 +314,9 @@ class _MainNavigationState extends State<MainNavigation>
                     context, 'Joined course: ${course.name}!',
                     isError: false);
               } catch (e) {
-                if (!mounted) return;
+                if (!mounted) {
+                  return;
+                }
                 final msg = e.toString().replaceAll('Exception: ', '');
                 CheckMateUi.showTopPrompt(context, msg,
                     isError: !msg.contains('already enrolled'));

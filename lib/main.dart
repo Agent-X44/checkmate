@@ -3,10 +3,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:camera/camera.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
 import 'services/image_processor.dart';
+import 'services/data_cache_service.dart';
+import 'services/supabase_service.dart';
 import 'services/deep_link_service.dart';
 import 'screens/root_auth_wrapper.dart';
 import 'screens/notifications_screen.dart';
 import 'theme/checkmate_theme.dart';
+import 'config/app_build.dart';
+import 'screens/developer_workspace_screen.dart';
 
 List<CameraDescription> globalCameras = [];
 
@@ -19,6 +23,7 @@ List<CameraDescription> globalCameras = [];
 void main() {
   final widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
+  DataCacheService.userIdProvider = () => SupabaseService.currentUser?.id;
 
   // 1. Unblocked Startup: Load camera hardware & OpenCV asynchronously in background
   availableCameras().then((cams) {
@@ -89,7 +94,7 @@ class _CheckMateAppState extends State<CheckMateApp> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'CheckMate',
+      title: AppBuild.appName,
       navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
       routes: {
@@ -101,10 +106,11 @@ class _CheckMateAppState extends State<CheckMateApp> {
       themeMode: _themeMode,
       theme: CheckMateTheme.light,
       darkTheme: CheckMateTheme.dark,
-      home: RootAuthWrapper(
-        themeMode: _themeMode,
-        onThemeChanged: _toggleTheme,
-      ),
+      home: AppBuild.developerTools
+          ? DeveloperWorkspaceScreen(
+              themeMode: _themeMode, onThemeChanged: _toggleTheme)
+          : RootAuthWrapper(
+              themeMode: _themeMode, onThemeChanged: _toggleTheme),
     );
   }
 }

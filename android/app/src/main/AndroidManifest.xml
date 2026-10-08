@@ -9,7 +9,7 @@
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="37" />
 
     <application
-        android:label="checkmate"
+        android:label="@string/app_name"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
         tools:ignore="Instantiatable">
@@ -43,7 +43,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
-                    android:scheme="checkmate"
+                    android:scheme="${deepLinkScheme}"
                     android:host="join" />
             </intent-filter>
             <!-- Verified Android App Link: https://<invite-host>/join?joinCode=XYZ -->

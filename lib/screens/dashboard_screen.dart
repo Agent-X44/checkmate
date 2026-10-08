@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/course.dart';
 import '../services/supabase_service.dart';
+import '../services/data_cache_service.dart';
 import '../utils/ui_utils.dart';
 import 'course_dashboard_screen.dart';
 import 'quizzes_exams_screen.dart';
@@ -14,6 +16,24 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class DashboardScreenState extends State<DashboardScreen> {
+  StreamSubscription<CacheChange>? _cacheSubscription;
+  void _applyCourses(List<Course> courses) {
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _myCourses = courses.where((c) => c.isOwner).toList();
+      _enrolledCourses = courses.where((c) => !c.isOwner).toList();
+      _isInitialLoading = false;
+    });
+  }
+
+  @override
+  void dispose() {
+    _cacheSubscription?.cancel();
+    super.dispose();
+  }
+
   bool _createdExpanded = true;
   bool _enrolledExpanded = true;
 
@@ -26,12 +46,22 @@ class DashboardScreenState extends State<DashboardScreen> {
   @override
   void initState() {
     super.initState();
-    _refreshAll();
+    _cacheSubscription = DataCacheService.changes.listen((change) {
+      if (change.kind == 'courses' &&
+          change.userId == SupabaseService.currentUser?.id) {
+        _applyCourses((change.value as List)
+            .map((row) => Course.fromMap(Map<String, dynamic>.from(row),
+                isOwner: row['_is_owner'] == true))
+            .toList());
+      }
+    });
+    _loadCachedCourses();
   }
 
   void addCreatedCourse(Course course) {
     if (mounted) {
       setState(() {
+        _myCourses.removeWhere((existing) => existing.id == course.id);
         _myCourses.insert(0, course);
       });
     }
@@ -49,25 +79,18 @@ class DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> refreshCourses() => _refreshAll();
 
+  Future<void> _loadCachedCourses() async {
+    final cached = await SupabaseService.cachedCourses();
+    if (cached.isNotEmpty) _applyCourses(cached);
+    await _refreshAll();
+  }
+
   Future<void> _refreshAll() async {
     try {
-      final my = await SupabaseService.getCreatedCoursesDetails();
-      final enrolled = await SupabaseService.getEnrolledCoursesDetails();
-      for (final course in _confirmedJoinedCourses.values) {
-        if (!enrolled.any((existing) => existing.id == course.id)) {
-          enrolled.insert(0, course);
-        }
-      }
-      if (mounted) {
-        setState(() {
-          _myCourses = my;
-          _enrolledCourses = enrolled;
-          _isInitialLoading = false;
-          _loadFailed = false;
-        });
-      }
+      await SupabaseService.refreshCourses();
+      if (mounted) setState(() => _loadFailed = false);
     } catch (e) {
-      debugPrint("Dashboard refresh error: $e");
+      debugPrint('Dashboard refresh error: $e');
       if (mounted) {
         setState(() {
           _isInitialLoading = false;
@@ -133,7 +156,9 @@ class DashboardScreenState extends State<DashboardScreen> {
           ElevatedButton(
             onPressed: () async {
               final newName = controller.text.trim();
-              if (newName.isEmpty) return;
+              if (newName.isEmpty) {
+                return;
+              }
               Navigator.pop(dialogContext);
               try {
                 await SupabaseService.renameClass(course.id, newName);
@@ -197,7 +222,8 @@ class DashboardScreenState extends State<DashboardScreen> {
         if (mounted) {
           _confirmedJoinedCourses.remove(course.id);
           setState(() {
-            _enrolledCourses.removeWhere((enrolled) => enrolled.id == course.id);
+            _enrolledCourses
+                .removeWhere((enrolled) => enrolled.id == course.id);
           });
           CheckMateUi.showTopPrompt(context, 'Left course successfully',
               isError: false);

@@ -1,4 +1,6 @@
+import '../config/app_build.dart';
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'answer_sheet_design_screen.dart';
@@ -35,9 +37,110 @@ class QuizzesExamsScreen extends StatefulWidget {
 }
 
 class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
+  StreamSubscription<CacheChange>? _cacheSubscription;
+  @override
+  void dispose() {
+    _cacheSubscription?.cancel();
+    super.dispose();
+  }
+
   late Future<List<Map<String, dynamic>>> _examsFuture;
   List<Map<String, dynamic>>? _exams;
   String? _deletingExamId;
+  bool _selectingDrafts = false;
+  bool _deletingDrafts = false;
+  final Set<String> _selectedDraftIds = {};
+
+  void _cancelDraftSelection() {
+    setState(() {
+      _selectingDrafts = false;
+      _selectedDraftIds.clear();
+    });
+  }
+
+  bool _isDraft(Map<String, dynamic> exam) =>
+      exam['is_approved'] != true && exam['results_released'] != true;
+
+  Future<bool> _confirmChange(
+      String title, String message, String action) async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text(title),
+            content: Text(message),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel')),
+              TextButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: Text(action)),
+            ],
+          ),
+        ) ==
+        true;
+  }
+
+  Future<void> _deleteSelectedDrafts() async {
+    if (_deletingDrafts || _selectedDraftIds.isEmpty) {
+      return;
+    }
+    final ids = _selectedDraftIds.toList();
+    if (!await _confirmChange(
+        'Delete ${ids.length} drafts?',
+        'This permanently deletes the selected quizzes/exams and their questions. Drafts with generated answer sheets are protected.',
+        'Delete')) {
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
+    setState(() => _deletingDrafts = true);
+    try {
+      final deleted = await ApiService.deleteDraftExams(ids);
+      await DataCacheService.removeRows('exams', widget.courseId, deleted);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _selectedDraftIds.removeAll(deleted);
+        _selectingDrafts = _selectedDraftIds.isNotEmpty;
+      });
+      CheckMateUi.showTopPrompt(
+          context,
+          deleted.length == ids.length
+              ? '${deleted.length} drafts deleted.'
+              : '${deleted.length} drafts deleted. Some assessments changed status; refresh and try again.',
+          isError: deleted.length != ids.length);
+      await _refreshExams();
+    } catch (e) {
+      if (mounted) {
+        CheckMateUi.showTopPrompt(context, 'Draft deletion failed: $e');
+      }
+    } finally {
+      if (mounted) setState(() => _deletingDrafts = false);
+    }
+  }
+
+  Future<void> _unreleaseExamResults(String examId) async {
+    if (!await _confirmChange(
+        'Unrelease results?',
+        'Students will no longer be able to access these results. Saved grades and insights will be kept.',
+        'Unrelease')) {
+      return;
+    }
+    try {
+      await ApiService.unreleaseResults(examId);
+      if (mounted) {
+        CheckMateUi.showTopPrompt(context, 'Results unreleased.',
+            isError: false);
+      }
+    } catch (e) {
+      if (mounted) {
+        CheckMateUi.showTopPrompt(context, 'Could not unrelease results: $e');
+      }
+    }
+  }
 
   final Map<String, bool> _sectionExpanded = {
     "Quizzes": true,
@@ -48,6 +151,20 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
   @override
   void initState() {
     super.initState();
+    _examsFuture = DataCacheService.getExams(widget.courseId);
+    _cacheSubscription = DataCacheService.changes.listen((change) {
+      if (!mounted ||
+          change.kind != 'exams' ||
+          change.id != widget.courseId ||
+          change.userId != SupabaseService.currentUser?.id) {
+        return;
+      }
+      setState(() {
+        _exams = List<Map<String, dynamic>>.from(change.value);
+        _selectedDraftIds.retainAll(
+            _exams!.where(_isDraft).map((e) => e['id'].toString()).toSet());
+      });
+    });
     _initExamsWithCache();
   }
 
@@ -65,12 +182,13 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
   }
 
   Future<void> _refreshExams() async {
+    if (!mounted) {
+      return;
+    }
     final future = SupabaseService.getExams(widget.courseId);
     setState(() => _examsFuture = future);
     try {
-      final exams = await future;
-      await DataCacheService.saveExams(widget.courseId, exams);
-      if (mounted) setState(() => _exams = exams);
+      await future;
     } catch (e) {
       debugPrint("Error loading exams: $e");
     }
@@ -79,7 +197,6 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
   Future<void> _approveExam(String examId) async {
     try {
       await SupabaseService.approveExam(examId);
-      await _refreshExams();
       if (mounted) {
         CheckMateUi.showTopPrompt(context, "Exam approved successfully!",
             isError: false);
@@ -92,9 +209,14 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
   }
 
   Future<void> _unapproveExam(String examId) async {
+    if (!await _confirmChange(
+        'Unapprove assessment?',
+        'This returns the quiz/exam to Draft and locks new answer-sheet generation. Any released results will be withdrawn from students. Saved sheets and grades will be kept.',
+        'Unapprove')) {
+      return;
+    }
     try {
       await ApiService.unapproveExam(examId);
-      await _refreshExams();
       if (mounted) {
         CheckMateUi.showTopPrompt(context, "Exam reverted to Draft.",
             isError: false);
@@ -109,7 +231,6 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
   Future<void> _releaseExamResults(String examId) async {
     try {
       await ApiService.releaseResults(examId);
-      await _refreshExams();
       if (mounted) {
         CheckMateUi.showTopPrompt(context, "Results released!", isError: false);
       }
@@ -198,7 +319,9 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
 
     final optionControllers = isTF
         ? <TextEditingController>[]
-        : options.asMap().entries
+        : options
+            .asMap()
+            .entries
             .map((entry) => TextEditingController(
                 text: stripChoiceLabel(entry.value, entry.key)))
             .toList();
@@ -305,7 +428,9 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                     foregroundColor: onActionColor,
                   ),
                   onPressed: () async {
-                    if (textController.text.trim().isEmpty) return;
+                    if (textController.text.trim().isEmpty) {
+                      return;
+                    }
 
                     final newOptions = isTF
                         ? ['True', 'False']
@@ -366,7 +491,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
       List<Map<String, dynamic>> items = [];
       bool isStudentResult = false;
       String emptyMessage = 'No questions found for this assessment.';
-      
+
       if (widget.isOwner) {
         items = await SupabaseService.getExamQuestions(examId);
       } else {
@@ -374,7 +499,8 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
         final rawAnswers = result?['grade']?['answers'];
         isStudentResult = true;
         if (result == null) {
-          emptyMessage = 'Your result is not available or has not been released yet.';
+          emptyMessage =
+              'Your result is not available or has not been released yet.';
         } else if (rawAnswers is List && rawAnswers.isNotEmpty) {
           items = rawAnswers
               .whereType<Map>()
@@ -422,7 +548,9 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                   const SizedBox(height: 10),
                   Expanded(
                     child: items.isEmpty
-                        ? Center(child: Text(emptyMessage, textAlign: TextAlign.center))
+                        ? Center(
+                            child:
+                                Text(emptyMessage, textAlign: TextAlign.center))
                         : StatefulBuilder(builder: (context, setModalState) {
                             return ListView.builder(
                               controller: scrollController,
@@ -431,18 +559,25 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                                 final q = items[index];
                                 final isTF = q['question_type'] == 'TF';
                                 final options = q['options'] as List? ?? [];
-                                
+
                                 if (isStudentResult) {
                                   // Display student answer and evaluation
-                                  final qNum = q['question_number'] ?? (index + 1);
-                                  final qText = q['question_text']?.toString() ?? '';
-                                  final isAmbiguous = q['isAmbiguous'] == true ||
-                                      (q['multipleAnswers'] is List &&
-                                          (q['multipleAnswers'] as List).length > 1);
-                                  final isCorrect = !isAmbiguous && q['isCorrect'] == true;
+                                  final qNum =
+                                      q['question_number'] ?? (index + 1);
+                                  final qText =
+                                      q['question_text']?.toString() ?? '';
+                                  final isAmbiguous =
+                                      q['isAmbiguous'] == true ||
+                                          (q['multipleAnswers'] is List &&
+                                              (q['multipleAnswers'] as List)
+                                                      .length >
+                                                  1);
+                                  final isCorrect =
+                                      !isAmbiguous && q['isCorrect'] == true;
                                   final answer = q['answer']?.toString();
-                                  final correctAnswer = q['correct_answer']?.toString() ?? '';
-                                  
+                                  final correctAnswer =
+                                      q['correct_answer']?.toString() ?? '';
+
                                   String statusText;
                                   Color statusColor;
                                   if (isCorrect) {
@@ -462,33 +597,41 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                                   String studentAnsText;
                                   if (isAmbiguous) {
                                     final marks = q['multipleAnswers'] is List
-                                        ? (q['multipleAnswers'] as List).join(', ')
+                                        ? (q['multipleAnswers'] as List)
+                                            .join(', ')
                                         : 'Multiple';
                                     studentAnsText = 'Student answer: $marks';
                                   } else if (answer == null || answer.isEmpty) {
                                     studentAnsText = 'Student answer: None';
                                   } else if (isTF) {
-                                    final tfLabel = answer == 'A' ? 'True' : (answer == 'B' ? 'False' : answer);
+                                    final tfLabel = answer == 'A'
+                                        ? 'True'
+                                        : (answer == 'B' ? 'False' : answer);
                                     studentAnsText = 'Student answer: $tfLabel';
                                   } else {
                                     String optionVal = '';
-                                    if (options.isNotEmpty && answer.length == 1) {
+                                    if (options.isNotEmpty &&
+                                        answer.length == 1) {
                                       final code = answer.codeUnitAt(0) - 65;
                                       if (code >= 0 && code < options.length) {
                                         optionVal = '. ${options[code]}';
                                       }
                                     }
-                                    studentAnsText = 'Student answer: $answer$optionVal';
+                                    studentAnsText =
+                                        'Student answer: $answer$optionVal';
                                   }
 
                                   String correctAnsText = '';
                                   if (isTF) {
                                     final tfLabel = correctAnswer == 'A'
                                         ? 'True'
-                                        : (correctAnswer == 'B' ? 'False' : correctAnswer);
+                                        : (correctAnswer == 'B'
+                                            ? 'False'
+                                            : correctAnswer);
                                     correctAnsText = 'Correct answer: $tfLabel';
                                   } else {
-                                    correctAnsText = 'Correct answer: $correctAnswer';
+                                    correctAnsText =
+                                        'Correct answer: $correctAnswer';
                                   }
 
                                   return Card(
@@ -496,31 +639,43 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                                     child: Padding(
                                       padding: const EdgeInsets.all(12),
                                       child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
                                         children: [
                                           Row(
-                                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                            mainAxisAlignment:
+                                                MainAxisAlignment.spaceBetween,
                                             children: [
                                               Text('Question $qNum',
-                                                  style: const TextStyle(fontWeight: FontWeight.bold)),
+                                                  style: const TextStyle(
+                                                      fontWeight:
+                                                          FontWeight.bold)),
                                               Text(statusText,
                                                   style: TextStyle(
-                                                      fontWeight: FontWeight.bold, color: statusColor)),
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      color: statusColor)),
                                             ],
                                           ),
                                           if (qText.isNotEmpty) ...[
                                             const SizedBox(height: 4),
-                                            Text(qText, style: const TextStyle(fontSize: 14)),
+                                            Text(qText,
+                                                style: const TextStyle(
+                                                    fontSize: 14)),
                                           ],
                                           const SizedBox(height: 8),
-                                          Text(studentAnsText, style: const TextStyle(fontSize: 13)),
+                                          Text(studentAnsText,
+                                              style: const TextStyle(
+                                                  fontSize: 13)),
                                           if (correctAnsText.isNotEmpty) ...[
                                             const SizedBox(height: 2),
                                             Text(correctAnsText,
                                                 style: TextStyle(
                                                     fontSize: 13,
-                                                    color: Colors.green.shade700,
-                                                    fontWeight: FontWeight.bold)),
+                                                    color:
+                                                        Colors.green.shade700,
+                                                    fontWeight:
+                                                        FontWeight.bold)),
                                           ],
                                         ],
                                       ),
@@ -560,8 +715,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                                                   _showEditQuestionDialog(q,
                                                       (updatedQ) {
                                                     setModalState(() {
-                                                      items[index] =
-                                                          updatedQ;
+                                                      items[index] = updatedQ;
                                                     });
                                                   });
                                                 },
@@ -726,7 +880,8 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
             setState(() {
               _exams = updated;
             });
-            await DataCacheService.saveExams(widget.courseId, updated);
+            await DataCacheService.removeRows(
+                'exams', widget.courseId, [examId]);
           }
           if (mounted) {
             CheckMateUi.showTopPrompt(
@@ -749,186 +904,266 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final colors = Theme.of(context).colorScheme;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Quizzes & Exams'),
-        actions: [
-          if (widget.isOwner)
-            IconButton(
-              icon: const Icon(Icons.design_services),
-              tooltip: 'Dev Tools: Template Designer',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => AnswerSheetDesignScreen(
-                      courseId: widget.courseId,
+    return PopScope(
+      canPop: !_selectingDrafts,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && !_deletingDrafts) _cancelDraftSelection();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          leading: _selectingDrafts
+              ? IconButton(
+                  icon: const Icon(Icons.arrow_back),
+                  tooltip: 'Cancel selection',
+                  onPressed: _deletingDrafts ? null : _cancelDraftSelection,
+                )
+              : null,
+          title: Text(_selectingDrafts
+              ? '${_selectedDraftIds.length} selected'
+              : 'Quizzes & Exams'),
+          actions: [
+            if (AppBuild.developerTools && widget.isOwner && !_selectingDrafts)
+              IconButton(
+                icon: const Icon(Icons.design_services),
+                tooltip: 'Dev Tools: Template Designer',
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => AnswerSheetDesignScreen(
+                        courseId: widget.courseId,
+                      ),
                     ),
-                  ),
+                  );
+                },
+              ),
+          ],
+        ),
+        body: RefreshIndicator(
+          onRefresh: _refreshExams,
+          child: FutureBuilder<List<Map<String, dynamic>>>(
+            future: _examsFuture,
+            builder: (context, snapshot) {
+              final exams = _exams ?? snapshot.data;
+              if (exams == null &&
+                  snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              final visibleExams = (exams ?? const <Map<String, dynamic>>[])
+                  .where(
+                      (exam) => widget.isOwner || exam['is_approved'] == true)
+                  .toList();
+
+              int getStatusWeight(Map<String, dynamic> exam) {
+                if (exam['results_released'] == true) return 3;
+                if (exam['is_approved'] == true) return 2;
+                return 1; // Draft
+              }
+
+              int getTypeWeight(Map<String, dynamic> exam) {
+                final title = exam['title'] ?? '';
+                if (title.contains('[Exam]')) return 1;
+                return 2; // Quiz
+              }
+
+              visibleExams.sort((a, b) {
+                // 1. Sort by Status (Drafts -> Approved -> Released)
+                final statusA = getStatusWeight(a);
+                final statusB = getStatusWeight(b);
+                if (statusA != statusB) {
+                  return statusA.compareTo(statusB);
+                }
+
+                // 2. Sort by Type (Exams -> Quizzes -> Other)
+                final typeA = getTypeWeight(a);
+                final typeB = getTypeWeight(b);
+                if (typeA != typeB) {
+                  return typeA.compareTo(typeB);
+                }
+
+                // 3. Sort by Date Created (Newest first)
+                final dateA =
+                    DateTime.tryParse(a['created_at']?.toString() ?? '') ??
+                        DateTime(2000);
+                final dateB =
+                    DateTime.tryParse(b['created_at']?.toString() ?? '') ??
+                        DateTime(2000);
+                return dateB.compareTo(dateA);
+              });
+
+              String getStatusGroup(Map<String, dynamic> exam) {
+                if (exam['results_released'] == true) return 'Released';
+                if (exam['is_approved'] == true) return 'Approved';
+                return 'Draft';
+              }
+
+              if (visibleExams.isEmpty) {
+                return ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  children: [
+                    SizedBox(
+                      height: (MediaQuery.sizeOf(context).height * 0.2)
+                          .clamp(24.0, 160.0),
+                    ),
+                    Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 320),
+                        child: Column(
+                          children: [
+                            Icon(Icons.library_books_outlined,
+                                size: 48,
+                                color:
+                                    isDark ? colors.secondary : colors.primary),
+                            const SizedBox(height: 16),
+                            const Text("No assessments yet",
+                                style: TextStyle(
+                                    fontSize: 18, fontWeight: FontWeight.w700)),
+                            const SizedBox(height: 6),
+                            Text(
+                              widget.isOwner
+                                  ? "Tap + to create a quiz or exam."
+                                  : "Your instructor's assessments will appear here.",
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: colors.onSurfaceVariant),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 );
-              },
-            ),
-        ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: _refreshExams,
-        child: FutureBuilder<List<Map<String, dynamic>>>(
-          future: _examsFuture,
-          builder: (context, snapshot) {
-            final exams = _exams ?? snapshot.data;
-            if (exams == null &&
-                snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
-            }
-
-            final visibleExams = (exams ?? const <Map<String, dynamic>>[])
-                .where((exam) => widget.isOwner || exam['is_approved'] == true)
-                .toList();
-
-            int getStatusWeight(Map<String, dynamic> exam) {
-              if (exam['results_released'] == true) return 3;
-              if (exam['is_approved'] == true) return 2;
-              return 1; // Draft
-            }
-
-            int getTypeWeight(Map<String, dynamic> exam) {
-              final title = exam['title'] ?? '';
-              if (title.contains('[Exam]')) return 1;
-              return 2; // Quiz
-            }
-
-            visibleExams.sort((a, b) {
-              // 1. Sort by Status (Drafts -> Approved -> Released)
-              final statusA = getStatusWeight(a);
-              final statusB = getStatusWeight(b);
-              if (statusA != statusB) {
-                return statusA.compareTo(statusB);
               }
 
-              // 2. Sort by Type (Exams -> Quizzes -> Other)
-              final typeA = getTypeWeight(a);
-              final typeB = getTypeWeight(b);
-              if (typeA != typeB) {
-                return typeA.compareTo(typeB);
-              }
-
-              // 3. Sort by Date Created (Newest first)
-              final dateA = DateTime.tryParse(a['created_at']?.toString() ?? '') ?? DateTime(2000);
-              final dateB = DateTime.tryParse(b['created_at']?.toString() ?? '') ?? DateTime(2000);
-              return dateB.compareTo(dateA);
-            });
-
-            String getStatusGroup(Map<String, dynamic> exam) {
-              if (exam['results_released'] == true) return 'Released';
-              if (exam['is_approved'] == true) return 'Approved';
-              return 'Draft';
-            }
-
-            if (visibleExams.isEmpty) {
               return ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
+                padding: const EdgeInsets.all(16),
                 children: [
-                  SizedBox(
-                    height: (MediaQuery.sizeOf(context).height * 0.2)
-                        .clamp(24.0, 160.0),
-                  ),
                   Center(
                     child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 320),
+                      constraints: const BoxConstraints(maxWidth: 900),
                       child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Icon(Icons.library_books_outlined,
-                              size: 48,
-                              color:
-                                  isDark ? colors.secondary : colors.primary),
-                          const SizedBox(height: 16),
-                          const Text("No assessments yet",
-                              style: TextStyle(
-                                  fontSize: 18, fontWeight: FontWeight.w700)),
-                          const SizedBox(height: 6),
-                          Text(
-                            widget.isOwner
-                                ? "Tap + to create a quiz or exam."
-                                : "Your instructor's assessments will appear here.",
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: colors.onSurfaceVariant),
-                          ),
+                          if (visibleExams
+                              .any((e) => getStatusGroup(e) == 'Draft')) ...[
+                            _buildSection(
+                                context,
+                                "Drafts",
+                                visibleExams
+                                    .where((e) => getStatusGroup(e) == 'Draft')
+                                    .toList()),
+                            const SizedBox(height: 24),
+                          ],
+                          if (visibleExams
+                              .any((e) => getStatusGroup(e) == 'Approved')) ...[
+                            _buildSection(
+                                context,
+                                "Approved",
+                                visibleExams
+                                    .where(
+                                        (e) => getStatusGroup(e) == 'Approved')
+                                    .toList()),
+                            const SizedBox(height: 24),
+                          ],
+                          if (visibleExams
+                              .any((e) => getStatusGroup(e) == 'Released')) ...[
+                            _buildSection(
+                                context,
+                                "Released",
+                                visibleExams
+                                    .where(
+                                        (e) => getStatusGroup(e) == 'Released')
+                                    .toList()),
+                            const SizedBox(height: 24),
+                          ],
                         ],
                       ),
                     ),
                   ),
                 ],
               );
-            }
-
-            return ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.all(16),
-              children: [
-                Center(
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 900),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
+            },
+          ),
+        ),
+        bottomNavigationBar: _selectingDrafts
+            ? SafeArea(
+                child: Material(
+                  color: colors.surfaceContainerLow,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Wrap(
+                      alignment: WrapAlignment.spaceBetween,
+                      spacing: 8,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        if (visibleExams.any((e) => getStatusGroup(e) == 'Draft')) ...[
-                          _buildSection(
-                              context,
-                              "Drafts",
-                              visibleExams
-                                  .where((e) => getStatusGroup(e) == 'Draft')
-                                  .toList()),
-                          const SizedBox(height: 24),
-                        ],
-                        if (visibleExams.any((e) => getStatusGroup(e) == 'Approved')) ...[
-                          _buildSection(
-                              context,
-                              "Approved",
-                              visibleExams
-                                  .where((e) => getStatusGroup(e) == 'Approved')
-                                  .toList()),
-                          const SizedBox(height: 24),
-                        ],
-                        if (visibleExams.any((e) => getStatusGroup(e) == 'Released')) ...[
-                          _buildSection(
-                              context,
-                              "Released",
-                              visibleExams
-                                  .where((e) => getStatusGroup(e) == 'Released')
-                                  .toList()),
-                          const SizedBox(height: 24),
-                        ],
+                        TextButton(
+                          onPressed:
+                              _deletingDrafts ? null : _cancelDraftSelection,
+                          child: const Text('Cancel'),
+                        ),
+                        TextButton(
+                          onPressed: _deletingDrafts
+                              ? null
+                              : () => setState(() {
+                                    _selectedDraftIds
+                                      ..clear()
+                                      ..addAll((_exams ?? [])
+                                          .where(_isDraft)
+                                          .map((e) => e['id'].toString())
+                                          .take(100));
+                                  }),
+                          child: const Text('Select all'),
+                        ),
+                        FilledButton.icon(
+                          onPressed:
+                              _deletingDrafts || _selectedDraftIds.isEmpty
+                                  ? null
+                                  : _deleteSelectedDrafts,
+                          style: FilledButton.styleFrom(
+                              backgroundColor: colors.error,
+                              foregroundColor: colors.onError),
+                          icon: _deletingDrafts
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.delete_outline),
+                          label: Text(_deletingDrafts
+                              ? 'Deleting...'
+                              : 'Delete (${_selectedDraftIds.length})'),
+                        ),
                       ],
                     ),
                   ),
                 ),
-              ],
-            );
-          },
-        ),
-      ),
-      floatingActionButton: widget.isOwner
-          ? FloatingActionButton(
-              onPressed: () async {
-                final result = await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => AIQuestionnaireScreen(
-                      type: 'Assessment',
-                      classId: widget.courseId,
+              )
+            : null,
+        floatingActionButton: widget.isOwner && !_selectingDrafts
+            ? FloatingActionButton(
+                onPressed: () async {
+                  final result = await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => AIQuestionnaireScreen(
+                        type: 'Assessment',
+                        classId: widget.courseId,
+                      ),
                     ),
-                  ),
-                );
-                if (result == true && mounted) {
-                  await _refreshExams();
-                }
-              },
-              backgroundColor: isDark ? colors.secondary : colors.primary,
-              foregroundColor: isDark ? colors.onSecondary : colors.onPrimary,
-              tooltip: 'Create assessment',
-              child: const Icon(Icons.add),
-            )
-          : null,
+                  );
+                  if (result == true && mounted) {
+                    await _refreshExams();
+                  }
+                },
+                backgroundColor: isDark ? colors.secondary : colors.primary,
+                foregroundColor: isDark ? colors.onSecondary : colors.onPrimary,
+                tooltip: 'Create assessment',
+                child: const Icon(Icons.add),
+              )
+            : null,
+      ),
     );
   }
 
@@ -936,7 +1171,20 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
     if (isoDate == null || isoDate.isEmpty) return 'Unknown date';
     final date = DateTime.tryParse(isoDate);
     if (date == null) return 'Unknown date';
-    final months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    final months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
     return '${months[date.month - 1]} ${date.day}, ${date.year}';
   }
 
@@ -1064,10 +1312,8 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
 
             final isExam = (exam['title'] ?? '').contains('[Exam]');
             final examType = isExam ? 'Exam' : 'Quiz';
-            
-            final itemColor = isExam
-                ? colors.tertiary
-                : actionColor;
+
+            final itemColor = isExam ? colors.tertiary : actionColor;
 
             // Clean title for display by removing tags
             String displayTitle = exam['title'] ?? 'Untitled';
@@ -1109,8 +1355,8 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                     ? onActionColor
                     : colors.onSurfaceVariant;
 
-            void openResults() {
-              Navigator.push(
+            Future<void> openResults() async {
+              await Navigator.push(
                 context,
                 MaterialPageRoute(
                   builder: (context) => ExamResultsScreen(
@@ -1121,6 +1367,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                   ),
                 ),
               );
+              if (mounted) await _refreshExams();
             }
 
             void openStudentResult() {
@@ -1144,9 +1391,28 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                 borderRadius: BorderRadius.circular(16),
               ),
               child: InkWell(
-                onTap: widget.isOwner
-                    ? openResults
-                    : (isReleased ? openStudentResult : null),
+                onLongPress:
+                    widget.isOwner && _isDraft(exam) && !_deletingDrafts
+                        ? () => setState(() {
+                              _selectingDrafts = true;
+                              if (_selectedDraftIds.length < 100) {
+                                _selectedDraftIds.add(exam['id'].toString());
+                              }
+                            })
+                        : null,
+                onTap: _selectingDrafts
+                    ? (_isDraft(exam) && !_deletingDrafts
+                        ? () => setState(() {
+                              final id = exam['id'].toString();
+                              if (!_selectedDraftIds.remove(id) &&
+                                  _selectedDraftIds.length < 100) {
+                                _selectedDraftIds.add(id);
+                              }
+                            })
+                        : null)
+                    : widget.isOwner
+                        ? openResults
+                        : (isReleased ? openStudentResult : null),
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
                   child: Column(
@@ -1155,20 +1421,34 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         minLeadingWidth: 40,
-                        leading: Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            color: itemColor.withValues(alpha: 0.12),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Icon(
-                            isExam
-                                ? Icons.assignment_outlined
-                                : Icons.quiz_outlined,
-                            color: itemColor,
-                          ),
-                        ),
+                        leading: _selectingDrafts && _isDraft(exam)
+                            ? Checkbox(
+                                value: _selectedDraftIds.contains(exam['id']),
+                                onChanged: _deletingDrafts
+                                    ? null
+                                    : (selected) => setState(() {
+                                          final id = exam['id'].toString();
+                                          if (selected == true &&
+                                              _selectedDraftIds.length < 100) {
+                                            _selectedDraftIds.add(id);
+                                          } else {
+                                            _selectedDraftIds.remove(id);
+                                          }
+                                        }))
+                            : Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: itemColor.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Icon(
+                                  isExam
+                                      ? Icons.assignment_outlined
+                                      : Icons.quiz_outlined,
+                                  color: itemColor,
+                                ),
+                              ),
                         title: Text(
                           displayTitle,
                           maxLines: 2,
@@ -1185,11 +1465,14 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                             Row(
                               children: [
                                 Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 6, vertical: 2),
                                   decoration: BoxDecoration(
                                     color: itemColor.withValues(alpha: 0.1),
                                     borderRadius: BorderRadius.circular(4),
-                                    border: Border.all(color: itemColor.withValues(alpha: 0.2)),
+                                    border: Border.all(
+                                        color:
+                                            itemColor.withValues(alpha: 0.2)),
                                   ),
                                   child: Text(
                                     examType,
@@ -1205,7 +1488,8 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                                   _formatDate(exam['created_at']?.toString()),
                                   style: TextStyle(
                                     fontSize: 12,
-                                    color: colors.onSurfaceVariant.withValues(alpha: 0.8),
+                                    color: colors.onSurfaceVariant
+                                        .withValues(alpha: 0.8),
                                   ),
                                 ),
                               ],
@@ -1224,7 +1508,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                             ),
                           ],
                         ),
-                        trailing: widget.isOwner
+                        trailing: widget.isOwner && !_selectingDrafts
                             ? PopupMenuButton<String>(
                                 tooltip: 'More assessment actions',
                                 icon: Icon(Icons.more_vert,
@@ -1247,6 +1531,9 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                                             exam['template_id']?.toString(),
                                       );
                                       break;
+                                    case 'unrelease':
+                                      _unreleaseExamResults(exam['id']);
+                                      break;
                                     case 'unapprove':
                                       _unapproveExam(exam['id']);
                                       break;
@@ -1260,18 +1547,25 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                                     value: 'export',
                                     child: Text('Export questionnaire'),
                                   ),
-                                  const PopupMenuItem(
+                                  PopupMenuItem(
+                                    enabled: isApproved,
                                     value: 'print',
-                                    child: Text('Print answer sheets'),
+                                    child: const Text('Print answer sheets'),
                                   ),
-                                  if (isApproved && !isReleased)
+                                  if (isReleased)
+                                    const PopupMenuItem(
+                                        value: 'unrelease',
+                                        child: Text('Unrelease results')),
+                                  if (isApproved)
                                     const PopupMenuItem(
                                       value: 'unapprove',
-                                      child: Text('Return to draft'),
+                                      child:
+                                          Text('Unapprove / return to draft'),
                                     ),
                                   PopupMenuItem(
                                     value: 'delete',
-                                    enabled: _deletingExamId != exam['id'],
+                                    enabled: _isDraft(exam) &&
+                                        _deletingExamId != exam['id'],
                                     child: const Text('Delete assessment'),
                                   ),
                                 ],
@@ -1283,106 +1577,108 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                                 color: colors.onSurfaceVariant,
                               ),
                       ),
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 5),
-                          decoration: BoxDecoration(
-                            color: statusBackground,
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            statusLabel,
-                            style: TextStyle(
-                              color: statusForeground,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
-                        if (hasMultipleSets)
-                          Text('Sets A & B',
-                              style: TextStyle(
-                                  fontSize: 12,
-                                  color: colors.onSurfaceVariant)),
-                        if (submissions > 0)
-                          Text(
-                            '$submissions submitted • ${average.toStringAsFixed(1)}% avg',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: colors.onSurfaceVariant,
-                            ),
-                          ),
-                      ],
-                    ),
-                    if (widget.isOwner) ...[
-                      const Divider(height: 24),
+                      const SizedBox(height: 10),
                       Wrap(
-                        spacing: 6,
-                        runSpacing: 4,
+                        spacing: 8,
+                        runSpacing: 8,
                         crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
-                          TextButton.icon(
-                            onPressed: () =>
-                                _reviewExam(exam['id'], displayTitle),
-                            icon:
-                                const Icon(Icons.visibility_outlined, size: 18),
-                            label: const Text('Review'),
-                            style: TextButton.styleFrom(
-                                foregroundColor: actionColor),
-                          ),
-                          TextButton.icon(
-                            onPressed: openResults,
-                            icon:
-                                const Icon(Icons.bar_chart_outlined, size: 18),
-                            label: const Text('Results'),
-                            style: TextButton.styleFrom(
-                                foregroundColor: actionColor),
-                          ),
-                          if (!isApproved)
-                            FilledButton.icon(
-                              onPressed: () => _approveExam(exam['id']),
-                              icon: const Icon(Icons.check, size: 18),
-                              label: const Text('Approve'),
-                              style: FilledButton.styleFrom(
-                                backgroundColor: actionColor,
-                                foregroundColor: onActionColor,
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 5),
+                            decoration: BoxDecoration(
+                              color: statusBackground,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              statusLabel,
+                              style: TextStyle(
+                                color: statusForeground,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700,
                               ),
-                            )
-                          else if (!isReleased)
-                            FilledButton.icon(
-                              onPressed: () => _releaseExamResults(exam['id']),
-                              icon:
-                                  const Icon(Icons.publish_outlined, size: 18),
-                              label: const Text('Release'),
-                              style: FilledButton.styleFrom(
-                                backgroundColor: actionColor,
-                                foregroundColor: onActionColor,
+                            ),
+                          ),
+                          if (hasMultipleSets)
+                            Text('Sets A & B',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    color: colors.onSurfaceVariant)),
+                          if (submissions > 0)
+                            Text(
+                              '$submissions submitted • ${average.toStringAsFixed(1)}% avg',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colors.onSurfaceVariant,
                               ),
                             ),
                         ],
                       ),
-                    ] else if (isReleased) ...[
-                      const Divider(height: 24),
-                      TextButton.icon(
-                        onPressed: () => _reviewExam(exam['id'], displayTitle),
-                        icon: const Icon(Icons.fact_check_outlined, size: 18),
-                        label: const Text('Review answers'),
-                        style:
-                            TextButton.styleFrom(foregroundColor: actionColor),
-                      ),
+                      if (widget.isOwner && !_selectingDrafts) ...[
+                        const Divider(height: 24),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 4,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            TextButton.icon(
+                              onPressed: () =>
+                                  _reviewExam(exam['id'], displayTitle),
+                              icon: const Icon(Icons.visibility_outlined,
+                                  size: 18),
+                              label: const Text('Review'),
+                              style: TextButton.styleFrom(
+                                  foregroundColor: actionColor),
+                            ),
+                            TextButton.icon(
+                              onPressed: openResults,
+                              icon: const Icon(Icons.bar_chart_outlined,
+                                  size: 18),
+                              label: const Text('Results'),
+                              style: TextButton.styleFrom(
+                                  foregroundColor: actionColor),
+                            ),
+                            if (!isApproved)
+                              FilledButton.icon(
+                                onPressed: () => _approveExam(exam['id']),
+                                icon: const Icon(Icons.check, size: 18),
+                                label: const Text('Approve'),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: actionColor,
+                                  foregroundColor: onActionColor,
+                                ),
+                              )
+                            else if (!isReleased)
+                              FilledButton.icon(
+                                onPressed: () =>
+                                    _releaseExamResults(exam['id']),
+                                icon: const Icon(Icons.publish_outlined,
+                                    size: 18),
+                                label: const Text('Release'),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: actionColor,
+                                  foregroundColor: onActionColor,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ] else if (!widget.isOwner && isReleased) ...[
+                        const Divider(height: 24),
+                        TextButton.icon(
+                          onPressed: () =>
+                              _reviewExam(exam['id'], displayTitle),
+                          icon: const Icon(Icons.fact_check_outlined, size: 18),
+                          label: const Text('Review answers'),
+                          style: TextButton.styleFrom(
+                              foregroundColor: actionColor),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
-            ),
-          );
-        }),
+            );
+          }),
       ],
     );
   }

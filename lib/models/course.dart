@@ -190,6 +190,15 @@ class Course {
         streamPosts = streamPosts ?? [],
         enrolledStudents = enrolledStudents ?? [];
 
+  Map<String, dynamic> toCacheMap() => {
+        'id': id,
+        'code': code,
+        'name': name,
+        'profiles': {'name': instructor},
+        'average_grade': averageGrade,
+        '_is_owner': isOwner,
+      };
+
   factory Course.fromMap(Map<String, dynamic> map, {required bool isOwner}) {
     final String courseId = map['id']?.toString() ?? '';
     final gradient = CheckMateUi.generateGradient(courseId);

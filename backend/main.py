@@ -10,6 +10,8 @@ MAINTENANCE NOTES:
 """
 
 import asyncio
+import base64
+import hashlib
 import html
 import hmac
 import os
@@ -18,6 +20,9 @@ import logging
 import uuid
 import time
 import re
+import tempfile
+from pathlib import Path
+from analysis_cache import AnalysisCache, PreparationQueue, fingerprint
 from io import BytesIO
 from fastapi import FastAPI, HTTPException, Body, Depends, Header, UploadFile, File, Form
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
@@ -309,6 +314,7 @@ class SaveDraftRequest(BaseModel):
     questions: list
     template_id: str | None = None
     has_multiple_sets: bool = False
+    draft_id: uuid.UUID | None = None
 
 class SyncResultItem(BaseModel):
     sheet_id: str
@@ -321,6 +327,7 @@ class BatchSyncRequest(BaseModel):
     results: list[SyncResultItem]
 
 class AnalysisRequest(BaseModel):
+    regenerate: bool = False
     exam_id: str
     class_id: str | None = None
 
@@ -796,50 +803,84 @@ async def generate_exam_stream(
 
 
 @app.post("/save-draft")
-async def save_draft(request: SaveDraftRequest):
-    """Bypasses RLS restrictions for saving draft assessments."""
+async def save_draft(request: SaveDraftRequest, user=Depends(get_current_user)):
+    """Save instructor drafts, including on databases predating template_id."""
     if not supabase:
-        raise HTTPException(status_code=500, detail="Database unconfigured")
+        raise HTTPException(status_code=503, detail="Draft saving is temporarily unavailable")
+    course = _one("classes", "id", request.class_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="Class not found")
+    if course.get("instructor_id") != _require_user(user):
+        raise HTTPException(status_code=403, detail="Instructor access required")
+    if not request.questions or len(request.questions) > 50:
+        raise HTTPException(status_code=422, detail="Provide between 1 and 50 questions")
+    for q in request.questions:
+        if not isinstance(q, dict) or q.get("questionType") not in ("MCQ", "TF"):
+            raise HTTPException(status_code=422, detail="Only MCQ and TF questions are supported")
+        if not str(q.get("questionText") or q.get("text") or "").strip():
+            raise HTTPException(status_code=422, detail="Question text is required")
+        answer = str(q.get("correctAnswer", "")).upper()
+        if answer not in (("A", "B", "C", "D") if q["questionType"] == "MCQ" else ("A", "B", "TRUE", "FALSE", "T", "F")):
+            raise HTTPException(status_code=422, detail="A valid answer key is required")
+    mcq_count = sum(q['questionType'] == 'MCQ' for q in request.questions)
+    tf_count = len(request.questions) - mcq_count
+    derived_template = select_template(mcq_count, tf_count)
+    template_id = request.template_id or derived_template
+    exam_id = str(request.draft_id or uuid.uuid4())
+    exam = {
+        "id": exam_id, "class_id": request.class_id,
+        "title": f"[{request.assessment_type}] {request.title}",
+        "is_approved": False, "status": "Draft", "template_id": template_id,
+        "has_multiple_sets": request.has_multiple_sets,
+        "total_questions": len(request.questions), "mcq_count": mcq_count, "tf_count": tf_count,
+    }
+    # A retried request after a lost response must return the same saved draft.
+    existing = _one("exams", "id", exam_id) if request.draft_id else None
+    if existing:
+        if (existing.get("class_id") != request.class_id or existing.get("title") != exam["title"]
+                or existing.get("has_multiple_sets", False) != request.has_multiple_sets):
+            raise HTTPException(status_code=409, detail="Draft identifier is already in use")
+        stored = supabase.table("questions").select("*").eq("exam_id", exam_id).order("id").execute().data or []
+        expected = [(_stored_question_text(q), str(q['correctAnswer']), q['questionType']) for q in request.questions]
+        actual = [(q['question_text'], q['correct_answer'], q['question_type']) for q in stored]
+        if actual != expected:
+            raise HTTPException(status_code=409, detail="Draft saving is incomplete. Try again shortly")
+        return {"status": "success", "exam_id": exam_id, "exam": existing}
+    inserted = False
     try:
-        mcq_count = sum(1 for q in request.questions if q.get('questionType') == 'MCQ')
-        tf_count = sum(1 for q in request.questions if q.get('questionType') == 'TF')
-        template_id = request.template_id or select_template(mcq_count, tf_count)
-
-        # 1. Insert Exam into Supabase
-        res = supabase.table("exams").insert({
-            "class_id": request.class_id,
-            "title": f"[{request.assessment_type}] {request.title}",
-            "is_approved": False,
-            "status": "Draft",
-            "template_id": template_id,
-            "has_multiple_sets": request.has_multiple_sets,
-            "total_questions": len(request.questions),
-            "mcq_count": mcq_count,
-            "tf_count": tf_count,
-        }).execute()
-        
+        try:
+            res = supabase.table("exams").insert(exam).execute()
+        except Exception as exc:
+            # Retry only the known missing-column error, never a general DB failure.
+            message = str(exc)
+            if "template_id" not in message or not any(code in message for code in ("42703", "PGRST204")):
+                raise
+            if template_id != derived_template:
+                raise HTTPException(status_code=409, detail="This answer-sheet template needs a database update")
+            legacy_exam = {k: v for k, v in exam.items() if k != "template_id"}
+            res = supabase.table("exams").insert(legacy_exam).execute()
         if not res.data:
-            raise HTTPException(status_code=500, detail="Failed to insert exam record")
-            
-        exam_id = res.data[0]['id']
-        
-        # 2. Insert Questions into Supabase
-        if request.questions:
-            base_millis = time.time_ns() // 1_000_000
-            inserts = [{
-                "id": _ordered_question_id(index, base_millis),
-                "exam_id": exam_id,
-                "question_text": _stored_question_text(q),
-                "correct_answer": str(q.get('correctAnswer', 'A')),
-                "question_type": str(q.get('questionType', 'MCQ')),
-                "topic_tag": str(q.get('topicTag', request.title))
-            } for index, q in enumerate(request.questions)]
-            supabase.table("questions").insert(inserts).execute()
-            
-        return {"status": "success", "exam_id": exam_id}
-    except Exception as e:
-        logger.error(f"Save draft error: {e}")
-        raise HTTPException(status_code=500, detail=f"Database save error: {str(e)}")
+            raise RuntimeError("No saved draft returned")
+        inserted = True
+        base_millis = time.time_ns() // 1_000_000
+        inserts = [{
+            "id": _ordered_question_id(index, base_millis), "exam_id": exam_id,
+            "question_text": _stored_question_text(q),
+            "correct_answer": str(q['correctAnswer']), "question_type": q['questionType'],
+            "topic_tag": str(q.get('topicTag') or request.title),
+        } for index, q in enumerate(request.questions)]
+        supabase.table("questions").insert(inserts).execute()
+        return {"status": "success", "exam_id": exam_id, "exam": res.data[0]}
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Draft save failed")
+        if inserted:
+            try:
+                supabase.table("exams").delete().eq("id", exam_id).eq("is_approved", False).execute()
+            except Exception:
+                logger.exception("Could not remove incomplete draft")
+        raise HTTPException(status_code=503, detail="Could not save the draft. Your questions are still available; please retry")
 
 @app.get("/get-exam-questions/{exam_id}")
 async def get_exam_questions(exam_id: str, user=Depends(get_current_user)):
@@ -877,24 +918,33 @@ async def update_question(question_id: str, payload: QuestionUpdatePayload):
         logger.error(f"Update question error: {e}")
         raise HTTPException(status_code=500, detail=f"Database update error: {str(e)}")
 
+class DraftDeletionPayload(BaseModel):
+    exam_ids: list[str]
+
+
+@app.post("/delete-draft-exams")
+async def delete_draft_exams(payload: DraftDeletionPayload, user=Depends(get_current_user)):
+    """Validate the entire selection before deleting unused drafts in one query."""
+    ids = list(dict.fromkeys(payload.exam_ids))
+    if not ids or len(ids) > 100:
+        raise HTTPException(status_code=422, detail="Select between 1 and 100 drafts")
+    for exam_id in ids:
+        exam = _instructor_exam(exam_id, user)
+        if exam.get("is_approved") or exam.get("results_released"):
+            raise HTTPException(status_code=409, detail="Only drafts can be deleted. Refresh the assessment list.")
+    sheets = supabase.table("answer_sheets").select("id").in_("exam_id", ids).limit(1).execute().data
+    if sheets:
+        raise HTTPException(status_code=409, detail="Drafts with generated answer sheets cannot be deleted. Saved sheets and grades are protected.")
+    # Questions cascade on exam deletion. Existing answer-sheet foreign keys
+    # prevent deletion if a sheet is created concurrently.
+    deleted = supabase.table("exams").delete().in_("id", ids).eq(
+        "is_approved", False).eq("results_released", False).execute().data or []
+    return {"status": "success", "deleted_ids": [row["id"] for row in deleted]}
+
+
 @app.delete("/delete-exam/{exam_id}")
-async def delete_exam_endpoint(exam_id: str):
-    """Delete an exam and its questions bypassing RLS."""
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database unconfigured")
-    try:
-        sheet_res = supabase.table("answer_sheets").select("id").eq("exam_id", exam_id).execute()
-        sheet_ids = [s['id'] for s in (sheet_res.data or [])]
-        for s_id in sheet_ids:
-            supabase.table("grades").delete().eq("sheet_id", s_id).execute()
-        supabase.table("answer_sheets").delete().eq("exam_id", exam_id).execute()
-        
-        supabase.table("questions").delete().eq("exam_id", exam_id).execute()
-        supabase.table("exams").delete().eq("id", exam_id).execute()
-        return {"status": "success"}
-    except Exception as e:
-        logger.error(f"Delete exam error: {e}")
-        raise HTTPException(status_code=500, detail=f"Delete exam error: {str(e)}")
+async def delete_exam_endpoint(exam_id: str, user=Depends(get_current_user)):
+    return await delete_draft_exams(DraftDeletionPayload(exam_ids=[exam_id]), user)
 
 @app.get("/get-exams/{class_id}")
 async def get_exams(class_id: str, user=Depends(get_current_user)):
@@ -916,65 +966,60 @@ async def get_exams(class_id: str, user=Depends(get_current_user)):
         if not is_instructor:
             query = query.eq("is_approved", True)
         res = query.order("created_at", desc=True).execute()
-        return res.data or []
+        rows = res.data or []
+        if is_instructor:
+            for exam in rows:
+                graded = [sheet['id'] for sheet in exam.get('answer_sheets') or [] if sheet.get('grades')]
+                if graded:
+                    preparation_queue.schedule(exam['id'], graded)
+        return rows
     except Exception as e:
         logger.error(f"Get exams error: {e}")
         raise HTTPException(status_code=500, detail=f"Database query error: {str(e)}")
 
 @app.post("/approve-exam/{exam_id}")
-async def approve_exam(exam_id: str):
-    """Approve an exam, locking content and marking it Ready bypassing RLS."""
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database unconfigured")
-    try:
-        res = supabase.table("exams").update({
-            "is_approved": True,
-            "status": "Ready"
-        }).eq("id", exam_id).execute()
-        
-        if not res.data:
-            raise HTTPException(status_code=404, detail="Exam not found")
-        return {"status": "success", "exam_id": exam_id, "is_approved": True}
-    except Exception as e:
-        logger.error(f"Approve exam error: {e}")
-        raise HTTPException(status_code=500, detail=f"Approve exam error: {str(e)}")
+async def approve_exam(exam_id: str, user=Depends(get_current_user)):
+    _instructor_exam(exam_id, user)
+    updated = supabase.table("exams").update({"is_approved": True, "status": "Ready"}).eq("id", exam_id).eq("results_released", False).execute().data
+    if not updated:
+        raise HTTPException(status_code=409, detail="Assessment status changed. Refresh and try again.")
+    return {"status": "success", "exam_id": exam_id, "is_approved": True, "exam": updated[0]}
+
 
 @app.post("/unapprove-exam/{exam_id}")
-async def unapprove_exam(exam_id: str):
-    """Unapprove an exam so it returns to Draft status."""
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database unconfigured")
-    try:
-        res = supabase.table("exams").update({
-            "is_approved": False,
-            "status": "Draft"
-        }).eq("id", exam_id).execute()
-        
-        if not res.data:
-            raise HTTPException(status_code=404, detail="Exam not found")
-        return {"status": "success", "exam_id": exam_id, "is_approved": False}
-    except Exception as e:
-        logger.error(f"Unapprove exam error: {e}")
-        raise HTTPException(status_code=500, detail=f"Unapprove exam error: {str(e)}")
+async def unapprove_exam(exam_id: str, user=Depends(get_current_user)):
+    _instructor_exam(exam_id, user)
+    updated = supabase.table("exams").update({
+        "is_approved": False, "results_released": False, "status": "Draft"
+    }).eq("id", exam_id).execute().data
+    if not updated:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    return {"status": "success", "exam_id": exam_id, "is_approved": False, "results_released": False, "exam": updated[0]}
+
 
 @app.post("/release-results/{exam_id}")
 async def release_results(exam_id: str, user=Depends(get_current_user)):
-    """Release assessment results to students bypassing RLS."""
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database unconfigured")
-    _instructor_exam(exam_id, user)
-    try:
-        res = supabase.table("exams").update({
-            "results_released": True,
-            "status": "Published"
-        }).eq("id", exam_id).execute()
-        
-        if not res.data:
-            raise HTTPException(status_code=404, detail="Exam not found")
-        return {"status": "success", "exam_id": exam_id, "results_released": True}
-    except Exception as e:
-        logger.error(f"Release results error: {e}")
-        raise HTTPException(status_code=500, detail=f"Release results error: {str(e)}")
+    exam = _instructor_exam(exam_id, user)
+    if not exam.get("is_approved"):
+        raise HTTPException(status_code=409, detail="Approve the assessment before releasing results")
+    updated = supabase.table("exams").update({
+        "results_released": True, "status": "Published"
+    }).eq("id", exam_id).eq("is_approved", True).execute().data
+    if not updated:
+        raise HTTPException(status_code=409, detail="Assessment approval changed. Refresh and try again.")
+    preparation_queue.schedule(exam_id, [], overview=True)
+    return {"status": "success", "exam_id": exam_id, "results_released": True, "exam": updated[0]}
+
+
+@app.post("/unrelease-results/{exam_id}")
+async def unrelease_results(exam_id: str, user=Depends(get_current_user)):
+    exam = _instructor_exam(exam_id, user)
+    updated = supabase.table("exams").update({
+        "results_released": False, "status": "Ready" if exam.get("is_approved") else "Draft"
+    }).eq("id", exam_id).eq("is_approved", bool(exam.get("is_approved"))).execute().data
+    if not updated:
+        raise HTTPException(status_code=409, detail="Assessment approval changed. Refresh and try again.")
+    return {"status": "success", "exam_id": exam_id, "results_released": False, "exam": updated[0]}
 
 @app.delete("/delete-course/{class_id}")
 async def delete_course(class_id: str):
@@ -1124,6 +1169,7 @@ async def batch_sync(sync_data: BatchSyncRequest, user=Depends(get_current_user)
         saved = supabase.rpc("save_grade_session", {"p_results": saved_results}).execute()
         if saved.data != len(saved_results):
             raise HTTPException(status_code=500, detail="Incomplete session save")
+        preparation_queue.schedule(sync_data.exam_id, [row['sheet_id'] for row in saved_results])
         return {"status": "success", "saved_count": len(saved_results)}
     except HTTPException:
         raise
@@ -1146,7 +1192,7 @@ def _one(table, key, value, columns="*"):
 
 def _instructor_exam(exam_id, user):
     user_id = _require_user(user)
-    exam = _one("exams", "id", exam_id, "id, title, class_id, results_released, classes(instructor_id)")
+    exam = _one("exams", "id", exam_id, "id, title, class_id, is_approved, results_released, classes(instructor_id)")
     if not exam:
         raise HTTPException(status_code=404, detail="Assessment not found")
     course = exam.get("classes") or {}
@@ -1247,95 +1293,182 @@ async def export_scores(exam_id: str, user=Depends(get_current_user)):
         raise HTTPException(status_code=500, detail="Could not export scores")
 
 
-@app.post("/analyze-class")
-async def analyze_class(request: AnalysisRequest, user=Depends(get_current_user)):
-    """Analyze persisted, locally graded item results for one assessment."""
-    exam = _instructor_exam(request.exam_id, user)
-    try:
+_cache_secret = SUPABASE_SERVICE_ROLE_KEY or SUPABASE_KEY
+analysis_cache = AnalysisCache(
+    Path(tempfile.gettempdir()) / "checkmate_analysis_v1.sqlite3" if SUPABASE_URL else None,
+    encryption_key=base64.urlsafe_b64encode(hashlib.sha256(_cache_secret.encode()).digest()) if _cache_secret else None,
+)
+
+
+def _analysis_key(kind, identity):
+    return [SUPABASE_URL or f"offline-{id(supabase)}", kind, identity]
+
+
+def _grade_version(grade):
+    return {key: value for key, value in grade.items() if key != "student_insight"}
+
+
+async def _class_analysis(exam, regenerate=False):
+    exam_id = exam['id']
+    def snapshot():
         sheets = _paged(lambda: supabase.table("answer_sheets").select(
-            "id, grades(*)"
-        ).eq("exam_id", request.exam_id).order("id"))
-        grades = []
-        questions = _questions_for_exam(request.exam_id)
-        for sheet in sheets:
-            relation = sheet.get("grades") or []
-            related_grades = relation if isinstance(relation, list) else [relation]
-            if related_grades:
-                grades.append(enrich_answers(_latest_grade(related_grades), questions))
-        if not grades:
-            return {"exam_id": request.exam_id, "status": "no_results", "sample_count": 0,
-                    "analysis": None}
-        evidence = {
-            "assessment": exam.get("title"), "sample_count": len(grades),
-            "average_percentage": round(sum(grade_context(g)["percentage"] for g in grades) / len(grades), 1),
-            "topics": topic_counts(grades), "questions": question_counts(grades),
-            # Representative item outcomes make the source of the counts auditable.
-            "sample_item_results": [item for grade in grades[:20]
-                                    for item in grade.get("answers", [])][:100],
-        }
-        metrics = {key: evidence[key] for key in ("average_percentage", "topics", "questions")}
+            "id, grades(*)").eq("exam_id", exam_id).order("id"))
+        return sheets, _questions_for_exam(exam_id)
+    sheets, questions = await asyncio.to_thread(snapshot)
+    grades = []
+    for sheet in sheets:
+        relation = sheet.get("grades") or []
+        related = relation if isinstance(relation, list) else [relation]
+        if related:
+            grades.append(enrich_answers(_latest_grade(related), questions))
+    if not grades:
+        return {"exam_id": exam_id, "status": "no_results", "sample_count": 0, "analysis": None}
+    version = fingerprint({"assessment": exam.get("title"), "questions": questions,
+                           "grades": sorted((_grade_version(g) for g in grades), key=lambda g: str(g.get('id')))})
+    evidence = {
+        "assessment": exam.get("title"), "sample_count": len(grades),
+        "average_percentage": round(sum(grade_context(g)["percentage"] for g in grades) / len(grades), 1),
+        "topics": topic_counts(grades), "questions": question_counts(grades),
+        "sample_item_results": [item for grade in grades[:20] for item in grade.get("answers", [])][:100],
+    }
+    metrics = {key: evidence[key] for key in ("average_percentage", "topics", "questions")}
+
+    async def generate():
         try:
             analysis = await generate_structured_response(
                 system_prompt=SYSTEM_CLASS_ANALYSIS,
                 user_prompt=get_class_analysis_prompt(json.dumps(evidence)),
-                schema_class=ClassAnalysisResponse,
-                model_override=HF_MODEL_REASONING,
-            )
-            return {"exam_id": request.exam_id, "status": "complete", "sample_count": len(grades),
-                    "source": "ai", "metrics": metrics,
-                    "analysis": analysis.model_dump(exclude={"reasoning"})}
+                schema_class=ClassAnalysisResponse, model_override=HF_MODEL_REASONING)
+            source, value = "ai", analysis.model_dump(exclude={"reasoning"})
         except Exception as exc:
             logger.warning("Class AI unavailable: %s", exc)
-            return {"exam_id": request.exam_id, "status": "complete", "sample_count": len(grades),
-                    "source": "summary", "metrics": metrics,
-                    "analysis": class_summary(grades)}
+            source, value = "summary", class_summary(grades)
+        return {"exam_id": exam_id, "status": "complete", "sample_count": len(grades),
+                "source": source, "metrics": metrics, "analysis": value}
+
+    return await analysis_cache.get_or_create(_analysis_key('class', exam_id), version, generate, force=regenerate)
+
+
+@app.post("/analyze-class")
+async def analyze_class(request: AnalysisRequest, user=Depends(get_current_user)):
+    exam = _instructor_exam(request.exam_id, user)
+    try:
+        result = await _class_analysis(exam, request.regenerate)
+        # Recheck permission and release state after a potentially long AI call.
+        exam = _instructor_exam(request.exam_id, user)
+        return {**result, "results_released": bool(exam.get('results_released')),
+                "is_approved": bool(exam.get('is_approved'))}
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("Class analysis data error: %s", exc)
+        logger.exception("Class analysis data error: %s", exc)
         raise HTTPException(status_code=500, detail="Could not load saved class results")
 
 
-@app.post("/student-insight")
-async def student_insight(request: StudentInsightRequest, user=Depends(get_current_user)):
-    """Personal feedback for one persisted sheet, subject to release/access rules."""
+def _personal_access(request, user):
     user_id = _require_user(user)
-    try:
-        sheet = _one("answer_sheets", "id", request.sheet_id)
-        if not sheet or sheet.get("exam_id") != request.exam_id:
-            raise HTTPException(status_code=404, detail="Answer sheet not found")
-        exam = _one("exams", "id", request.exam_id, "id, title, results_released, classes(instructor_id)")
-        if not exam:
-            raise HTTPException(status_code=404, detail="Assessment not found")
-        instructor_id = (exam.get("classes") or {}).get("instructor_id")
-        if user_id != instructor_id and not (user_id == sheet.get("student_id") and exam.get("results_released")):
-            raise HTTPException(status_code=403, detail="Result is not available to this user")
-        grades = _grade_rows_for_sheet(request.sheet_id)
-        if not grades:
-            raise HTTPException(status_code=404, detail="Saved result not found")
-        grade = _latest_grade(grades)
-        if grade.get("student_insight") and not request.regenerate:
-            return grade["student_insight"]
-        grade = enrich_answers(grade, _questions_for_exam(request.exam_id))
-        evidence = {"assessment": exam.get("title"), **grade_context(grade)}
+    sheet = _one("answer_sheets", "id", request.sheet_id)
+    if not sheet or sheet.get("exam_id") != request.exam_id:
+        raise HTTPException(status_code=404, detail="Answer sheet not found")
+    exam = _one("exams", "id", request.exam_id, "id, title, results_released, classes(instructor_id)")
+    if not exam:
+        raise HTTPException(status_code=404, detail="Assessment not found")
+    instructor = (exam.get('classes') or {}).get('instructor_id')
+    if user_id != instructor and not (user_id == sheet.get('student_id') and exam.get('results_released')):
+        raise HTTPException(status_code=403, detail="Result is not available to this user")
+    return exam
+
+
+async def _personal_analysis(exam, sheet_id, regenerate=False):
+    grades = await asyncio.to_thread(_grade_rows_for_sheet, sheet_id)
+    if not grades:
+        raise HTTPException(status_code=404, detail="Saved result not found")
+    raw_grade = _latest_grade(grades)
+    questions = await asyncio.to_thread(_questions_for_exam, exam['id'])
+    grade = enrich_answers(raw_grade, questions)
+    version = fingerprint({"assessment": exam.get('title'), "grade": _grade_version(grade)})
+    cached = grade.get('student_insight')
+    if cached and not regenerate and cached.get('fingerprint', version) == version:
+        if cached.get('source') != 'summary' or time.time() - cached.get('generated_at', 0) < 60:
+            return cached
+    evidence = {"assessment": exam.get("title"), **grade_context(grade)}
+
+    async def generate():
         try:
             analysis = await generate_structured_response(
                 system_prompt=SYSTEM_STUDENT_MENTOR,
                 user_prompt=get_student_insight_prompt(json.dumps(evidence)),
-                schema_class=StudentInsightResponse,
-                model_override=HF_MODEL_REASONING,
-            )
-            result = {"source": "ai", "insight": analysis.model_dump(exclude={"reasoning"})}
+                schema_class=StudentInsightResponse, model_override=HF_MODEL_REASONING)
+            source, value = "ai", analysis.model_dump(exclude={"reasoning"})
         except Exception as exc:
             logger.warning("Student AI unavailable: %s", exc)
-            result = {"source": "summary", "insight": student_summary(grade)}
-        supabase.table("grades").update({"student_insight": result}).eq("id", grade["id"]).execute()
+            source, value = "summary", student_summary(grade)
+        result = {"source": source, "insight": value, "fingerprint": version, "generated_at": time.time()}
+        # A later scan can update the same grade while AI is generating. Never
+        # attach the old feedback to that newer deterministic evaluation.
+        current = await asyncio.to_thread(_grade_rows_for_sheet, sheet_id)
+        if not current:
+            raise HTTPException(status_code=409, detail="Result changed while preparing feedback")
+        latest = enrich_answers(_latest_grade(current), await asyncio.to_thread(_questions_for_exam, exam['id']))
+        current_version = fingerprint({"assessment": exam.get('title'), "grade": _grade_version(latest)})
+        if current_version != version:
+            raise HTTPException(status_code=409, detail="Result changed. Retry analysis.")
+        def persist():
+            query = supabase.table('grades').update({'student_insight': result}).eq('id', grade['id'])
+            # Compare the stored evaluation in the UPDATE itself, closing the
+            # gap between the final read and a simultaneous replacement scan.
+            query = query.eq('score', raw_grade.get('score')).eq('total_questions', raw_grade.get('total_questions'))
+            if 'answers' in raw_grade:
+                query = query.eq('answers', json.dumps(raw_grade['answers']))
+            return query.execute().data
+        if not await asyncio.to_thread(persist):
+            raise HTTPException(status_code=409, detail='Result changed. Retry analysis.')
+        return result
+
+    return await analysis_cache.get_or_create(_analysis_key('personal', sheet_id), version, generate, force=regenerate)
+
+
+@app.post("/student-insight")
+async def student_insight(request: StudentInsightRequest, user=Depends(get_current_user)):
+    exam = _personal_access(request, user)
+    try:
+        result = await _personal_analysis(exam, request.sheet_id, request.regenerate)
+        _personal_access(request, user)
         return result
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("Student insight data error: %s", exc)
+        logger.exception("Student insight data error: %s", exc)
         raise HTTPException(status_code=500, detail="Could not load saved student result")
+
+
+async def _prepare_analyses(exam_id, sheet_ids, overview=False):
+    exam = await asyncio.to_thread(_one, 'exams', 'id', exam_id)
+    if not exam:
+        return
+    if overview:
+        rows = await asyncio.to_thread(_paged, lambda: supabase.table('answer_sheets').select('id').eq('exam_id', exam_id))
+        sheet_ids = {row['id'] for row in rows}
+    students = set()
+
+    async def personal(sheet_id):
+        sheet = await asyncio.to_thread(_one, 'answer_sheets', 'id', sheet_id)
+        if not sheet or sheet.get('exam_id') != exam_id:
+            return
+        students.add(sheet['student_id'])
+        try:
+            await _personal_analysis(exam, sheet_id)
+        except Exception:
+            logger.exception('Could not prepare feedback for saved sheet %s', sheet_id)
+
+    # Two AI calls may run at once; cache deduplication also serves foreground
+    # requests. Database I/O uses worker threads so warm-up cannot block the UI.
+    await asyncio.gather(_class_analysis(exam), *(personal(sheet_id) for sheet_id in sheet_ids))
+    if overview:
+        await asyncio.gather(*(_overall_analysis(student_id, None, False) for student_id in students))
+
+
+preparation_queue = PreparationQueue(_prepare_analyses)
 
 
 @app.get("/student-overall-analysis")
@@ -1352,27 +1485,39 @@ async def student_overall_analysis(student_id: str | None = None, class_id: str 
         course = _one("classes", "id", class_id)
         if not course or course.get("instructor_id") != user_id:
             raise HTTPException(status_code=403, detail="Instructor access required")
+    result = await _overall_analysis(target_id, class_id, instructor_view)
+    if instructor_view:
+        course = _one('classes', 'id', class_id)
+        if not course or course.get('instructor_id') != user_id:
+            raise HTTPException(status_code=403, detail='Instructor access required')
+    return result
+
+
+async def _overall_analysis(target_id, class_id, instructor_view):
     try:
-        sheets = _paged(lambda: supabase.table("answer_sheets").select("*").eq("student_id", target_id).order("id"))
-        results = []
-        exam_cache = {}
-        question_cache = {}
-        for sheet in sheets:
-            exam_id = sheet.get("exam_id")
-            if exam_id not in exam_cache:
-                exam_cache[exam_id] = _one("exams", "id", exam_id, "id, title, class_id, results_released")
-            exam = exam_cache[exam_id]
-            if not exam or (class_id and exam.get("class_id") != class_id):
-                continue
-            if not instructor_view and not exam.get("results_released"):
-                continue
-            if exam_id not in question_cache:
-                question_cache[exam_id] = _questions_for_exam(exam_id)
-            sheet_grades = _grade_rows_for_sheet(sheet["id"])
-            if sheet_grades:
-                grade = _latest_grade(sheet_grades)
-                context = grade_context(enrich_answers(grade, question_cache[exam_id]))
-                results.append({"assessment": exam.get("title"), "created_at": grade.get("created_at"), **context})
+        def snapshot():
+            sheets = _paged(lambda: supabase.table("answer_sheets").select("*").eq("student_id", target_id).order("id"))
+            results = []
+            exam_cache = {}
+            question_cache = {}
+            for sheet in sheets:
+                exam_id = sheet.get("exam_id")
+                if exam_id not in exam_cache:
+                    exam_cache[exam_id] = _one("exams", "id", exam_id, "id, title, class_id, results_released")
+                exam = exam_cache[exam_id]
+                if not exam or (class_id and exam.get("class_id") != class_id):
+                    continue
+                if not instructor_view and not exam.get("results_released"):
+                    continue
+                if exam_id not in question_cache:
+                    question_cache[exam_id] = _questions_for_exam(exam_id)
+                sheet_grades = _grade_rows_for_sheet(sheet["id"])
+                if sheet_grades:
+                    grade = _latest_grade(sheet_grades)
+                    context = grade_context(enrich_answers(grade, question_cache[exam_id]))
+                    results.append({"assessment": exam.get("title"), "created_at": grade.get("created_at"), **context})
+            return results, exam_cache
+        results, exam_cache = await asyncio.to_thread(snapshot)
         if not results:
             return {"status": "no_results", "sample_count": 0, "analysis": None}
         results.sort(key=lambda item: item.get("created_at") or "")
@@ -1390,21 +1535,32 @@ async def student_overall_analysis(student_id: str | None = None, class_id: str 
         }
         metrics = {"topics": evidence["topics"], "questions": evidence["questions"],
                    "results": evidence["results"]}
-        try:
-            analysis = await generate_structured_response(
-                system_prompt=SYSTEM_STUDENT_MENTOR,
-                user_prompt=get_student_insight_prompt(json.dumps(evidence)),
-                schema_class=StudentOverviewResponse,
-                model_override=HF_MODEL_REASONING,
-            )
-            return {"status": "complete", "sample_count": len(results), "source": "ai",
-                    "metrics": metrics,
-                    "analysis": analysis.model_dump(exclude={"reasoning"})}
-        except Exception as exc:
-            logger.warning("Overall AI unavailable: %s", exc)
-            return {"status": "complete", "sample_count": len(results), "source": "summary",
-                    "metrics": metrics,
-                    "analysis": student_overview_summary(results, released_only=not instructor_view)}
+        async def generate():
+            try:
+              analysis = await generate_structured_response(
+                  system_prompt=SYSTEM_STUDENT_MENTOR,
+                  user_prompt=get_student_insight_prompt(json.dumps(evidence)),
+                  schema_class=StudentOverviewResponse,
+                  model_override=HF_MODEL_REASONING,
+              )
+              return {"status": "complete", "sample_count": len(results), "source": "ai",
+                      "metrics": metrics,
+                      "analysis": analysis.model_dump(exclude={"reasoning"})}
+            except Exception as exc:
+              logger.warning("Overall AI unavailable: %s", exc)
+              return {"status": "complete", "sample_count": len(results), "source": "summary",
+                      "metrics": metrics,
+                      "analysis": student_overview_summary(results, released_only=not instructor_view)}
+        result = await analysis_cache.get_or_create(
+            _analysis_key('overview', [target_id, class_id, instructor_view]), fingerprint(evidence), generate)
+        # Withdrawing a result while generation was in progress must revoke access.
+        if not instructor_view:
+            for exam_id, exam in exam_cache.items():
+                if exam and exam.get('results_released'):
+                    current = await asyncio.to_thread(_one, 'exams', 'id', exam_id, 'id, results_released')
+                    if not current or not current.get('results_released'):
+                        raise HTTPException(status_code=409, detail='Released results changed. Refresh analysis.')
+        return result
     except HTTPException:
         raise
     except Exception as exc:

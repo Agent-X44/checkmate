@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../config/app_build.dart';
 import '../models/omr/bubble_sheet_template.dart';
 import '../models/omr/template_registry.dart';
 import '../widgets/answer_sheet_painter.dart';
@@ -7,7 +8,9 @@ import '../services/supabase_service.dart';
 
 class AnswerSheetDesignScreen extends StatefulWidget {
   final String courseId;
-  const AnswerSheetDesignScreen({super.key, required this.courseId});
+  final bool offlineSandbox;
+  const AnswerSheetDesignScreen(
+      {super.key, required this.courseId, this.offlineSandbox = false});
 
   @override
   State<AnswerSheetDesignScreen> createState() =>
@@ -26,6 +29,21 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
   Future<void> _exportSheets({required bool allStudents}) async {
     setState(() => _isExporting = true);
     try {
+      if (widget.offlineSandbox && AppBuild.developerTools) {
+        await PdfGenerator.generateAndPrint(_selectedTemplate,
+            alignment: PdfAlignment(
+                nameTop: _nameTop,
+                nameLeft: _nameLeft,
+                nameScale: _nameScale,
+                qrTop: _qrTop,
+                qrRight: _qrRight,
+                qrSize: _qrSize),
+            sheetData: [
+              {'name': 'Developer Test', 'qrCode': 'DEV-LOCAL-TEST', 'set': 'A'}
+            ],
+            hasMultipleSets: false);
+        return;
+      }
       final exams = (await SupabaseService.getExams(widget.courseId))
           .where((exam) => exam['is_approved'] == true)
           .toList();
@@ -292,6 +310,10 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (!AppBuild.developerTools) {
+      return const Scaffold(
+          body: Center(child: Text('Developer edition required')));
+    }
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final accentColor = isDark ? Colors.yellow : Colors.blue;
     final textColor = isDark ? Colors.white : Colors.black;
@@ -543,7 +565,10 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
                     : () => _exportSheets(allStudents: false),
                 icon: Icon(Icons.person,
                     color: isDark ? Colors.black : Colors.white),
-                label: Text('EXPORT ONE STUDENT',
+                label: Text(
+                    widget.offlineSandbox
+                        ? 'PRINT LOCAL TEST SHEET'
+                        : 'EXPORT ONE STUDENT',
                     style: TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 12,
@@ -564,7 +589,10 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
                     : () => _exportSheets(allStudents: true),
                 icon: Icon(Icons.group,
                     color: isDark ? Colors.black : Colors.white),
-                label: Text('GENERATE FOR ALL STUDENTS',
+                label: Text(
+                    widget.offlineSandbox
+                        ? 'PRINT LOCAL TEST SHEET'
+                        : 'GENERATE FOR ALL STUDENTS',
                     style: TextStyle(
                         fontWeight: FontWeight.bold,
                         color: isDark ? Colors.black : Colors.white)),

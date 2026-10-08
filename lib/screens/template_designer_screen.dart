@@ -1,4 +1,6 @@
 import 'dart:typed_data';
+import 'dart:ui' as ui;
+import '../config/app_build.dart';
 import 'package:flutter/material.dart';
 
 class TemplateDesignerScreen extends StatefulWidget {
@@ -29,6 +31,17 @@ class TemplateDesignerScreen extends StatefulWidget {
 class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
   late List<BubblePoint> _bubbles;
   late List<Rect> _answerBoxes;
+  Rect? _qrRect;
+  Rect? _setRect;
+  late List<BubblePoint> _setBubbles;
+  double _imageAspectRatio = .707;
+  List<BubblePoint> get _activeBubbles =>
+      _designerMode == 4 ? _setBubbles : _bubbles;
+  List<Rect> get _activeRegions => _designerMode == 1
+      ? [_qrRect!]
+      : _designerMode == 3
+          ? [_setRect!]
+          : _answerBoxes;
   int _designerMode = 0; // 0: Answer Bubbles, 2: Answer Box
   double _globalRadius = 12.0;
 
@@ -45,6 +58,20 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
             .toList() ??
         [];
 
+    _qrRect = widget.initialQrRegion ?? const Rect.fromLTRB(.65, .05, .95, .22);
+    _setRect =
+        widget.initialSetRegion ?? const Rect.fromLTRB(.05, .08, .25, .13);
+    _setBubbles = (widget.initialSetBubbles ?? [])
+        .map((p) => BubblePoint(normalizedPosition: p, radius: _globalRadius))
+        .toList();
+    ui.instantiateImageCodec(widget.imageBytes).then((codec) async {
+      final frame = await codec.getNextFrame();
+      final ratio = frame.image.width / frame.image.height;
+      frame.image.dispose();
+      codec.dispose();
+      if (mounted) setState(() => _imageAspectRatio = ratio);
+    }).catchError((Object error) {});
+
     // Default to ONE column only, as requested
     _answerBoxes = List.from(widget.initialAnswerRegions ??
         [
@@ -56,10 +83,10 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
     final pos = details.localPosition;
     final normalizedPos = Offset(pos.dx / size.width, pos.dy / size.height);
 
-    if (_designerMode == 0) {
-      // Answer Bubbles
-      if (!_isNearBubble(_bubbles, pos, size)) {
-        setState(() => _bubbles.add(BubblePoint(
+    if (_designerMode == 0 || _designerMode == 4) {
+      // Answer and set bubbles
+      if (!_isNearBubble(_activeBubbles, pos, size)) {
+        setState(() => _activeBubbles.add(BubblePoint(
             normalizedPosition: normalizedPos, radius: _globalRadius)));
       }
     }
@@ -79,9 +106,9 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
   void _handlePanStart(DragStartDetails details, Size size) {
     final pos = details.localPosition;
 
-    if (_designerMode == 2) {
-      for (int i = 0; i < _answerBoxes.length; i++) {
-        final r = _toPx(_answerBoxes[i], size);
+    if (_designerMode == 1 || _designerMode == 2 || _designerMode == 3) {
+      for (int i = 0; i < _activeRegions.length; i++) {
+        final r = _toPx(_activeRegions[i], size);
         final h = _getHandle(r, pos);
         if (h != null) {
           setState(() {
@@ -98,10 +125,11 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
           return;
         }
       }
-    } else if (_designerMode == 0) {
-      for (int i = 0; i < _bubbles.length; i++) {
-        final bPos = Offset(_bubbles[i].normalizedPosition.dx * size.width,
-            _bubbles[i].normalizedPosition.dy * size.height);
+    } else if (_designerMode == 0 || _designerMode == 4) {
+      for (int i = 0; i < _activeBubbles.length; i++) {
+        final bPos = Offset(
+            _activeBubbles[i].normalizedPosition.dx * size.width,
+            _activeBubbles[i].normalizedPosition.dy * size.height);
         if ((bPos - pos).distance < 20) {
           setState(() => _draggingIndex = i);
           return;
@@ -113,18 +141,28 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
   void _handlePanUpdate(DragUpdateDetails details, Size size) {
     final delta =
         Offset(details.delta.dx / size.width, details.delta.dy / size.height);
-    if (_designerMode == 2 &&
+    if ((_designerMode == 1 || _designerMode == 2 || _designerMode == 3) &&
         _activeBoxIndex != null &&
         _activeBoxIndex! >= 0) {
       setState(() {
-        _answerBoxes[_activeBoxIndex!] =
-            _updateRect(_answerBoxes[_activeBoxIndex!], delta);
+        final region = _updateRect(_activeRegions[_activeBoxIndex!], delta);
+        if (_designerMode == 1) {
+          _qrRect = region;
+        } else if (_designerMode == 3) {
+          _setRect = region;
+        } else {
+          _answerBoxes[_activeBoxIndex!] = region;
+        }
       });
-    } else if (_designerMode == 0 && _draggingIndex != null) {
+    } else if ((_designerMode == 0 || _designerMode == 4) &&
+        _draggingIndex != null) {
       setState(() {
-        _bubbles[_draggingIndex!] = _bubbles[_draggingIndex!].copyWith(
-            normalizedPosition:
-                _bubbles[_draggingIndex!].normalizedPosition + delta);
+        final point =
+            _activeBubbles[_draggingIndex!].normalizedPosition + delta;
+        _activeBubbles[_draggingIndex!] = _activeBubbles[_draggingIndex!]
+            .copyWith(
+                normalizedPosition:
+                    Offset(point.dx.clamp(0, 1), point.dy.clamp(0, 1)));
       });
     }
   }
@@ -140,7 +178,10 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
   }
 
   Rect _updateRect(Rect r, Offset delta) {
-    if (_resizeHandle == 4) return r.shift(delta);
+    if (_resizeHandle == 4) {
+      return r.shift(Offset(delta.dx.clamp(-r.left, 1 - r.right),
+          delta.dy.clamp(-r.top, 1 - r.bottom)));
+    }
     double l = r.left, t = r.top, ri = r.right, b = r.bottom;
     if (_resizeHandle == 0) {
       l += delta.dx;
@@ -155,12 +196,17 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
       ri += delta.dx;
       b += delta.dy;
     }
-    return Rect.fromLTRB(l.clamp(0, ri - 0.02), t.clamp(0, b - 0.02),
-        ri.clamp(l + 0.02, 1), b.clamp(t + 0.02, 1));
+    l = l.clamp(0, .98);
+    t = t.clamp(0, .98);
+    return Rect.fromLTRB(l, t, ri.clamp(l + .02, 1), b.clamp(t + .02, 1));
   }
 
   @override
   Widget build(BuildContext context) {
+    if (!AppBuild.developerTools) {
+      return const Scaffold(
+          body: Center(child: Text('Developer edition required')));
+    }
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(title: const Text('Template Designer'), actions: [
@@ -168,8 +214,8 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
         IconButton(
             icon: const Icon(Icons.delete),
             onPressed: () => setState(() {
-                  if (_designerMode == 0) {
-                    _bubbles.clear();
+                  if (_designerMode == 0 || _designerMode == 4) {
+                    _activeBubbles.clear();
                   } else if (_designerMode == 2 && _answerBoxes.isNotEmpty) {
                     _answerBoxes.removeLast();
                   }
@@ -189,7 +235,7 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
         Expanded(
             child: Center(
           child: AspectRatio(
-            aspectRatio: 0.707,
+            aspectRatio: _imageAspectRatio,
             child: LayoutBuilder(builder: (context, constraints) {
               final size = constraints.biggest;
               return GestureDetector(
@@ -207,10 +253,14 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
                       child: Image.memory(widget.imageBytes, fit: BoxFit.fill)),
                   Positioned.fill(
                       child: CustomPaint(
-                          painter: DesignerPainter(
-                              bubbles: _bubbles,
-                              answerBoxes: _answerBoxes,
-                              mode: _designerMode))),
+                          painter: DesignerPainter(bubbles: [
+                    ..._bubbles,
+                    ..._setBubbles
+                  ], answerBoxes: [
+                    ..._answerBoxes,
+                    if (_qrRect != null) _qrRect!,
+                    if (_setRect != null) _setRect!
+                  ], mode: _designerMode))),
                 ]),
               );
             }),
@@ -239,9 +289,11 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
                                       .map((b) => b.normalizedPosition)
                                       .toList(),
                                   _answerBoxes,
-                                  null,
-                                  null,
-                                  []);
+                                  _qrRect,
+                                  _setRect,
+                                  _setBubbles
+                                      .map((b) => b.normalizedPosition)
+                                      .toList());
                               Navigator.pop(context);
                             },
                             child: const Text("SAVE TEMPLATE")),
@@ -266,7 +318,15 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
                 _modeBtn(2, Icons.crop_din, "Boxes"),
               ],
             ),
-            if (_designerMode == 0) ...[
+            const SizedBox(height: 8),
+            Row(children: [
+              _modeBtn(1, Icons.qr_code, "QR region"),
+              const SizedBox(width: 8),
+              _modeBtn(3, Icons.crop, "Set region"),
+              const SizedBox(width: 8),
+              _modeBtn(4, Icons.radio_button_checked, "Set bubbles"),
+            ]),
+            if (_designerMode == 0 || _designerMode == 4) ...[
               const SizedBox(height: 8),
               Row(
                 children: [
@@ -323,7 +383,12 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
     final active = _designerMode == mode;
     return Expanded(
         child: InkWell(
-            onTap: () => setState(() => _designerMode = mode),
+            onTap: () => setState(() {
+                  _designerMode = mode;
+                  _activeBoxIndex = null;
+                  _draggingIndex = null;
+                  _resizeHandle = null;
+                }),
             child: Container(
               padding: const EdgeInsets.symmetric(vertical: 8),
               decoration: BoxDecoration(
@@ -347,7 +412,10 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
         .map((r) =>
             "      Rect.fromLTRB(${r.left.toStringAsFixed(3)}, ${r.top.toStringAsFixed(3)}, ${r.right.toStringAsFixed(3)}, ${r.bottom.toStringAsFixed(3)}),")
         .join("\n");
-    final String code = "answerRegions: [\n$boxes\n    ],";
+    final String code = "answerRegions: [\n$boxes\n    ],\n"
+        "qrRegion: $_qrRect,\nsetRegion: $_setRect,\n"
+        "answerBubbles: ${_bubbles.map((b) => b.normalizedPosition).toList()},\n"
+        "setBubbles: ${_setBubbles.map((b) => b.normalizedPosition).toList()},";
     showDialog(
         context: context,
         builder: (c) => AlertDialog(
@@ -399,7 +467,7 @@ class DesignerPainter extends CustomPainter {
       final rect = Rect.fromLTRB(r.left * size.width, r.top * size.height,
           r.right * size.width, r.bottom * size.height);
       canvas.drawRect(rect, boxPaint);
-      if (mode == 2) {
+      if (mode == 1 || mode == 2 || mode == 3) {
         for (var p in [
           rect.topLeft,
           rect.topRight,

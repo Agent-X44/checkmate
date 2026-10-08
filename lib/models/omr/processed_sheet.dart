@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 import 'dart:convert';
-import '../../services/cv/bubble_detection_service.dart';
+import 'bubble_result.dart';
 
 import 'qr_data.dart';
 
@@ -31,6 +31,10 @@ class ProcessedSheet {
   /// The name of the template used for processing.
   final String templateName;
 
+  /// Capacity of the matched printed template, supplied by local processing.
+  /// This distinguishes unused printed rows from an incomplete detection.
+  final int? questionCapacity;
+
   final List<Map<String, dynamic>> questionDetails;
 
   ProcessedSheet({
@@ -42,6 +46,7 @@ class ProcessedSheet {
     this.qrData,
     this.detectedSet,
     required this.templateName,
+    this.questionCapacity,
     this.questionDetails = const [],
   });
 
@@ -54,6 +59,7 @@ class ProcessedSheet {
     QrData? qrData,
     String? detectedSet,
     String? templateName,
+    int? questionCapacity,
     List<Map<String, dynamic>>? questionDetails,
   }) {
     return ProcessedSheet(
@@ -65,6 +71,7 @@ class ProcessedSheet {
       qrData: qrData ?? this.qrData,
       detectedSet: detectedSet ?? this.detectedSet,
       templateName: templateName ?? this.templateName,
+      questionCapacity: questionCapacity ?? this.questionCapacity,
       questionDetails: questionDetails ?? this.questionDetails,
     );
   }
@@ -80,6 +87,7 @@ class ProcessedSheet {
       'qrData': qrData?.toMap(),
       'detectedSet': detectedSet,
       'templateName': templateName,
+      'questionCapacity': questionCapacity,
     };
   }
 

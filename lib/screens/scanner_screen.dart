@@ -12,6 +12,7 @@ import '../services/api_service.dart';
 import '../services/pending_grade_sync_service.dart';
 import '../services/cv/qr_classification_service.dart';
 import '../services/cv/camera_frame_service.dart';
+import '../services/cv/live_scan_policy.dart';
 import '../services/supabase_service.dart';
 import '../services/deep_link_service.dart';
 import '../models/omr/processed_sheet.dart';
@@ -21,6 +22,9 @@ import '../models/omr/template_registry.dart';
 import '../models/omr/templates/standard_50_questions.dart';
 import '../utils/ui_utils.dart';
 import 'sheet_evaluation_screen.dart';
+import 'developer_evaluation_tools_screen.dart';
+import '../config/app_build.dart';
+import '../services/developer_template_store.dart';
 
 /// Screen responsible for live camera feed and document edge detection.
 /// Enforces:
@@ -30,11 +34,15 @@ class ScannerScreen extends StatefulWidget {
   final List<CameraDescription> cameras;
   final bool isActive;
   final VoidCallback? onClose;
+  final bool developerSandbox;
+  final BubbleSheetTemplate? sandboxTemplate;
   const ScannerScreen({
     super.key,
     required this.cameras,
     required this.isActive,
     this.onClose,
+    this.developerSandbox = false,
+    this.sandboxTemplate,
   });
 
   @override
@@ -47,17 +55,14 @@ class _ScannerScreenState extends State<ScannerScreen> {
   bool _isOmrProcessing = false;
   bool _paperDetected = false;
   bool _isFlashOn = false;
-  int _detectionCounter = 0;
-  static const int _detectionPersistenceThreshold = 2;
 
   // Course Invitation Confirmation Card State
   bool _isConfirmationCardOpen = false;
   String? _lastScannedInviteCode;
   DateTime? _lastInvitePromptTime;
 
-  // Pipeline control flags
-  //  - _qrFirstMode: Initial short window where QR detection is prioritized (invitation QR must be handled first)
-  bool _qrFirstMode = true;
+  bool get _developerSandbox =>
+      AppBuild.developerTools && widget.developerSandbox;
 
   bool get _isProcessing => _isOmrProcessing || _isConfirmationCardOpen;
 
@@ -65,8 +70,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
       !_isProcessing &&
       _controller != null &&
       _controller!.value.isInitialized &&
-      _lockedSheetQr != null &&
-      _validatedSheetQr == _lockedSheetQr!.sheetIdentifier;
+      (_developerSandbox ||
+          (_lockedSheetQr != null &&
+              _validatedSheetQr == _lockedSheetQr!.sheetIdentifier));
 
   int get _frameRotationDegrees {
     final controller = _controller;
@@ -83,9 +89,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
   // Isolate state
   bool _isIsolateWorking = false;
 
-  List<Offset>? _detectedCorners;
+  final _detectedCorners = ValueNotifier<List<Offset>?>(null);
+  Timer? _overlayExpiry;
   List<double>? _rawCorners;
-  List<Offset>? _detectedQrCorners;
   QrData?
       _lockedSheetQr; // BR-05: Lock the decoded QR so it isn't lost during edge detection
   String? _validatedSheetQr;
@@ -94,7 +100,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
   DateTime? _rejectedQrAt;
   String _lastQrDebugText = 'QR: waiting';
   Offset? _focusPoint;
-  DateTime _lastUIUpdate = DateTime.now();
 
   // Locally evaluated sheets are queued as JSON, then synced independently.
   int _pendingSyncCount = 0;
@@ -131,7 +136,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
         _handleProcessedSheet(message);
       }
     });
-    unawaited(_restoreAndSyncPending());
+    if (!_developerSandbox) {
+      unawaited(_restoreAndSyncPending());
+    } else {
+      _lastQrDebugText = 'Local test capture • no sign-in required';
+    }
     if (widget.isActive) _startCapture();
   }
 
@@ -181,6 +190,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
   }
 
   Future<void> _disposeCameraOnly() async {
+    _overlayExpiry?.cancel();
     if (_controller == null) return;
     final controller = _controller!;
     _controller = null;
@@ -270,14 +280,13 @@ class _ScannerScreenState extends State<ScannerScreen> {
     setState(() {
       _lockedSheetQr = null;
       _validatedSheetQr = null;
-      _detectedQrCorners = null;
       _qrLockTime = null;
       _lastQrDebugText = message;
     });
     if (showPrompt) _showErrorSnackBar(message);
   }
 
-  void _tryLockSheetQr(QrData candidate, {List<Offset>? corners}) {
+  void _tryLockSheetQr(QrData candidate) {
     if (!mounted ||
         !widget.isActive ||
         _isProcessing ||
@@ -301,9 +310,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
       _lockedSheetQr = candidate;
       _validatedSheetQr = null;
       _qrLockTime = DateTime.now();
-      _qrFirstMode = false;
       _lastQrDebugText = 'Checking: $identifier';
-      if (corners != null) _detectedQrCorners = corners;
     });
     final revision = ++_qrValidationRevision;
     unawaited(_checkLockedSheetQr(identifier, _qrSession, revision));
@@ -351,37 +358,14 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
     if (isCourseInvite) {
       // SUPPRESS PAPER DETECTION: This is a Course Invitation QR, NOT an OMR Answer Sheet!
-      _detectionCounter = 0;
-      _rawCorners = null;
+      _clearLiveOverlay();
       _lastQrDebugText = DeepLinkService.isInviteToken(inviteCode)
           ? 'QR: private course invitation'
           : 'QR: course code';
 
-      // Render Google Lens-style yellow bounding box overlay around the Course QR code
-      if (message.qrCorners != null && message.qrCorners!.length >= 8) {
-        _detectedQrCorners = List.generate(
-          4,
-          (i) =>
-              Offset(message.qrCorners![i * 2], message.qrCorners![i * 2 + 1]),
-        );
-        _lockedSheetQr = message.detectedQr;
-        _validatedSheetQr = null;
-      } else {
-        _detectedQrCorners = null;
-        _lockedSheetQr = null;
-        _qrLockTime = null;
-      }
-
-      // Update UI to ensure "PAPER DETECTED" is strictly hidden while scanning Course QR
-      if (DateTime.now().difference(_lastUIUpdate).inMilliseconds > 100) {
-        if (mounted) {
-          setState(() {
-            _paperDetected = false;
-            _detectedCorners = null;
-          });
-          _lastUIUpdate = DateTime.now();
-        }
-      }
+      _lockedSheetQr = null;
+      _validatedSheetQr = null;
+      _qrLockTime = null;
 
       // IMMEDIATELY prompt the "Join Course" confirmation card
       if (!_isConfirmationCardOpen && !_isProcessing) {
@@ -398,7 +382,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
     final candidateQr = message.detectedQr;
 
     // If we haven't locked a sheet QR yet, keep looking for one
-    if (_lockedSheetQr == null) {
+    if (!_developerSandbox && _lockedSheetQr == null) {
       if (candidateQr != null &&
           candidateQr.sheetIdentifier.isNotEmpty &&
           candidateQr.sheetIdentifier != 'UNKNOWN') {
@@ -416,48 +400,32 @@ class _ScannerScreenState extends State<ScannerScreen> {
       }
     }
 
-    // Always update the QR bounding box to track the physical code if it's visible
-    if (_lockedSheetQr != null &&
-        candidateQr != null &&
-        message.qrCorners != null &&
-        message.qrCorners!.length >= 8) {
-      _detectedQrCorners = List.generate(
-          4,
-          (i) =>
-              Offset(message.qrCorners![i * 2], message.qrCorners![i * 2 + 1]));
-    } else {
-      _detectedQrCorners =
-          null; // Hide the box gracefully if the QR leaves the camera view
+    // Every completed fresh frame updates only the overlay subtree. Never keep
+    // an old polygon floating over a moving preview after a miss or timeout.
+    final nowMicros = DateTime.now().microsecondsSinceEpoch;
+    if (!message.foundPaper ||
+        message.corners?.length != 8 ||
+        !LiveScanPolicy.isFresh(message.capturedAtMicros, nowMicros)) {
+      _clearLiveOverlay();
+      return;
     }
+    _rawCorners = message.corners;
+    _detectedCorners.value = List.generate(
+        4, (i) => Offset(message.corners![i * 2], message.corners![i * 2 + 1]));
+    if (!_paperDetected) setState(() => _paperDetected = true);
+    _overlayExpiry?.cancel();
+    final remainingMicros = LiveScanPolicy.maxOverlayAge.inMicroseconds -
+        (nowMicros - message.capturedAtMicros);
+    _overlayExpiry =
+        Timer(Duration(microseconds: remainingMicros), _clearLiveOverlay);
+  }
 
-    // 2. Paper edge detection for OMR answer sheets
-    // Edge detection runs completely independently of the QR lock.
-    if (message.foundPaper && !_qrFirstMode) {
-      _detectionCounter = _detectionPersistenceThreshold;
-      _rawCorners = message.corners;
-    } else if (_detectionCounter > 0) {
-      _detectionCounter--;
-    }
-
-    final detected = _detectionCounter > 0;
-    // Throttled UI updates (10fps max for detection overlays)
-    if (DateTime.now().difference(_lastUIUpdate).inMilliseconds > 100) {
-      if (mounted) {
-        setState(() {
-          _paperDetected = detected;
-
-          if (message.corners != null) {
-            _detectedCorners = List.generate(
-                message.corners!.length ~/ 2,
-                (i) => Offset(
-                    message.corners![i * 2], message.corners![i * 2 + 1]));
-          } else if (!_paperDetected) {
-            _detectedCorners = null;
-          }
-        });
-        _lastUIUpdate = DateTime.now();
-      }
-    }
+  void _clearLiveOverlay() {
+    _overlayExpiry?.cancel();
+    _overlayExpiry = null;
+    _rawCorners = null;
+    _detectedCorners.value = null;
+    if (mounted && _paperDetected) setState(() => _paperDetected = false);
   }
 
   String _normalizeJoinCode(String raw) {
@@ -701,69 +669,22 @@ class _ScannerScreenState extends State<ScannerScreen> {
     }
   }
 
-  String? _extractInviteCode(String raw) {
-    final clean = raw.trim();
-    if (clean.isEmpty) return null;
-
-    // Invitation URLs now carry a private token; old code-bearing URLs are invalid.
-    final uri = Uri.tryParse(clean);
-    if (uri != null && uri.scheme.isNotEmpty) {
-      final inviteToken = DeepLinkService.extractInviteToken(uri);
-      if (inviteToken != null) return inviteToken;
-      if (uri.queryParameters.containsKey('code') ||
-          uri.queryParameters.containsKey('joinCode')) {
-        return null;
-      }
-      if (uri.pathSegments.isNotEmpty) {
-        // Check if any of the last path segments is a valid 5-8 char code (e.g. /course/EDJNRU)
-        final segments =
-            uri.pathSegments.where((s) => s.trim().isNotEmpty).toList();
-        if (segments.isNotEmpty) {
-          final lastSegment = segments.last.trim().toUpperCase();
-          if (RegExp(r'^[A-Z0-9]{5,8}$').hasMatch(lastSegment) &&
-              !lastSegment.startsWith("SHEET") &&
-              !lastSegment.contains("UNKNOWN")) {
-            return lastSegment;
-          }
-        }
-      }
-    }
-
-    // Plain course codes remain available for manual instructor-shared entry.
-    if (clean.toUpperCase().contains("CODE") ||
-        clean.toUpperCase().contains("JOIN")) {
-      final match = RegExp(r'[A-Z0-9]{5,8}').firstMatch(
-        clean
-            .toUpperCase()
-            .replaceAll("CODE", "")
-            .replaceAll("JOIN", "")
-            .replaceAll(":", "")
-            .trim(),
-      );
-      if (match != null) {
-        return match.group(0);
-      }
-    }
-
-    // 4. Raw Join Code: 5 to 8 uppercase alphanumeric characters (e.g. EDJNRU)
-    final isAlphanumericCode =
-        RegExp(r'^[A-Z0-9]{5,8}$').hasMatch(clean.toUpperCase());
-    if (isAlphanumericCode &&
-        !clean.toLowerCase().startsWith("sheet") &&
-        !clean.contains("-AUTO") &&
-        !clean.toLowerCase().contains("unknown") &&
-        !clean.toLowerCase().contains("cm50") &&
-        !clean.toLowerCase().contains("py5")) {
-      return clean.toUpperCase();
-    }
-
-    return null;
-  }
-
   /// BR-05 Enforcement: Resolve Sheet ID via backend before grading.
   Future<void> _handleProcessedSheet(ProcessedSheet sheet,
-      {Map<String, dynamic>? preResolvedMetadata}) async {
+      {Map<String, dynamic>? preResolvedMetadata,
+      BubbleSheetTemplate? processingTemplate}) async {
+    var queued = false;
     try {
+      if (_developerSandbox) {
+        await Navigator.push<void>(
+            context,
+            MaterialPageRoute(
+                builder: (_) => DeveloperEvaluationToolsScreen(
+                    sheet: sheet,
+                    template: widget.sandboxTemplate ??
+                        Standard50QuestionsTemplate())));
+        return;
+      }
       final qrData = sheet.qrData;
       final rawIdentifier = qrData?.sheetIdentifier ?? '';
 
@@ -820,59 +741,72 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
         if (!mounted) return;
 
-        // Directly proceed to Pre-processing, Warping/Cropping, and Evaluation with Dev Tools
-        final evaluatedSheet = await Navigator.push<ProcessedSheet>(
+        final resolvedExamId = metadata['exam_id']?.toString() ??
+            metadata['exams']?['id']?.toString();
+        if (resolvedExamId == null || resolvedExamId.isEmpty) {
+          throw StateError('The sheet did not resolve to an assessment.');
+        }
+
+        await Navigator.push<void>(
           context,
           MaterialPageRoute(
             builder: (context) => SheetEvaluationScreen(
               sheet: sheet,
               metadata: metadata,
+              loadQuestions: SupabaseService.getExamQuestions,
+              developerToolsBuilder: AppBuild.developerTools
+                  ? (_) => DeveloperEvaluationToolsScreen(
+                        sheet: sheet,
+                        template: processingTemplate ??
+                            AnswerSheetTemplateRegistry.all.firstWhere(
+                                (t) => t.name == sheet.templateName,
+                                orElse: () => AnswerSheetTemplateRegistry
+                                    .forQuestionCount(sheet.questionCapacity ??
+                                        sheet.results.length)),
+                        loadQuestions: () =>
+                            SupabaseService.getExamQuestions(resolvedExamId),
+                      )
+                  : null,
+              onEvaluated: (evaluatedSheet) async {
+                if (queued) return;
+                final updatedSheet = evaluatedSheet.copyWith(
+                  qrData: QrData(
+                    studentName: studentName,
+                    examCode: resolvedExamId,
+                    course:
+                        metadata['exams']?['classes']?['name']?.toString() ??
+                            sheet.qrData?.course ??
+                            '',
+                    examTitle: metadata['exams']?['title']?.toString() ??
+                        sheet.qrData?.examTitle ??
+                        '',
+                    sheetIdentifier: rawIdentifier,
+                    templateName: sheet.qrData?.templateName,
+                  ),
+                );
+                // Queue the immutable deterministic evaluation before showing
+                // success. Each sheet uses its own resolved assessment ID.
+                await PendingGradeSyncService.enqueue(
+                  examId: resolvedExamId,
+                  result: updatedSheet.toSyncResult(),
+                );
+                queued = true;
+                if (mounted) setState(() => _pendingSyncCount++);
+                unawaited(_retryPending());
+              },
             ),
           ),
         );
 
-        if (!mounted) return;
-        if (evaluatedSheet == null) {
+        if (!queued) {
           _processedSheetIds.remove(rawIdentifier);
-        } else {
-          final resolvedExamId = metadata['exam_id']?.toString() ??
-              metadata['exams']?['id']?.toString();
-          if (resolvedExamId == null || resolvedExamId.isEmpty) {
-            throw StateError('The sheet did not resolve to an assessment.');
-          }
-          final updatedSheet = evaluatedSheet.copyWith(
-            qrData: QrData(
-              studentName: studentName,
-              examCode: resolvedExamId,
-              course: metadata['exams']?['classes']?['name']?.toString() ??
-                  sheet.qrData?.course ??
-                  '',
-              examTitle: metadata['exams']?['title']?.toString() ??
-                  sheet.qrData?.examTitle ??
-                  '',
-              sheetIdentifier: rawIdentifier,
-              templateName: sheet.qrData?.templateName,
-            ),
-          );
-          // Save the reviewed item results before attempting the network call.
-          // Each result carries its own resolved assessment, so mixed sets and
-          // shuffled assessment sheets can be scanned in any order.
-          await PendingGradeSyncService.enqueue(
-            examId: resolvedExamId,
-            result: updatedSheet.toSyncResult(),
-          );
-          if (mounted) setState(() => _pendingSyncCount++);
-          // The reviewed result is safely queued. Sync it in the background
-          // so the next sheet can be detected without waiting for the network.
-          unawaited(_retryPending());
-          if (mounted) {
-            _showSuccessSnackBar(
-                'Result queued for $studentName. Ready for the next sheet.');
-          }
+        } else if (mounted) {
+          _showSuccessSnackBar(
+              'Result queued for $studentName. Ready for the next sheet.');
         }
       }
     } catch (e) {
-      _processedSheetIds.remove(sheet.qrData?.sheetIdentifier);
+      if (!queued) _processedSheetIds.remove(sheet.qrData?.sheetIdentifier);
       if (mounted) {
         _showErrorSnackBar(_sheetCheckError(e));
       }
@@ -907,20 +841,18 @@ class _ScannerScreenState extends State<ScannerScreen> {
     _isIsolateWorking = false;
     _lastFrameTime = null;
     _lastQrScanTime = null;
+    _overlayExpiry?.cancel();
     setState(() {
       _isOmrProcessing = false;
       _lockedSheetQr = null;
       _validatedSheetQr = null;
-      _detectedQrCorners = null;
-      _detectedCorners = null;
+      _detectedCorners.value = null;
       _rawCorners = null;
       _qrLockTime = null;
-      // The startup QR-only window has already passed. Keeping it enabled
-      // here would suppress paper detection until another QR is found.
-      _qrFirstMode = false;
       _paperDetected = false;
-      _detectionCounter = 0;
-      _lastQrDebugText = 'Ready for next sheet';
+      _lastQrDebugText = _developerSandbox
+          ? 'Local test capture • no sign-in required'
+          : 'Ready for next sheet';
     });
   }
 
@@ -936,7 +868,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
     if (!mounted || _isProcessing) return;
 
     // QR reads must not depend on how long paper-edge processing takes.
-    if (!_qrDecodeInFlight) {
+    if (!_developerSandbox && !_qrDecodeInFlight) {
       final session = _qrSession;
       final scanner = _barcodeScanner;
       _qrDecodeInFlight = true;
@@ -951,11 +883,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
     }
     if (_isolateSendPort == null || _isIsolateWorking) return;
 
-    // Frame throttling (100ms interval = max ~10 FPS for CV isolate) keeps
-    // memory and thermal usage stable while retaining a detailed still image.
+    // At most one current frame is in flight; busy frames are dropped rather
+    // than queued. The lighter marker tracker can follow up to camera cadence.
     final now = DateTime.now();
     if (_lastFrameTime != null &&
-        now.difference(_lastFrameTime!).inMilliseconds < 100) {
+        now.difference(_lastFrameTime!) < LiveScanPolicy.frameInterval) {
       return;
     }
     _lastFrameTime = now;
@@ -970,7 +902,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
           _validatedSheetQr = null;
           _qrValidationRevision++;
           _qrLockTime = null;
-          _detectedQrCorners = null;
           _lastQrDebugText = 'QR lock expired, rescan sheet';
         });
       }
@@ -987,6 +918,15 @@ class _ScannerScreenState extends State<ScannerScreen> {
         rotationIndex: _frameRotationDegrees ~/ 90,
         replyPort: _mainReceivePort.sendPort,
         scanSession: _qrSession,
+        capturedAtMicros: now.microsecondsSinceEpoch,
+        detectQr: !_developerSandbox &&
+            (image.planes.length != 1 ||
+                (Platform.isAndroid &&
+                    InputImageFormatValue.fromRawValue(image.format.raw) !=
+                        InputImageFormat.nv21) ||
+                (Platform.isIOS &&
+                    InputImageFormatValue.fromRawValue(image.format.raw) !=
+                        InputImageFormat.bgra8888)),
       ));
     } catch (e) {
       _isIsolateWorking = false;
@@ -1032,17 +972,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
         setState(() {
           _isInitialized = true;
           _isFlashOn = false;
-          // Start in QR-first mode to prioritize course invitation detection
-          _qrFirstMode = true;
-        });
-
-        // After a short QR-first window, enable edge detection. If a course invite QR appears in
-        // that window it will be handled immediately; otherwise the camera will begin looking for edges.
-        Future.delayed(const Duration(milliseconds: 800), () {
-          if (!mounted) return;
-          setState(() {
-            _qrFirstMode = false;
-          });
         });
       }
     } catch (e) {
@@ -1053,20 +982,25 @@ class _ScannerScreenState extends State<ScannerScreen> {
   Future<void> _handleTapToFocus(
       TapDownDetails details, Size widgetSize) async {
     if (_controller == null || !_controller!.value.isInitialized) return;
+    final offset = details.localPosition;
+    setState(() => _focusPoint = offset);
     try {
-      final offset = details.localPosition;
       // The camera plugin already transforms preview coordinates to the
       // sensor. Rotating here focuses a different region of a close sheet.
       final nx = offset.dx / widgetSize.width;
       final ny = offset.dy / widgetSize.height;
-      setState(() => _focusPoint = offset);
       await _controller!
           .setFocusPoint(Offset(nx.clamp(0.05, 0.95), ny.clamp(0.05, 0.95)));
       await _controller!
           .setExposurePoint(Offset(nx.clamp(0.05, 0.95), ny.clamp(0.05, 0.95)));
-      await Future.delayed(const Duration(milliseconds: 500));
-      if (mounted) setState(() => _focusPoint = null);
-    } catch (_) {}
+    } catch (_) {
+      // Some cameras do not support setting an exposure point.
+    } finally {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      if (mounted && _focusPoint == offset) {
+        setState(() => _focusPoint = null);
+      }
+    }
   }
 
   Future<void> _tryDecodeQrFromCameraFrame(
@@ -1130,32 +1064,11 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
       final inviteCode =
           QrClassificationService.extractInvitationCodeFromQr(candidate);
-      final uprightSize = CameraFrameService.uprightSize(
-          image.width, image.height, rotationDegrees);
-      final normalizedCorners = barcodes.first.cornerPoints.length >= 4
-          ? List.generate(4, (index) {
-              final point = barcodes.first.cornerPoints[index];
-              final x =
-                  (point.x.toDouble() / uprightSize.width).clamp(0.0, 1.0);
-              final y =
-                  (point.y.toDouble() / uprightSize.height).clamp(0.0, 1.0);
-              return Offset(x, y);
-            })
-          : const [
-              Offset(0.20, 0.20),
-              Offset(0.80, 0.20),
-              Offset(0.80, 0.80),
-              Offset(0.20, 0.80),
-            ];
-
       if (inviteCode != null) {
         _lastQrDebugText = DeepLinkService.isInviteToken(inviteCode)
             ? 'QR: private invitation candidate'
             : 'QR: course code candidate';
         if (mounted) {
-          setState(() {
-            _detectedQrCorners = normalizedCorners;
-          });
           await _triggerCourseJoinPrompt(inviteCode);
         }
         return;
@@ -1163,7 +1076,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
 
       // If we haven't locked a QR yet, lock it from the camera frame if not already confirmed!
       if (_lockedSheetQr == null && mounted && session == _qrSession) {
-        _tryLockSheetQr(candidate, corners: normalizedCorners);
+        _tryLockSheetQr(candidate);
       }
     } catch (e) {
       debugPrint('QR decode failed: $e');
@@ -1176,6 +1089,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
     _isolateSubscription?.cancel();
     _mainReceivePort.close();
     _barcodeScanner.close();
+    _overlayExpiry?.cancel();
+    _detectedCorners.dispose();
     super.dispose();
   }
 
@@ -1224,42 +1139,20 @@ class _ScannerScreenState extends State<ScannerScreen> {
                               decoration: BoxDecoration(
                                   border: Border.all(
                                       color: accentColor, width: 1.5)))),
-                    if (_detectedCorners != null)
-                      Positioned.fill(
-                          child: IgnorePointer(
-                              child: CustomPaint(
+                    Positioned.fill(
+                      child: IgnorePointer(
+                        child: ValueListenableBuilder<List<Offset>?>(
+                          valueListenable: _detectedCorners,
+                          builder: (context, corners, _) => corners == null
+                              ? const SizedBox.shrink()
+                              : CustomPaint(
                                   painter: EdgePainter(
-                                      corners: _detectedCorners!,
-                                      isDetected: _paperDetected,
-                                      color: accentColor)))),
-                    if (_detectedQrCorners != null &&
-                        _lockedSheetQr != null) ...[
-                      Builder(builder: (context) {
-                        final lockedQr = _lockedSheetQr;
-                        if (lockedQr == null) return const SizedBox.shrink();
-                        final inviteCode =
-                            _extractInviteCode(lockedQr.sheetIdentifier);
-                        return Positioned.fill(
-                          child: IgnorePointer(
-                            child: CustomPaint(
-                              painter: QrBoundingBoxPainter(
-                                corners: _detectedQrCorners!,
-                                label: inviteCode != null
-                                    ? (DeepLinkService.isInviteToken(inviteCode)
-                                        ? 'Private invitation'
-                                        : 'Course Code: $inviteCode')
-                                    : "LOCKED: ${lockedQr.sheetIdentifier}",
-                                color: inviteCode != null
-                                    ? (isDark
-                                        ? Colors.yellowAccent
-                                        : Colors.amber)
-                                    : accentColor,
-                              ),
-                            ),
-                          ),
-                        );
-                      }),
-                    ],
+                                      corners: corners,
+                                      isDetected: true,
+                                      color: accentColor)),
+                        ),
+                      ),
+                    ),
                   ]);
                 }),
               ),
@@ -1273,13 +1166,19 @@ class _ScannerScreenState extends State<ScannerScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text("IDENTIFYING STUDENT...",
-                        style: TextStyle(
+                    Text(
+                        _developerSandbox
+                            ? 'PREPARING TEST PREVIEW...'
+                            : 'IDENTIFYING STUDENT...',
+                        style: const TextStyle(
                             color: Colors.white,
                             fontWeight: FontWeight.bold,
                             fontSize: 16)),
                     const SizedBox(height: 6),
-                    Text("Resolving answer key & running local OMR...",
+                    Text(
+                        _developerSandbox
+                            ? 'Reading this test sheet locally...'
+                            : 'Resolving answer key & running local OMR...',
                         style: TextStyle(
                             color: Colors.grey.shade300, fontSize: 13)),
                   ],
@@ -1478,7 +1377,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
       final Uint8List bytes = await photo.readAsBytes();
 
       // 1. Dynamically resolve the template from metadata or question count before processing OMR
-      BubbleSheetTemplate resolvedTemplate = Standard50QuestionsTemplate();
+      BubbleSheetTemplate resolvedTemplate = _developerSandbox
+          ? (widget.sandboxTemplate ?? Standard50QuestionsTemplate())
+          : Standard50QuestionsTemplate();
       Map<String, dynamic>? preResolvedMetadata;
 
       final rawIdentifier = _lockedSheetQr?.sheetIdentifier ?? '';
@@ -1557,6 +1458,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
         corners: corners,
         template: resolvedTemplate,
         expectedQr: _lockedSheetQr,
+        developerSandbox: _developerSandbox,
+        calibration: AppBuild.developerTools
+            ? await DeveloperTemplateStore.active(resolvedTemplate.id)
+            : null,
       );
 
       final processedSheet = await ImageProcessor.processOmr(request);
@@ -1564,7 +1469,8 @@ class _ScannerScreenState extends State<ScannerScreen> {
       if (mounted) {
         if (processedSheet != null) {
           await _handleProcessedSheet(processedSheet,
-              preResolvedMetadata: preResolvedMetadata);
+              preResolvedMetadata: preResolvedMetadata,
+              processingTemplate: resolvedTemplate);
         } else {
           _showErrorSnackBar("Could not process sheet. Please try again.");
         }
@@ -1582,140 +1488,6 @@ class _ScannerScreenState extends State<ScannerScreen> {
   }
 }
 
-class QrBoundingBoxPainter extends CustomPainter {
-  final List<Offset> corners;
-  final String label;
-  final Color color;
-
-  QrBoundingBoxPainter({
-    required this.corners,
-    required this.label,
-    required this.color,
-  });
-
-  List<Offset> _sortedCorners() {
-    if (corners.length != 4) return corners;
-
-    final centroid = Offset(
-      corners.fold<double>(0, (sum, p) => sum + p.dx) / 4,
-      corners.fold<double>(0, (sum, p) => sum + p.dy) / 4,
-    );
-
-    final ordered = List<Offset>.from(corners);
-    ordered.sort((a, b) {
-      final angleA = math.atan2(a.dy - centroid.dy, a.dx - centroid.dx);
-      final angleB = math.atan2(b.dy - centroid.dy, b.dx - centroid.dx);
-      return angleA.compareTo(angleB);
-    });
-    return ordered;
-  }
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (corners.length < 4) return;
-
-    final ordered = _sortedCorners();
-    final mappedCorners = ordered.map((p) {
-      final scaledX = p.dx > 1.0 ? p.dx : p.dx * size.width;
-      final scaledY = p.dy > 1.0 ? p.dy : p.dy * size.height;
-      return Offset(
-          scaledX.clamp(0.0, size.width), scaledY.clamp(0.0, size.height));
-    }).toList();
-
-    final path = Path()
-      ..moveTo(mappedCorners[0].dx, mappedCorners[0].dy)
-      ..lineTo(mappedCorners[1].dx, mappedCorners[1].dy)
-      ..lineTo(mappedCorners[2].dx, mappedCorners[2].dy)
-      ..lineTo(mappedCorners[3].dx, mappedCorners[3].dy)
-      ..close();
-
-    final fillPaint = Paint()
-      ..color = color.withValues(alpha: 0.18)
-      ..style = PaintingStyle.fill;
-    canvas.drawPath(path, fillPaint);
-
-    final bracketPaint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 4.5
-      ..strokeCap = StrokeCap.round;
-
-    const double armLength = 18.0;
-    for (int i = 0; i < 4; i++) {
-      final pCurr = mappedCorners[i];
-      final pNext = mappedCorners[(i + 1) % 4];
-      final pPrev = mappedCorners[(i + 3) % 4];
-
-      final dirNext = (pNext - pCurr);
-      final lenNext = dirNext.distance;
-      if (lenNext > 0) {
-        final armNext =
-            pCurr + (dirNext / lenNext) * armLength.clamp(0, lenNext / 2);
-        canvas.drawLine(pCurr, armNext, bracketPaint);
-      }
-
-      final dirPrev = (pPrev - pCurr);
-      final lenPrev = dirPrev.distance;
-      if (lenPrev > 0) {
-        final armPrev =
-            pCurr + (dirPrev / lenPrev) * armLength.clamp(0, lenPrev / 2);
-        canvas.drawLine(pCurr, armPrev, bracketPaint);
-      }
-    }
-
-    if (label.isNotEmpty) {
-      final topMid = Offset(
-        (mappedCorners[0].dx +
-                mappedCorners[1].dx +
-                mappedCorners[2].dx +
-                mappedCorners[3].dx) /
-            4,
-        math.min(math.min(mappedCorners[0].dy, mappedCorners[1].dy),
-                math.min(mappedCorners[2].dy, mappedCorners[3].dy)) -
-            18,
-      );
-
-      final textSpan = TextSpan(
-        text: label,
-        style: const TextStyle(
-          color: Colors.black,
-          fontSize: 12,
-          fontWeight: FontWeight.bold,
-        ),
-      );
-      final textPainter = TextPainter(
-        text: textSpan,
-        textDirection: TextDirection.ltr,
-      )..layout();
-
-      final bgWidth = textPainter.width + 20;
-      final bgHeight = textPainter.height + 10;
-      final bgRect = RRect.fromRectAndRadius(
-        Rect.fromCenter(
-          center: Offset(topMid.dx, topMid.dy - bgHeight / 2),
-          width: bgWidth,
-          height: bgHeight,
-        ),
-        const Radius.circular(12),
-      );
-
-      final chipPaint = Paint()..color = color;
-      canvas.drawRRect(bgRect, chipPaint);
-      textPainter.paint(
-        canvas,
-        Offset(topMid.dx - textPainter.width / 2, topMid.dy - bgHeight / 2 + 5),
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant QrBoundingBoxPainter oldDelegate) {
-    return oldDelegate.corners != corners ||
-        oldDelegate.label != label ||
-        oldDelegate.color != color;
-  }
-}
-
 class EdgePainter extends CustomPainter {
   final List<Offset> corners;
   final bool isDetected;
@@ -1724,7 +1496,7 @@ class EdgePainter extends CustomPainter {
       {required this.corners, this.isDetected = false, required this.color});
   @override
   void paint(Canvas canvas, Size size) {
-    if (corners.isEmpty) return;
+    if (corners.length != 4) return;
     final paint = Paint()
       ..color = isDetected ? color.withValues(alpha: 0.8) : Colors.white24
       ..strokeWidth = isDetected ? 3 : 1
@@ -1752,6 +1524,12 @@ class EdgePainter extends CustomPainter {
 
     canvas.drawPath(path, fillPaint);
     canvas.drawPath(path, paint);
+    if (isDetected) {
+      for (final point in pts) {
+        canvas.drawRect(
+            Rect.fromCenter(center: point, width: 24, height: 24), paint);
+      }
+    }
   }
 
   @override

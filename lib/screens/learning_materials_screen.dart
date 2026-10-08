@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:open_filex/open_filex.dart';
@@ -65,6 +66,18 @@ class LearningMaterialsScreen extends StatefulWidget {
 }
 
 class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
+  StreamSubscription<CacheChange>? _cacheSubscription;
+  StreamSubscription<List<Map<String, dynamic>>>? _materialsSubscription;
+  final Map<String, Map<String, dynamic>> _confirmedUploads = {};
+  final Set<String> _deletedIds = {};
+  bool _isLoading = true;
+  @override
+  void dispose() {
+    _cacheSubscription?.cancel();
+    _materialsSubscription?.cancel();
+    super.dispose();
+  }
+
   bool _isUploading = false;
   LearningMaterialItem? _pendingUploadItem;
   final Map<String, bool> _downloadingMap = {};
@@ -73,19 +86,58 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
   @override
   void initState() {
     super.initState();
+    _cacheSubscription = DataCacheService.changes.listen((change) {
+      if (!mounted ||
+          change.kind != 'materials' ||
+          change.id != widget.courseId ||
+          change.userId != SupabaseService.currentUser?.id) {
+        return;
+      }
+      if (change.changedRow != null) {
+        _confirmedUploads[change.changedRow!['id'].toString()] =
+            change.changedRow!;
+      }
+      setState(() {
+        _cachedRawList = List<Map<String, dynamic>>.from(change.value);
+        _isLoading = false;
+      });
+    });
     _loadCachedMaterials();
+    final userId = SupabaseService.currentUser?.id;
+    _materialsSubscription =
+        SupabaseService.streamLearningMaterials(widget.courseId).listen((rows) {
+      if (userId != SupabaseService.currentUser?.id) {
+        return;
+      }
+      _confirmedUploads
+          .removeWhere((id, row) => rows.any((remote) => remote['id'] == id));
+      _deletedIds.removeWhere((id) => !rows.any((row) => row['id'] == id));
+      final merged = [
+        ..._confirmedUploads.values,
+        ...rows.where((row) => !_deletedIds.contains(row['id']))
+      ];
+      unawaited(
+          DataCacheService.saveLearningMaterials(widget.courseId, merged));
+    }, onError: (Object error) {
+      if (mounted) setState(() => _isLoading = false);
+      debugPrint('Material refresh failed: $error');
+    });
   }
 
   Future<void> _loadCachedMaterials() async {
     final cached = await DataCacheService.getLearningMaterials(widget.courseId);
     if (cached.isNotEmpty && mounted) {
       setState(() {
-        _cachedRawList = cached;
+        if (_cachedRawList.isEmpty) _cachedRawList = cached;
+        _isLoading = false;
       });
     }
   }
 
   Future<void> _pickAndUploadFile() async {
+    if (_isUploading) {
+      return;
+    }
     // Security check: Only instructors can upload
     if (!widget.isOwner) {
       CheckMateUi.showTopPrompt(
@@ -171,7 +223,9 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
   }
 
   Future<void> _downloadOrOpenMaterial(LearningMaterialItem item) async {
-    if (item.isUploading) return;
+    if (item.isUploading) {
+      return;
+    }
 
     // 1. If already saved locally and exists, open directly
     if (item.localPath != null && File(item.localPath!).existsSync()) {
@@ -188,7 +242,9 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
 
     // Check temp directory for previously downloaded file
     final tempDir = await getTemporaryDirectory();
-    final localFile = File('${tempDir.path}/${item.fileName}');
+    final safeName = item.fileName.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    final localFile = File(
+        '${tempDir.path}/material_${SupabaseService.currentUser?.id}_${item.id}_$safeName');
 
     if (localFile.existsSync() && localFile.lengthSync() > 0) {
       setState(() => item.localPath = localFile.path);
@@ -253,7 +309,9 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
   }
 
   void _confirmDelete(LearningMaterialItem item) {
-    if (item.isUploading) return;
+    if (item.isUploading) {
+      return;
+    }
 
     showDialog(
       context: context,
@@ -270,6 +328,10 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
               Navigator.pop(dialogContext);
               try {
                 await SupabaseService.deleteLearningMaterial(item.id);
+                _confirmedUploads.remove(item.id);
+                _deletedIds.add(item.id);
+                await DataCacheService.removeRows(
+                    'materials', widget.courseId, [item.id]);
                 if (mounted) {
                   CheckMateUi.showTopPrompt(context, 'Deleted ${item.fileName}',
                       isError: false);
@@ -476,21 +538,14 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
       appBar: AppBar(
         title: const Text('Learning Materials'),
       ),
-      body: StreamBuilder<List<Map<String, dynamic>>>(
-        stream: SupabaseService.streamLearningMaterials(widget.courseId),
-        builder: (context, snapshot) {
-          if (snapshot.hasData && snapshot.data != null) {
-            _cachedRawList = snapshot.data!;
-            DataCacheService.saveLearningMaterials(widget.courseId, snapshot.data!);
-          }
-
-          if (snapshot.connectionState == ConnectionState.waiting &&
+      body: Builder(
+        builder: (context) {
+          if (_isLoading &&
               _cachedRawList.isEmpty &&
               _pendingUploadItem == null) {
             return const Center(child: CircularProgressIndicator());
           }
-
-          final rawList = snapshot.hasData ? snapshot.data! : _cachedRawList;
+          final rawList = _cachedRawList;
           final streamMaterials =
               rawList.map((m) => LearningMaterialItem.fromMap(m)).toList();
 

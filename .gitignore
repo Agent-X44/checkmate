@@ -50,3 +50,8 @@ backend/.env.example
 /android/app/profile
 /android/app/release
 hf_space/
+
+# Android release signing secrets
+android/key.properties
+*.jks
+*.keystore

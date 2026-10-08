@@ -2,10 +2,9 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import 'package:uuid/data.dart';
-import 'package:uuid/uuid.dart';
 import '../models/course.dart';
 import 'api_service.dart';
+import 'data_cache_service.dart';
 import '../utils/choice_label.dart';
 
 /// Service responsible for Supabase Authentication and Database interactions.
@@ -16,18 +15,6 @@ import '../utils/choice_label.dart';
 class SupabaseService {
   static final SupabaseClient _client = Supabase.instance.client;
   static SupabaseClient get client => _client;
-
-  static String _storedQuestionText(dynamic question) {
-    final text =
-        (question['questionText'] ?? question['text'] ?? '').toString();
-    final options = question['options'];
-    if (question['questionType'] == 'MCQ' &&
-        options is List &&
-        options.length == 4) {
-      return '$text\n${List.generate(4, (i) => '${String.fromCharCode(65 + i)}. ${stripChoiceLabel(options[i], i)}').join('\n')}';
-    }
-    return text;
-  }
 
   static Map<String, dynamic> _restoredQuestion(Map<String, dynamic> source) {
     final question = Map<String, dynamic>.from(source);
@@ -120,6 +107,7 @@ class SupabaseService {
   }
 
   static Future<void> signOut() async {
+    DataCacheService.clearMemoryCache();
     await _client.auth.signOut();
   }
 
@@ -176,7 +164,10 @@ class SupabaseService {
         .select('id, name, instructor_id, created_at, profiles(name)')
         .single();
 
-    return Course.fromMap({...response, 'code': code}, isOwner: true);
+    final course = Course.fromMap({...response, 'code': code}, isOwner: true);
+    if (currentUser?.id != user.id) throw StateError('Account changed.');
+    await DataCacheService.upsert('courses', 'mine', course.toCacheMap());
+    return course;
   }
 
   static Future<String> resetCourseCode(String classId) async {
@@ -375,6 +366,8 @@ class SupabaseService {
               'Course information is incomplete. Ask the instructor for a new invitation.');
         }
         final course = Course.fromMap(classData, isOwner: false);
+        if (currentUser?.id != user.id) throw StateError('Account changed.');
+        await DataCacheService.upsert('courses', 'mine', course.toCacheMap());
         debugPrint('SUPABASE JOIN DEBUG: joined class=$classId');
         return course;
       } catch (error, stackTrace) {
@@ -445,6 +438,35 @@ class SupabaseService {
     }));
   }
 
+  static final Map<String, Future<List<Course>>> _courseLoads = {};
+  static Future<List<Course>> refreshCourses() {
+    final userId = currentUser?.id;
+    if (userId == null) return Future.value([]);
+    return _courseLoads[userId] ??=
+        _refreshCourses(userId).whenComplete(() => _courseLoads.remove(userId));
+  }
+
+  static Future<List<Course>> _refreshCourses(String userId) async {
+    final version = DataCacheService.revision('courses', 'mine');
+    final lists = await Future.wait(
+        [getCreatedCoursesDetails(), getEnrolledCoursesDetails()]);
+    if (currentUser?.id != userId) {
+      throw StateError('Account changed during refresh.');
+    }
+    final courses = {
+      for (final course in lists.expand((list) => list)) course.id: course
+    };
+    await DataCacheService.saveCourses(
+        courses.values.map((c) => c.toCacheMap()).toList(),
+        expectedRevision: version);
+    return cachedCourses();
+  }
+
+  static Future<List<Course>> cachedCourses() async =>
+      (await DataCacheService.getCourses())
+          .map((row) => Course.fromMap(row, isOwner: row['_is_owner'] == true))
+          .toList();
+
   // --- DATABASE: EXAMS (BR-02, BR-03) ---
 
   static Future<void> saveCreatedExam({
@@ -454,66 +476,32 @@ class SupabaseService {
     required List<dynamic> questions,
     bool hasMultipleSets = false,
     String? templateId,
+    String? draftId,
   }) async {
     final user = currentUser;
     if (user == null) throw Exception("Not authenticated");
 
-    try {
-      // 1. Try direct Supabase insert
-      final examResponse = await _client
-          .from('exams')
-          .insert({
-            'class_id': classId,
-            'title': '[$assessmentType] $title',
-            'is_approved': false,
-            'status': 'Draft',
-            'has_multiple_sets': hasMultipleSets,
-            if (templateId != null) 'template_id': templateId,
-          })
-          .select('id')
-          .single();
-
-      final String examId = examResponse['id'];
-
-      // 2. Insert Questions into Supabase
-      if (questions.isNotEmpty) {
-        final baseMillis = DateTime.now().millisecondsSinceEpoch;
-        const uuid = Uuid();
-        final inserts = questions
-            .asMap()
-            .entries
-            .map((entry) => {
-                  // Time-ordered IDs preserve the printed question order when
-                  // fetched from Supabase, without a database migration.
-                  'id':
-                      uuid.v7(config: V7Options(baseMillis + entry.key, null)),
-                  'exam_id': examId,
-                  'question_text': _storedQuestionText(entry.value),
-                  'correct_answer': (entry.value['correctAnswer'] ??
-                          entry.value['answer'] ??
-                          'A')
-                      .toString(),
-                  'question_type':
-                      (entry.value['questionType'] ?? 'MCQ').toString(),
-                  'topic_tag': (entry.value['topicTag'] ?? title).toString(),
-                })
-            .toList();
-
-        await _client.from('questions').insert(inserts);
-      }
-    } catch (e) {
-      debugPrint(
-          "Direct Supabase save notice ($e) - falling back to Backend API...");
-      // Fallback to FastAPI backend endpoint which bypasses RLS policies
-      await ApiService.saveDraft(
-        classId: classId,
-        title: title,
-        assessmentType: assessmentType,
-        questions: questions,
-        hasMultipleSets: hasMultipleSets,
-        templateId: templateId,
-      );
-    }
+    final saved = await ApiService.saveDraft(
+      classId: classId,
+      title: title,
+      assessmentType: assessmentType,
+      questions: questions,
+      hasMultipleSets: hasMultipleSets,
+      templateId: templateId,
+      draftId: draftId,
+    );
+    if (currentUser?.id != user.id) throw StateError('Account changed.');
+    await DataCacheService.upsert('exams', classId, {
+      ...Map<String, dynamic>.from(saved['exam'] ?? {}),
+      'id': saved['exam_id'],
+      'class_id': classId,
+      'title': '[$assessmentType] $title',
+      'template_id': templateId,
+      'total_questions': questions.length,
+      'questions': questions
+          .map((q) => {'question_type': q['questionType'] ?? 'MCQ'})
+          .toList(),
+    });
   }
 
   static Stream<List<Map<String, dynamic>>> streamExams(String classId) {
@@ -525,9 +513,12 @@ class SupabaseService {
   }
 
   static Future<List<Map<String, dynamic>>> getExams(String classId) async {
+    final userId = currentUser?.id;
+    final revision = DataCacheService.revision('exams', classId);
+    List<Map<String, dynamic>> exams;
     try {
       // 1. Try Backend API first to ensure unapproved draft exams are returned (bypasses RLS SELECT restrictions)
-      return await ApiService.getExams(classId);
+      exams = await ApiService.getExams(classId);
     } catch (e) {
       debugPrint("Direct Supabase getExams fallback ($e)...");
       final response = await _client
@@ -535,28 +526,18 @@ class SupabaseService {
           .select('*, questions(id, question_type)')
           .eq('class_id', classId)
           .order('created_at', ascending: false);
-      return List<Map<String, dynamic>>.from(response);
+      exams = List<Map<String, dynamic>>.from(response);
     }
+    if (currentUser?.id != userId) {
+      throw StateError('Account changed during refresh.');
+    }
+    await DataCacheService.saveExams(classId, exams,
+        expectedRevision: revision);
+    return DataCacheService.getExams(classId);
   }
 
-  static Future<void> deleteExam(String examId) async {
-    try {
-      await ApiService.deleteExamApi(examId);
-    } catch (e) {
-      debugPrint("ApiService deleteExamApi fallback ($e)...");
-      await _client.from('questions').delete().eq('exam_id', examId);
-
-      final sheets = await _client
-          .from('answer_sheets')
-          .select('id')
-          .eq('exam_id', examId);
-      for (final s in (sheets as List)) {
-        await _client.from('grades').delete().eq('sheet_id', s['id']);
-      }
-      await _client.from('answer_sheets').delete().eq('exam_id', examId);
-      await _client.from('exams').delete().eq('id', examId);
-    }
-  }
+  static Future<void> deleteExam(String examId) =>
+      ApiService.deleteExamApi(examId);
 
   static Future<List<Map<String, dynamic>>> getExamQuestions(
       String examId) async {
@@ -581,16 +562,8 @@ class SupabaseService {
     }
   }
 
-  static Future<void> approveExam(String examId) async {
-    try {
-      await ApiService.approveExam(examId);
-    } catch (e) {
-      debugPrint("ApiService approveExam fallback ($e)...");
-      await _client
-          .from('exams')
-          .update({'is_approved': true, 'status': 'Ready'}).eq('id', examId);
-    }
-  }
+  static Future<void> approveExam(String examId) =>
+      ApiService.approveExam(examId);
 
   static Future<List<Map<String, dynamic>>> getEnrolledStudents(
       String classId) async {
@@ -849,11 +822,11 @@ class SupabaseService {
       return _client.storage.from('materials').getPublicUrl(storagePath);
     } catch (e) {
       debugPrint("Storage upload notice (using database fallback URL): $e");
-      return "https://ssfzrtenhiaiumxmuabq.supabase.co/storage/v1/object/public/materials/$storagePath";
+      rethrow;
     }
   }
 
-  static Future<void> addLearningMaterial({
+  static Future<Map<String, dynamic>> addLearningMaterial({
     required String classId,
     required String title,
     required String fileName,
@@ -861,14 +834,22 @@ class SupabaseService {
     required String fileSize,
     required String fileUrl,
   }) async {
-    await _client.from('learning_materials').insert({
-      'class_id': classId,
-      'title': title,
-      'file_name': fileName,
-      'file_type': fileType,
-      'file_size': fileSize,
-      'file_url': fileUrl,
-    });
+    final userId = currentUser?.id;
+    final saved = await _client
+        .from('learning_materials')
+        .insert({
+          'class_id': classId,
+          'title': title,
+          'file_name': fileName,
+          'file_type': fileType,
+          'file_size': fileSize,
+          'file_url': fileUrl,
+        })
+        .select()
+        .single();
+    if (currentUser?.id != userId) throw StateError('Account changed.');
+    await DataCacheService.upsert('materials', classId, saved);
+    return saved;
   }
 
   static Future<void> deleteLearningMaterial(String materialId) async {

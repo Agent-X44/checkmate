@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:dio/dio.dart' as dio;
 import 'package:flutter/foundation.dart';
+import 'data_cache_service.dart';
 import 'package:http_parser/http_parser.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/omr/processed_sheet.dart';
@@ -101,15 +102,18 @@ class ApiService {
     required List<dynamic> questions,
     bool hasMultipleSets = false,
     String? templateId,
+    String? draftId,
   }) async {
     try {
-      final response = await _dio.post('/save-draft', data: {
+      final response = await _dio
+          .post('/save-draft', options: _authenticatedOptions(), data: {
         'class_id': classId,
         'title': title,
         'assessment_type': assessmentType,
         'questions': questions,
         'has_multiple_sets': hasMultipleSets,
         if (templateId != null) 'template_id': templateId,
+        if (draftId != null) 'draft_id': draftId,
       });
       return response.data;
     } catch (e) {
@@ -177,12 +181,14 @@ class ApiService {
     return results;
   }
 
-  static Future<Map<String, dynamic>> analyzeClass(String examId) async {
+  static Future<Map<String, dynamic>> analyzeClass(String examId,
+      {bool regenerate = false}) async {
     try {
       final response = await _dio
           .post('/analyze-class', options: _authenticatedOptions(), data: {
         'exam_id': examId,
         'class_id': '',
+        'regenerate': regenerate,
       });
       return response.data;
     } catch (e) {
@@ -291,11 +297,9 @@ class ApiService {
   }
 
   static Future<void> deleteExamApi(String examId) async {
-    try {
-      await _dio.delete('/delete-exam/$examId');
-    } catch (e) {
-      debugPrint("API Error (deleteExamApi): $e");
-      rethrow;
+    final deleted = await deleteDraftExams([examId]);
+    if (!deleted.contains(examId)) {
+      throw Exception('Assessment status changed. Refresh and try again.');
     }
   }
 
@@ -319,34 +323,40 @@ class ApiService {
     }
   }
 
-  static Future<void> approveExam(String examId) async {
+  static Future<List<String>> deleteDraftExams(List<String> examIds) async {
     try {
-      await _dio.post('/approve-exam/$examId');
-    } catch (e) {
-      debugPrint(
-          "API Error (approveExam): $e. Using direct Supabase fallback...");
-      await Supabase.instance.client
-          .from('exams')
-          .update({'is_approved': true, 'status': 'Ready'}).eq('id', examId);
+      final response = await _dio.post('/delete-draft-exams',
+          data: {'exam_ids': examIds}, options: _authenticatedOptions());
+      return List<String>.from(response.data['deleted_ids']);
+    } on dio.DioException catch (error) {
+      final data = error.response?.data;
+      if (data is Map && data['detail'] is String) {
+        throw Exception(data['detail']);
+      }
+      rethrow;
     }
   }
 
-  static Future<void> unapproveExam(String examId) async {
-    try {
-      await _dio.post('/unapprove-exam/$examId');
-    } catch (e) {
-      debugPrint(
-          "API Error (unapproveExam): $e. Using direct Supabase fallback...");
-      await Supabase.instance.client
-          .from('exams')
-          .update({'is_approved': false, 'status': 'Draft'}).eq('id', examId);
+  static Future<void> _changeAssessment(String path, String examId) async {
+    final userId = Supabase.instance.client.auth.currentUser?.id;
+    final response =
+        await _dio.post('$path/$examId', options: _authenticatedOptions());
+    if (userId != Supabase.instance.client.auth.currentUser?.id) return;
+    final exam = response.data['exam'];
+    if (exam is Map && exam['class_id'] != null) {
+      await DataCacheService.upsert('exams', exam['class_id'].toString(),
+          Map<String, dynamic>.from(exam));
     }
   }
 
-  static Future<void> releaseResults(String examId) async {
-    await _dio.post('/release-results/$examId',
-        options: _authenticatedOptions());
-  }
+  static Future<void> approveExam(String examId) =>
+      _changeAssessment('/approve-exam', examId);
+  static Future<void> unapproveExam(String examId) =>
+      _changeAssessment('/unapprove-exam', examId);
+  static Future<void> unreleaseResults(String examId) =>
+      _changeAssessment('/unrelease-results', examId);
+  static Future<void> releaseResults(String examId) =>
+      _changeAssessment('/release-results', examId);
 
   static Future<Uint8List> exportScoresXlsx(String examId) async {
     final options = _authenticatedOptions();
