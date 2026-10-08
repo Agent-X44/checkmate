@@ -16,6 +16,9 @@ import 'cv/template_service.dart';
 import 'cv/bubble_detection_service.dart';
 import 'cv/qr_detection_service.dart';
 import 'cv/camera_frame_service.dart';
+import 'cv/live_scan_policy.dart';
+import '../config/app_build.dart';
+import '../models/omr/template_calibration.dart';
 
 // [LABEL: Request Models]
 
@@ -28,6 +31,7 @@ class ScanRequest {
   final int bytesPerPixel;
   final SendPort replyPort;
   final int scanSession;
+  final int capturedAtMicros;
 
   final double cannyThreshold1;
   final double cannyThreshold2;
@@ -35,6 +39,7 @@ class ScanRequest {
   final double sensitivity;
   final int rotationIndex;
   final bool returnDebugImage;
+  final bool detectQr;
 
   ScanRequest({
     required this.bytes,
@@ -44,12 +49,14 @@ class ScanRequest {
     this.bytesPerPixel = 1,
     required this.replyPort,
     this.scanSession = 0,
+    this.capturedAtMicros = 0,
     this.cannyThreshold1 = 50.0,
     this.cannyThreshold2 = 150.0,
     this.blurSigma = 0.0,
     this.sensitivity = 0.02,
     this.rotationIndex = 1,
     this.returnDebugImage = false,
+    this.detectQr = true,
   });
 }
 
@@ -63,6 +70,8 @@ class OmrRequest {
   final Rect? customSetRegion;
   final List<Offset>? customSetBubbles;
   final QrData? expectedQr;
+  final TemplateCalibration? calibration;
+  final bool developerSandbox;
 
   OmrRequest({
     required this.bytes,
@@ -73,6 +82,8 @@ class OmrRequest {
     this.customSetRegion,
     this.customSetBubbles,
     this.expectedQr,
+    this.calibration,
+    this.developerSandbox = false,
   });
 }
 
@@ -102,6 +113,7 @@ class SheetIdentityException implements Exception {
 class ScanResponse {
   final bool foundPaper;
   final int scanSession;
+  final int capturedAtMicros;
   final List<double>? corners; // Normalized coordinates [x1, y1, ...]
   final Uint8List? debugImage;
   final QrData? detectedQr;
@@ -111,11 +123,20 @@ class ScanResponse {
   ScanResponse({
     required this.foundPaper,
     this.scanSession = 0,
+    this.capturedAtMicros = 0,
     this.corners,
     this.debugImage,
     this.detectedQr,
     this.qrCorners,
   });
+}
+
+class _LiveTrackingState {
+  int? session;
+  (int, int, int)? frameShape;
+  List<SheetPoint>? corners;
+  (double, double)? layout;
+  int lastQrAt = 0;
 }
 
 /// [LABEL: Memory Management]
@@ -162,9 +183,10 @@ class ImageProcessor {
     final receivePort = ReceivePort();
     mainSendPort.send(receivePort.sendPort);
 
+    final tracking = _LiveTrackingState();
     receivePort.listen((message) {
       if (message is ScanRequest) {
-        _handleLiveScan(message);
+        _handleLiveScan(message, tracking);
       } else if (message is OmrRequest) {
         debugPrint("OMR ISOLATE: Received high-res request (legacy path)");
         final result = _processOmrInternal(message);
@@ -173,7 +195,8 @@ class ImageProcessor {
     });
   }
 
-  static void _handleLiveScan(ScanRequest message) {
+  static void _handleLiveScan(
+      ScanRequest message, _LiveTrackingState tracking) {
     final pool = CvPool();
     try {
       // 1. [LABEL: Data Ingestion] Mat Creation & Row Stride Handling
@@ -187,17 +210,19 @@ class ImageProcessor {
       final mat = pool.add(cv.Mat.fromList(
           message.height, message.width, cv.MatType.CV_8UC1, luminance));
 
-      // 2. [LABEL: Optimization] Keep a high-resolution QR search path for monitor-sized codes.
-      // Some QR codes are still legible at ~800px, but large monitor-rendered codes need a second
-      // pass at a higher resolution so the detector does not smear or lose the quiet zone.
-      const double targetWidth = 1200.0;
-      final double resizeScale = targetWidth / message.width;
-      final int targetHeight = (message.height * resizeScale).toInt();
-      final smallMat =
-          pool.add(cv.resize(mat, (targetWidth.toInt(), targetHeight)));
-
+      // Bound preview work by the long edge and never upscale camera frames.
+      // Capture still uses its original detail and independent alignment.
+      final scale = math.min(
+          1.0,
+          LiveScanPolicy.previewMaxDimension /
+              math.max(message.width, message.height));
+      final smallMat = scale < 1
+          ? pool.add(cv.resize(mat, (
+              (message.width * scale).round(),
+              (message.height * scale).round()
+            )))
+          : mat;
       var processedMat = smallMat;
-
       if (message.rotationIndex == 1) {
         processedMat = pool.add(cv.rotate(smallMat, cv.ROTATE_90_CLOCKWISE));
       } else if (message.rotationIndex == 2) {
@@ -206,54 +231,87 @@ class ImageProcessor {
         processedMat =
             pool.add(cv.rotate(smallMat, cv.ROTATE_90_COUNTERCLOCKWISE));
       }
-
-      final int finalW = processedMat.width;
-      final int finalH = processedMat.height;
-
-      // [LABEL: Feature Extraction] Real-time QR detection on the full live frame and the
-      // high-resolution fallback. This is crucial when a QR occupies a large portion of a monitor
-      // and the fiber of the phone camera sees glare, scanlines, or partial tilt.
-      QrDetectionResult? qrResult =
-          QrDetectionService.detectWithCorners(processedMat, fastMode: false);
-      qrResult ??= _scanQrRegion(processedMat);
-      // All returned QR coordinates must describe the oriented preview frame.
-      // The full-resolution fallback has the same axes and field of view.
-      var orientedMat = mat;
-      if (message.rotationIndex == 1) {
-        orientedMat = pool.add(cv.rotate(mat, cv.ROTATE_90_CLOCKWISE));
-      } else if (message.rotationIndex == 2) {
-        orientedMat = pool.add(cv.rotate(mat, cv.ROTATE_180));
-      } else if (message.rotationIndex == 3) {
-        orientedMat = pool.add(cv.rotate(mat, cv.ROTATE_90_COUNTERCLOCKWISE));
+      final finalW = processedMat.width;
+      final finalH = processedMat.height;
+      final shape = (message.width, message.height, message.rotationIndex);
+      if (tracking.session != message.scanSession ||
+          tracking.frameShape != shape) {
+        tracking.session = message.scanSession;
+        tracking.frameShape = shape;
+        tracking.corners = null;
+        tracking.layout = null;
+        tracking.lastQrAt = 0;
       }
-      qrResult ??= _scanQrRegion(orientedMat);
-      qrResult ??=
-          QrDetectionService.detectWithCorners(orientedMat, fastMode: true);
-      final rawFrameQr = qrResult == null
-          ? QrDetectionService.detectEntireImage(orientedMat)
-          : null;
-      final detectedQr = qrResult?.data ?? rawFrameQr;
-      final qrCorners = qrResult?.corners;
-
-      if (detectedQr == null) {
-        debugPrint(
-            'LIVE QR: no QR detected in full frame or explicit ROI scan');
-      } else {
-        debugPrint('LIVE QR: ${detectedQr.sheetIdentifier}');
-      }
-
-      // Find the printed markers in this frame, without fixed corner zones or
-      // a paper-edge aspect-ratio gate that rejects foreshortened sheets.
-      final candidates = SheetAlignmentService.findCandidates(processedMat);
       List<SheetPoint>? markerCorners;
-      for (final layout in [(0.681, 0.063), (0.320, 0.090)]) {
-        markerCorners = FiducialGeometry.selectMarkers(candidates,
-            imageArea: (finalW * finalH).toDouble(),
+      final previous = tracking.corners;
+      final layout = tracking.layout;
+      if (previous != null && layout != null) {
+        final shortEdge = math.min(previous[0].distanceTo(previous[1]),
+            previous[1].distanceTo(previous[2]));
+        final widestEdge = math.max(previous[0].distanceTo(previous[1]),
+            previous[2].distanceTo(previous[3]));
+        final radius = math
+            .max(shortEdge * 0.22, widestEdge * layout.$2 * 1.3)
+            .clamp(24.0, 128.0);
+        final nearby = SheetAlignmentService.findNearbyCandidates(
+            processedMat, previous, radius);
+        markerCorners = FiducialGeometry.trackMarkers(previous, nearby,
+            searchRadius: radius,
             aspectRatio: layout.$1,
-            diameterRatio: layout.$2,
-            qrCenter: _qrCenter(qrCorners, finalW, finalH));
-        if (markerCorners != null) break;
+            diameterRatio: layout.$2);
       }
+      List<FiducialCandidate>? candidates;
+      void acquire({SheetPoint? qrCenter}) {
+        candidates ??= SheetAlignmentService.findCandidates(processedMat,
+            thresholdWindows: const [51]);
+        for (final layout in [(0.681, 0.063), (0.320, 0.090)]) {
+          markerCorners = FiducialGeometry.selectMarkers(candidates!,
+              imageArea: (finalW * finalH).toDouble(),
+              aspectRatio: layout.$1,
+              diameterRatio: layout.$2,
+              qrCenter: qrCenter);
+          if (markerCorners != null) {
+            tracking.layout = layout;
+            break;
+          }
+        }
+      }
+
+      if (markerCorners == null) acquire();
+      QrData? detectedQr;
+      List<double>? qrCorners;
+      // ML Kit identifies sheets independently. Native QR work is needed only
+      // to disambiguate acquisition or for unsupported platform buffers, and
+      // must not compete with the fast marker path on every frame.
+      final now = DateTime.now().microsecondsSinceEpoch;
+      if ((markerCorners == null || message.detectQr) &&
+          now - tracking.lastQrAt >= LiveScanPolicy.qrInterval.inMicroseconds) {
+        tracking.lastQrAt = now;
+        try {
+          final detector = pool.add(cv.QRCodeDetector.empty());
+          final (located, points) = detector.detect(processedMat);
+          if (located && points.length >= 4) {
+            qrCorners = [
+              for (var i = 0; i < 4; i++) ...[
+                points[i].x / finalW,
+                points[i].y / finalH
+              ]
+            ];
+            if (message.detectQr) {
+              final (text, _, _) =
+                  detector.decode(processedMat, points: points);
+              if (text.isNotEmpty) detectedQr = QrData.fromRaw(text);
+            }
+            if (markerCorners == null) {
+              acquire(qrCenter: _qrCenter(qrCorners, finalW, finalH));
+            }
+          }
+        } catch (error) {
+          debugPrint('Live QR location unavailable: $error');
+        }
+      }
+      tracking.corners = markerCorners;
+      if (markerCorners == null) tracking.layout = null;
       final foundPaper = markerCorners != null;
       final paperCorners =
           markerCorners?.expand((p) => [p.x / finalW, p.y / finalH]).toList();
@@ -265,96 +323,25 @@ class ImageProcessor {
       message.replyPort.send(ScanResponse(
         foundPaper: foundPaper,
         scanSession: message.scanSession,
+        capturedAtMicros: message.capturedAtMicros,
         corners: paperCorners,
         debugImage: debugBytes,
         detectedQr: detectedQr,
         qrCorners: qrCorners,
       ));
     } catch (e, stack) {
+      tracking.corners = null;
+      tracking.layout = null;
       debugPrint("LIVE SCAN ISOLATE ERROR: $e\n$stack");
       message.replyPort.send(ScanResponse(
         foundPaper: false,
         scanSession: message.scanSession,
+        capturedAtMicros: message.capturedAtMicros,
       ));
     } finally {
       // [LABEL: Cleanup] Prevent FFI Memory Leaks
       pool.disposeAll();
     }
-  }
-
-  static QrDetectionResult? _scanQrRegion(cv.Mat source) {
-    final pool = CvPool();
-    try {
-      final int w = source.width;
-      final int h = source.height;
-      final List<cv.Rect> regions = [
-        cv.Rect((w * 0.55).toInt(), (h * 0.02).toInt(), (w * 0.40).toInt(),
-            (h * 0.28).toInt()),
-        cv.Rect((w * 0.15).toInt(), (h * 0.02).toInt(), (w * 0.70).toInt(),
-            (h * 0.32).toInt()),
-        cv.Rect(0, 0, w, h),
-      ];
-
-      for (final region in regions) {
-        final crop = pool.add(source.region(region));
-        final detector = pool.add(cv.QRCodeDetector.empty());
-        final (text, points, _) = detector.detectAndDecode(crop);
-        if (text.isNotEmpty) {
-          final corners = points.isNotEmpty
-              ? [
-                  points[0].x.toDouble() / crop.width,
-                  points[0].y.toDouble() / crop.height,
-                  points[1].x.toDouble() / crop.width,
-                  points[1].y.toDouble() / crop.height,
-                  points[2].x.toDouble() / crop.width,
-                  points[2].y.toDouble() / crop.height,
-                  points[3].x.toDouble() / crop.width,
-                  points[3].y.toDouble() / crop.height,
-                ]
-              : null;
-          final normalized = corners == null
-              ? null
-              : <double>[
-                  ((region.x + points[0].x.toDouble()) / w).clamp(0.0, 1.0),
-                  ((region.y + points[0].y.toDouble()) / h).clamp(0.0, 1.0),
-                  ((region.x + points[1].x.toDouble()) / w).clamp(0.0, 1.0),
-                  ((region.y + points[1].y.toDouble()) / h).clamp(0.0, 1.0),
-                  ((region.x + points[2].x.toDouble()) / w).clamp(0.0, 1.0),
-                  ((region.y + points[2].y.toDouble()) / h).clamp(0.0, 1.0),
-                  ((region.x + points[3].x.toDouble()) / w).clamp(0.0, 1.0),
-                  ((region.y + points[3].y.toDouble()) / h).clamp(0.0, 1.0),
-                ];
-          return QrDetectionResult(
-              data: QrData.fromRaw(text), corners: normalized);
-        }
-
-        final gray = pool.add(
-            crop.channels == 3 ? cv.cvtColor(crop, cv.COLOR_BGR2GRAY) : crop);
-        final (_, binary) =
-            cv.threshold(gray, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-        final detector2 = pool.add(cv.QRCodeDetector.empty());
-        final (text2, points2, _) = detector2.detectAndDecode(binary);
-        if (text2.isNotEmpty) {
-          final normalized = <double>[
-            ((region.x + points2[0].x.toDouble()) / w).clamp(0.0, 1.0),
-            ((region.y + points2[0].y.toDouble()) / h).clamp(0.0, 1.0),
-            ((region.x + points2[1].x.toDouble()) / w).clamp(0.0, 1.0),
-            ((region.y + points2[1].y.toDouble()) / h).clamp(0.0, 1.0),
-            ((region.x + points2[2].x.toDouble()) / w).clamp(0.0, 1.0),
-            ((region.y + points2[2].y.toDouble()) / h).clamp(0.0, 1.0),
-            ((region.x + points2[3].x.toDouble()) / w).clamp(0.0, 1.0),
-            ((region.y + points2[3].y.toDouble()) / h).clamp(0.0, 1.0),
-          ];
-          return QrDetectionResult(
-              data: QrData.fromRaw(text2), corners: normalized);
-        }
-      }
-    } catch (e) {
-      debugPrint('LIVE QR ROI scan failed: $e');
-    } finally {
-      pool.disposeAll();
-    }
-    return null;
   }
 
   static SheetPoint? _qrCenter(List<double>? corners, int width, int height) {
@@ -402,9 +389,12 @@ class ImageProcessor {
       }
 
       final expectedId = message.expectedQr?.sheetIdentifier;
-      final capturedQr = expectedId == null
-          ? QrDetectionService.detectWithCorners(mat)
-          : QrDetectionService.detectMatchingSheet(mat, expectedId);
+      final sandbox = AppBuild.developerTools && message.developerSandbox;
+      final capturedQr = sandbox
+          ? null
+          : expectedId == null
+              ? QrDetectionService.detectWithCorners(mat)
+              : QrDetectionService.detectMatchingSheet(mat, expectedId);
       final rawImageQr = capturedQr?.data;
       _verifyCapturedIdentity(rawImageQr, expectedId);
       if (rawImageQr != null &&
@@ -446,118 +436,59 @@ class ImageProcessor {
           .add(cv.warpPerspective(mat, transform, (targetWidth, targetHeight)));
       QrData? qrData = rawImageQr;
 
-      if (qrData == null || qrData.examCode == "UNKNOWN") {
-        final warpedQr = QrDetectionService.detectEntireImage(warped);
-        if (warpedQr != null && warpedQr.examCode != "UNKNOWN") {
-          qrData = warpedQr;
-        }
-      }
-
-      if ((qrData == null || qrData.examCode == "UNKNOWN") &&
-          activeTemplate.qrRegion != null) {
-        final regionalQr =
-            QrDetectionService.detectQr(warped, activeTemplate.qrRegion!);
-        if (regionalQr != null && regionalQr.examCode != "UNKNOWN") {
-          qrData = regionalQr;
-        }
-      }
-
-      if (qrData == null || qrData.examCode == "UNKNOWN") {
-        final broadQr = QrDetectionService.searchBroad(warped);
-        if (broadQr != null && broadQr.examCode != "UNKNOWN") {
-          qrData = broadQr;
-        }
-      }
-
-      if (qrData == null || qrData.examCode == "UNKNOWN") {
-        try {
-          debugPrint(
-              "OMR: Retrying captured QR at an alternate image scale...");
-          final int targetH = (mat.height * (800.0 / mat.width)).toInt();
-          final smallMat = pool.add(cv.resize(mat, (800, targetH)));
-          final smallQr = QrDetectionService.detectEntireImage(smallMat);
-          if (smallQr != null && smallQr.examCode != "UNKNOWN") {
-            qrData = smallQr;
+      if (!sandbox) {
+        if (qrData == null || qrData.examCode == "UNKNOWN") {
+          final warpedQr = QrDetectionService.detectEntireImage(warped);
+          if (warpedQr != null && warpedQr.examCode != "UNKNOWN") {
+            qrData = warpedQr;
           }
-        } catch (_) {}
+        }
+
+        final qrRegion = AppBuild.developerTools
+            ? message.calibration?.qrRegion ?? activeTemplate.qrRegion
+            : activeTemplate.qrRegion;
+        if ((qrData == null || qrData.examCode == "UNKNOWN") &&
+            qrRegion != null) {
+          final regionalQr = QrDetectionService.detectQr(warped, qrRegion);
+          if (regionalQr != null && regionalQr.examCode != "UNKNOWN") {
+            qrData = regionalQr;
+          }
+        }
+
+        if (qrData == null || qrData.examCode == "UNKNOWN") {
+          final broadQr = QrDetectionService.searchBroad(warped);
+          if (broadQr != null && broadQr.examCode != "UNKNOWN") {
+            qrData = broadQr;
+          }
+        }
+
+        if (qrData == null || qrData.examCode == "UNKNOWN") {
+          try {
+            debugPrint(
+                "OMR: Retrying captured QR at an alternate image scale...");
+            final int targetH = (mat.height * (800.0 / mat.width)).toInt();
+            final smallMat = pool.add(cv.resize(mat, (800, targetH)));
+            final smallQr = QrDetectionService.detectEntireImage(smallMat);
+            if (smallQr != null && smallQr.examCode != "UNKNOWN") {
+              qrData = smallQr;
+            }
+          } catch (_) {}
+        }
       }
 
       debugPrint('OMR: Active Template -> ${activeTemplate.name}');
 
       // A preview lock can be stale after moving the camera to another sheet.
       // Only a QR decoded from this photograph may establish its identity.
-      _verifyCapturedIdentity(qrData, expectedId, requireDecoded: true);
-
-      final thresholded = pool.add(ThresholdService.applyOtsuThreshold(warped));
-
-      String? detectedSet;
-      final setRegion = message.customSetRegion ?? activeTemplate.setRegion;
-      final setBubbles = message.customSetBubbles ?? activeTemplate.setBubbles;
-
-      if (setBubbles != null && setBubbles.isNotEmpty) {
-        detectedSet = _detectSetFromBubbles(thresholded, setBubbles);
-      } else if (setRegion != null) {
-        detectedSet = _detectSetFromRegion(thresholded, setRegion);
+      if (!sandbox) {
+        _verifyCapturedIdentity(qrData, expectedId, requireDecoded: true);
       }
 
-      final List<BubbleResult> results = [];
-      final List<Uint8List> questionImages = [];
-
-      double gridStart = activeTemplate.gridStart;
-      double gridWidth = activeTemplate.gridWidth;
-      int calibratedY = activeTemplate.calibratedYOffset;
-
-      final List<Rect> activeRegions = activeTemplate.answerRegions;
-      final int questionsPerRegion =
-          (activeTemplate.totalQuestions / activeRegions.length).ceil();
-
-      for (int i = 0; i < activeRegions.length; i++) {
-        final region = activeRegions[i];
-        final regionMat =
-            pool.add(TemplateService.extractRegion(thresholded, region));
-        final questionsInThisRegion = (i == activeRegions.length - 1)
-            ? activeTemplate.totalQuestions - (questionsPerRegion * i)
-            : questionsPerRegion;
-
-        final questionMats = TemplateService.splitQuestions(
-          regionMat,
-          questionsInThisRegion,
-          yOffset: calibratedY,
-          heightMultiplier: message.stripHeightMultiplier,
-        );
-
-        for (final m in questionMats) {
-          pool.add(m);
-          final result = BubbleDetectionService.detectFilledBubble(
-            m,
-            activeTemplate.choicesPerQuestion,
-            isBinary: true,
-            gridStart: gridStart,
-            gridWidthRatio: gridWidth,
-          );
-          results.add(result);
-          questionImages.add(Uint8List.fromList(cv.imencode(".jpg", m).$2));
-        }
-      }
-
-      final warpedBytes = Uint8List.fromList(cv.imencode(".jpg", warped).$2);
-      final thresholdBytes =
-          Uint8List.fromList(cv.imencode(".jpg", thresholded).$2);
-      final legacyAnswerArea = pool.add(TemplateService.extractRegion(
-          warped, activeTemplate.answerRegions.first));
-      final answerAreaBytes =
-          Uint8List.fromList(cv.imencode(".jpg", legacyAnswerArea).$2);
-
-      return ProcessedSheet(
-        warpedImage: warpedBytes,
-        thresholdImage: thresholdBytes,
-        answerRegion: answerAreaBytes,
-        questionImages: questionImages,
-        results: results,
-        qrData: qrData,
-        detectedSet: detectedSet,
-        templateName: activeTemplate.name,
-      );
+      return _readWarped(warped, activeTemplate, qrData,
+          stripHeight: message.stripHeightMultiplier,
+          customSetRegion: message.customSetRegion,
+          customSetBubbles: message.customSetBubbles,
+          calibration: AppBuild.developerTools ? message.calibration : null);
     } on SheetAlignmentException {
       rethrow;
     } on SheetIdentityException {
@@ -568,6 +499,134 @@ class ImageProcessor {
     } finally {
       pool.disposeAll();
     }
+  }
+
+  /// Developer-only local inspection: no identity lookup or grade sync occurs.
+  static Future<ProcessedSheet> previewCalibration(ProcessedSheet sheet,
+      BubbleSheetTemplate template, TemplateCalibration config) async {
+    if (!AppBuild.developerTools) {
+      throw StateError('Developer edition required');
+    }
+    return Isolate.run(() {
+      final image = cv.imdecode(sheet.warpedImage, cv.IMREAD_COLOR);
+      if (image.isEmpty) {
+        throw const FormatException('Could not read this image');
+      }
+      return _readWarped(image, template, sheet.qrData, calibration: config);
+    });
+  }
+
+  static ProcessedSheet _readWarped(
+      cv.Mat warped, BubbleSheetTemplate activeTemplate, QrData? qrData,
+      {double stripHeight = 1.2,
+      Rect? customSetRegion,
+      List<Offset>? customSetBubbles,
+      TemplateCalibration? calibration}) {
+    final pool = CvPool();
+    final thresholded = pool.add(ThresholdService.applyOtsuThreshold(warped));
+
+    String? detectedSet;
+    final setRegion =
+        calibration?.setRegion ?? customSetRegion ?? activeTemplate.setRegion;
+    final setBubbles = calibration?.setBubbles ??
+        customSetBubbles ??
+        activeTemplate.setBubbles;
+
+    if (setBubbles != null && setBubbles.isNotEmpty) {
+      detectedSet = _detectSetFromBubbles(thresholded, setBubbles);
+    } else if (setRegion != null) {
+      detectedSet = _detectSetFromRegion(thresholded, setRegion);
+    }
+
+    final List<BubbleResult> results = [];
+    final List<Uint8List> questionImages = [];
+
+    double gridStart = calibration?.gridStart ?? activeTemplate.gridStart;
+    double gridWidth = calibration?.gridWidth ?? activeTemplate.gridWidth;
+    int calibratedY = calibration?.yOffset ?? activeTemplate.calibratedYOffset;
+
+    final List<Rect> activeRegions =
+        calibration?.answerRegions ?? activeTemplate.answerRegions;
+    final int questionsPerRegion =
+        (activeTemplate.totalQuestions / activeRegions.length).ceil();
+
+    for (int i = 0; i < activeRegions.length; i++) {
+      final region = activeRegions[i];
+      final regionMat = pool.add(TemplateService.extractRegion(
+          thresholded, region,
+          xOffset: calibration?.xOffset ?? 0));
+      final questionsInThisRegion = (i == activeRegions.length - 1)
+          ? activeTemplate.totalQuestions - (questionsPerRegion * i)
+          : questionsPerRegion;
+
+      final questionMats = TemplateService.splitQuestions(
+        regionMat,
+        questionsInThisRegion,
+        yOffset: calibratedY,
+        heightMultiplier: calibration?.stripHeight ?? stripHeight,
+        ySpace: calibration?.rowSpacing ?? 0,
+      );
+
+      for (final m in questionMats) {
+        pool.add(m);
+        final result = BubbleDetectionService.detectFilledBubble(
+          m,
+          activeTemplate.choicesPerQuestion,
+          isBinary: true,
+          gridStart: gridStart,
+          gridWidthRatio: gridWidth,
+          threshold: calibration?.fillThreshold ?? .18,
+          zoneWidthRatio: calibration?.zoneWidth ?? .45,
+          zoneHeightRatio: calibration?.zoneHeight ?? .60,
+        );
+        results.add(result);
+        questionImages.add(Uint8List.fromList(cv.imencode(".jpg", m).$2));
+      }
+    }
+
+    final bubbles = calibration?.answerBubbles;
+    if (bubbles != null && bubbles.isNotEmpty) {
+      var offset = 0;
+      results.clear();
+      questionImages.clear();
+      for (var i = 0; i < activeTemplate.totalQuestions; i++) {
+        final choices =
+            activeTemplate.tfCount > 0 && i >= activeTemplate.mcqCount
+                ? 2
+                : activeTemplate.choicesPerQuestion;
+        if (offset + choices > bubbles.length) {
+          throw const FormatException(
+              'Add every answer bubble, in question and choice order');
+        }
+        results.add(BubbleDetectionService.detectAtPoints(
+            thresholded, bubbles.sublist(offset, offset + choices),
+            radiusRatio: calibration!.bubbleRadius,
+            threshold: calibration.fillThreshold));
+        offset += choices;
+      }
+      if (offset != bubbles.length) {
+        throw const FormatException('Remove extra answer bubbles');
+      }
+    }
+    final warpedBytes = Uint8List.fromList(cv.imencode(".jpg", warped).$2);
+    final thresholdBytes =
+        Uint8List.fromList(cv.imencode(".jpg", thresholded).$2);
+    final legacyAnswerArea =
+        pool.add(TemplateService.extractRegion(warped, activeRegions.first));
+    final answerAreaBytes =
+        Uint8List.fromList(cv.imencode(".jpg", legacyAnswerArea).$2);
+
+    return ProcessedSheet(
+      warpedImage: warpedBytes,
+      thresholdImage: thresholdBytes,
+      answerRegion: answerAreaBytes,
+      questionImages: questionImages,
+      results: results,
+      qrData: qrData,
+      detectedSet: detectedSet,
+      templateName: calibration?.name ?? activeTemplate.name,
+      questionCapacity: activeTemplate.totalQuestions,
+    );
   }
 
   static void _verifyCapturedIdentity(QrData? captured, String? expectedId,

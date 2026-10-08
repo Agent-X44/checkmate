@@ -34,14 +34,15 @@ class _SessionInsightsScreenState extends State<SessionInsightsScreen> {
     super.dispose();
   }
 
-  Future<void> _loadInsights() async {
+  Future<void> _loadInsights({bool regenerate = false}) async {
     try {
-      final data = await ApiService.analyzeClass(widget.examId);
+      final data =
+          await ApiService.analyzeClass(widget.examId, regenerate: regenerate);
 
       // Check if backend returned a "Processing" status instead of data
       if (data.containsKey('status') && data['status'] == 'Processing') {
         _startPolling();
-      } else {
+      } else if (mounted) {
         setState(() {
           _insights = data;
           _isLoading = false;
@@ -81,7 +82,17 @@ class _SessionInsightsScreenState extends State<SessionInsightsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("AI Class Analysis")),
+      appBar: AppBar(title: const Text("AI Class Analysis"), actions: [
+        IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh analysis',
+            onPressed: _isLoading
+                ? null
+                : () {
+                    setState(() => _isLoading = true);
+                    _loadInsights(regenerate: true);
+                  }),
+      ]),
       body: _isLoading
           ? Center(
               child: Padding(
@@ -91,13 +102,13 @@ class _SessionInsightsScreenState extends State<SessionInsightsScreen> {
                     children: [
                       const CircularProgressIndicator(),
                       const SizedBox(height: 24),
-                      const Text("Llama 3.1 is analyzing results...",
+                      const Text("Preparing class feedback...",
                           textAlign: TextAlign.center,
                           style: TextStyle(
                               fontWeight: FontWeight.bold, fontSize: 18)),
                       const SizedBox(height: 8),
                       Text(
-                          "This happens in the background to prevent timeouts.",
+                          "Feedback is prepared automatically after results are saved.",
                           textAlign: TextAlign.center,
                           style: TextStyle(
                               color: Colors.grey.shade600, fontSize: 12)),
@@ -145,7 +156,11 @@ class _SessionInsightsScreenState extends State<SessionInsightsScreen> {
                                 fontWeight: FontWeight.bold)),
                         const SizedBox(height: 10),
                         ElevatedButton(
-                          onPressed: _isReleasing ? null : _releaseResults,
+                          onPressed: _isReleasing ||
+                                  (_insights?['is_approved'] != true &&
+                                      _insights?['results_released'] != true)
+                              ? null
+                              : _releaseResults,
                           style: ElevatedButton.styleFrom(
                             minimumSize: const Size(double.infinity, 60),
                             backgroundColor:
@@ -157,9 +172,12 @@ class _SessionInsightsScreenState extends State<SessionInsightsScreen> {
                               ? CircularProgressIndicator(
                                   color:
                                       Theme.of(context).colorScheme.onPrimary)
-                              : const Text("RELEASE RESULTS TO STUDENTS",
+                              : Text(
+                                  _insights?['results_released'] == true
+                                      ? 'UNRELEASE RESULTS'
+                                      : 'RELEASE RESULTS TO STUDENTS',
                                   textAlign: TextAlign.center,
-                                  style: TextStyle(
+                                  style: const TextStyle(
                                       fontSize: 16,
                                       fontWeight: FontWeight.bold)),
                         ),
@@ -272,29 +290,45 @@ class _SessionInsightsScreenState extends State<SessionInsightsScreen> {
   }
 
   Future<void> _releaseResults() async {
+    if (_isReleasing) return;
+    final withdrawing = _insights?['results_released'] == true;
+    if (withdrawing) {
+      final confirm = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+                title: const Text('Unrelease results?'),
+                content: const Text(
+                    'Students will lose access to these results. Saved grades and insights will be kept.'),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Cancel')),
+                  TextButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('Unrelease'))
+                ],
+              ));
+      if (confirm != true || !mounted) return;
+    }
     setState(() => _isReleasing = true);
     try {
-      await ApiService.releaseResults(widget.examId);
-      if (mounted) {
-        showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-                  title: const Text("Success"),
-                  content: const Text(
-                      "Results are now visible to all enrolled students."),
-                  actions: [
-                    TextButton(
-                        onPressed: () {
-                          Navigator.pop(context);
-                          Navigator.pop(context);
-                          Navigator.pop(context);
-                        },
-                        child: const Text("DONE"))
-                  ],
-                ));
+      if (withdrawing) {
+        await ApiService.unreleaseResults(widget.examId);
+      } else {
+        await ApiService.releaseResults(widget.examId);
       }
+      if (!mounted) return;
+      setState(() {
+        _insights?['results_released'] = !withdrawing;
+      });
+      CheckMateUi.showTopPrompt(context,
+          withdrawing ? 'Results unreleased.' : 'Results released to students!',
+          isError: false);
     } catch (e) {
-      if (mounted) CheckMateUi.showTopPrompt(context, "Release failed: $e");
+      if (mounted) {
+        CheckMateUi.showTopPrompt(
+            context, 'Could not update result access: $e');
+      }
     } finally {
       if (mounted) setState(() => _isReleasing = false);
     }

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:uuid/uuid.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
@@ -71,7 +72,14 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
   String _sourceMode = 'topic';
   bool _hasMultipleSets = false;
 
+  bool _savingDraft = false;
+  bool _draftSaved = false;
+  String? _draftId;
+
   Future<void> _saveToDraftsAuto() async {
+    if (_savingDraft || _draftSaved) return;
+    setState(() => _savingDraft = true);
+    _draftId ??= const Uuid().v4();
     try {
       await SupabaseService.saveCreatedExam(
         classId: widget.classId,
@@ -82,12 +90,17 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
         questions: _finalQuestions,
         hasMultipleSets: _hasMultipleSets,
         templateId: _selectedTemplate.id,
+        draftId: _draftId,
       );
+      if (mounted) setState(() => _draftSaved = true);
     } catch (e) {
       if (mounted) {
-        CheckMateUi.showTopPrompt(
-            context, 'Failed to save draft automatically: $e');
+        debugPrint('Draft saving failed: $e');
+        CheckMateUi.showTopPrompt(context,
+            'Could not save your draft. Your questions are still here. Tap Retry save.');
       }
+    } finally {
+      if (mounted) setState(() => _savingDraft = false);
     }
   }
 
@@ -133,6 +146,8 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
       _liveQuestions.clear();
       _finalQuestions = [];
       _isGenerationFinished = false;
+      _draftSaved = false;
+      _draftId = null;
     });
 
     // The supplied items are only formatted in Existing Questions mode.
@@ -307,15 +322,45 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text('AI ${widget.type} Builder')),
-      body: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 500),
-        child: _currentStep == 0
-            ? _buildInput()
-            : _currentStep == 1
-                ? _buildTerminal()
-                : _buildReview(),
+    return PopScope(
+      canPop: !_isGenerationFinished || _draftSaved,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (didPop || !mounted || _savingDraft) return;
+        final leave = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Draft not saved'),
+            content: const Text(
+                'Retry saving or export your questions before leaving. Leave without saving?'),
+            actions: [
+              TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Keep draft')),
+              TextButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Leave')),
+            ],
+          ),
+        );
+        if (leave == true && mounted) {
+          setState(() => _isGenerationFinished = false);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) Navigator.pop(context, false);
+          });
+        }
+      },
+      child: Scaffold(
+        appBar: AppBar(title: Text('AI ${widget.type} Builder')),
+        body: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 500),
+          layoutBuilder: (currentChild, previousChildren) =>
+              currentChild ?? const SizedBox.shrink(),
+          child: _currentStep == 0
+              ? _buildInput()
+              : _currentStep == 1
+                  ? _buildTerminal()
+                  : _buildReview(),
+        ),
       ),
     );
   }
@@ -797,19 +842,31 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: Colors.amber),
               ),
-              child: const Row(
+              child: Row(
                 children: [
-                  Icon(Icons.warning_amber_rounded, color: Colors.amber),
-                  SizedBox(width: 12),
+                  const Icon(Icons.warning_amber_rounded, color: Colors.amber),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'AI can make mistakes. Your assessment has been automatically saved to Drafts. You can edit it in the assessment review.',
-                      style: TextStyle(fontSize: 14),
+                      _draftSaved
+                          ? 'Saved to Drafts. Review the questions before approving the assessment.'
+                          : _savingDraft
+                              ? 'Saving your draft...'
+                              : 'Your draft has not been saved. Retry saving before leaving this page.',
+                      style: const TextStyle(fontSize: 14),
                     ),
                   ),
                 ],
               ),
             ),
+            if (!_draftSaved) ...[
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: _savingDraft ? null : _saveToDraftsAuto,
+                icon: const Icon(Icons.save_outlined),
+                label: Text(_savingDraft ? 'Saving...' : 'Retry save'),
+              ),
+            ],
             const SizedBox(height: 20),
             OutlinedButton.icon(
               onPressed: _exportDocx,
@@ -820,9 +877,11 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
             ),
             const SizedBox(height: 10),
             ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context, true);
-              },
+              onPressed: _draftSaved
+                  ? () {
+                      Navigator.pop(context, true);
+                    }
+                  : null,
               style: ElevatedButton.styleFrom(
                 minimumSize: const Size(double.infinity, 55),
                 backgroundColor: Theme.of(context).brightness == Brightness.dark
@@ -832,8 +891,11 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
                     ? Colors.black
                     : Colors.white,
               ),
-              child: const Text('RETURN TO CLASS (SAVED)',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              child: Text(
+                  _draftSaved
+                      ? 'RETURN TO CLASS (SAVED)'
+                      : 'SAVE DRAFT TO CONTINUE',
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
             ),
           ],
         ),

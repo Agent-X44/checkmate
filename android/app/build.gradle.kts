@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -6,6 +8,12 @@ plugins {
 
 if (file("google-services.json").exists()) {
     apply(plugin = "com.google.gms.google-services")
+}
+
+val releaseKeyPropertiesFile = rootProject.file("key.properties")
+val releaseKeyProperties = Properties()
+if (releaseKeyPropertiesFile.exists()) {
+    releaseKeyPropertiesFile.inputStream().use { releaseKeyProperties.load(it) }
 }
 
 android {
@@ -31,21 +39,40 @@ android {
         versionName = flutter.versionName
     }
 
-    buildTypes {
-        release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+    flavorDimensions += "edition"
+    productFlavors {
+        create("production") {
+            dimension = "edition"
+            resValue("string", "app_name", "CheckMate")
+            manifestPlaceholders["deepLinkScheme"] = "checkmate"
+        }
+        create("developer") {
+            dimension = "edition"
+            applicationIdSuffix = ".dev"
+            resValue("string", "app_name", "CheckMate Dev")
+            manifestPlaceholders["deepLinkScheme"] = "checkmate-dev"
         }
     }
 
-    applicationVariants.all {
-        val variant = this
-        variant.outputs.all {
-            val outputFileName = "CheckMate.apk"
-            (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl).outputFileName = outputFileName
+    if (releaseKeyPropertiesFile.exists()) {
+        signingConfigs {
+            create("release") {
+                keyAlias = releaseKeyProperties.getProperty("keyAlias")
+                keyPassword = releaseKeyProperties.getProperty("keyPassword")
+                storeFile = rootProject.file(releaseKeyProperties.getProperty("storeFile"))
+                storePassword = releaseKeyProperties.getProperty("storePassword")
+            }
         }
     }
+
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.getByName(
+                if (releaseKeyPropertiesFile.exists()) "release" else "debug")
+        }
+    }
+
+
 }
 
 kotlin {
@@ -63,4 +90,12 @@ dependencies {
     implementation("androidx.concurrent:concurrent-futures:1.2.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
+}
+
+// The offline developer edition does not need a Firebase Android registration.
+// Supply its own configuration later to enable push notifications there.
+if (!file("src/developer/google-services.json").exists()) {
+    tasks.configureEach {
+        if (name.startsWith("processDeveloper") && name.endsWith("GoogleServices")) enabled = false
+    }
 }

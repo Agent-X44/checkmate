@@ -4,6 +4,8 @@ import 'package:opencv_dart/opencv_dart.dart' as cv;
 import '../../models/omr/qr_data.dart';
 import 'image_preprocessing_service.dart';
 import 'perspective_service.dart';
+import 'fiducial_geometry.dart';
+import 'qr_geometry.dart';
 
 class QrDetectionResult {
   final QrData data;
@@ -368,8 +370,20 @@ QrDetectionResult? _attemptDecode(
             final (text5, points5, _) = detector5.detectAndDecode(warpedQr);
 
             if (text5.isNotEmpty) {
-              final corners = _extractNormalizedCorners(ordered, offsetX,
-                  offsetY, fullInput.width, fullInput.height, rotation);
+              // The enclosing contour can be the whole header or sheet.
+              // Locate the decoded QR itself in the original crop before
+              // using its center to select the registration markers.
+              final corners = _extractNormalizedCorners(
+                  points5,
+                  offsetX,
+                  offsetY,
+                  fullInput.width,
+                  fullInput.height,
+                  rotation,
+                  ordered
+                      .toList()
+                      .map((p) => SheetPoint(p.x.toDouble(), p.y.toDouble()))
+                      .toList());
               return QrDetectionResult(
                   data: QrData.fromRaw(text5), corners: corners);
             }
@@ -386,7 +400,7 @@ QrDetectionResult? _attemptDecode(
 
 List<double>? _extractNormalizedCorners(
     dynamic pts, int offsetX, int offsetY, int fullW, int fullH,
-    [int rotation = 0]) {
+    [int rotation = 0, List<SheetPoint>? warpedRegion]) {
   try {
     if (fullW <= 0 || fullH <= 0) return null;
 
@@ -401,30 +415,16 @@ List<double>? _extractNormalizedCorners(
       return null;
     }
 
-    final res = <double>[];
-    for (int i = 0; i < 4; i++) {
-      double px = (pointList[i].x + offsetX).toDouble();
-      double py = (pointList[i].y + offsetY).toDouble();
-
-      if (rotation == 90) {
-        final double origX = py;
-        final double origY = fullH - 1 - px;
-        px = origX;
-        py = origY;
-      } else if (rotation == 270) {
-        final double origX = fullW - 1 - py;
-        final double origY = px;
-        px = origX;
-        py = origY;
-      } else if (rotation == 180) {
-        px = fullW - 1 - px;
-        py = fullH - 1 - py;
-      }
-
-      res.add((px / fullW).clamp(0.0, 1.0));
-      res.add((py / fullH).clamp(0.0, 1.0));
-    }
-    return res;
+    return QrGeometry.normalizedCorners(
+        pointList
+            .map((p) => SheetPoint(p.x.toDouble(), p.y.toDouble()))
+            .toList(),
+        width: fullW,
+        height: fullH,
+        offsetX: offsetX.toDouble(),
+        offsetY: offsetY.toDouble(),
+        rotation: rotation,
+        warpedRegion: warpedRegion);
   } catch (_) {
     return null;
   }

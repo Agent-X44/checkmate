@@ -1,9 +1,37 @@
 import 'package:opencv_dart/opencv_dart.dart' as cv;
+import 'package:flutter/material.dart';
 
 import '../../models/omr/bubble_result.dart';
 export '../../models/omr/bubble_result.dart';
 
 class BubbleDetectionService {
+  static BubbleResult detectAtPoints(cv.Mat binary, List<Offset> points,
+      {required double radiusRatio, required double threshold}) {
+    final radius = (binary.width * radiusRatio).round().clamp(1, binary.width);
+    final ratios = <double>[];
+    for (final p in points) {
+      final left =
+          (p.dx * binary.width - radius).round().clamp(0, binary.width - 1);
+      final top =
+          (p.dy * binary.height - radius).round().clamp(0, binary.height - 1);
+      final width = (radius * 2).clamp(1, binary.width - left);
+      final height = (radius * 2).clamp(1, binary.height - top);
+      final cell = binary.region(cv.Rect(left, top, width, height));
+      ratios.add(cv.countNonZero(cell) / (width * height));
+    }
+    final answers = [
+      for (var i = 0; i < ratios.length; i++)
+        if (ratios[i] > threshold) String.fromCharCode(65 + i)
+    ];
+    final sorted = List<double>.of(ratios)..sort((a, b) => b.compareTo(a));
+    return BubbleResult(
+        answer: answers.length == 1 ? answers.single : null,
+        confidence: sorted.length < 2 ? 0 : (sorted[0] - sorted[1]).clamp(0, 1),
+        isFilled: answers.isNotEmpty,
+        multipleAnswers: answers,
+        isAmbiguous: answers.length > 1);
+  }
+
   /// Processes a single question row using HIGH-PRECISION GRID mapping.
   static BubbleResult detectFilledBubble(
     cv.Mat rowMat,

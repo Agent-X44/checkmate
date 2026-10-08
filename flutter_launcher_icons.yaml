@@ -1,0 +1,12 @@
+# flutter pub run flutter_launcher_icons
+flutter_launcher_icons:
+  image_path: "assets/icon.png"
+
+  android: true
+  min_sdk_android: 21
+  ios: true
+  remove_alpha_ios: true
+
+  # Adaptive Icons for Android 8.0+
+  adaptive_icon_background: "#FFFFFF" # You can use a color or an image path like "assets/background.png"
+  adaptive_icon_foreground: "assets/icon.png" # Ideally, an image with extra padding to avoid cropping
