@@ -35,7 +35,7 @@ performance and class-wide academic metrics through exported data.
 
 ## Development and Android releases
 
-CheckMate uses `codex/stable` for release code and `codex/development` for ongoing
+CheckMate uses `stable` for release code and `dev` for ongoing
 work. Both branches share the production and developer Android flavors. Build
 both APKs from the same tested stable commit and attach them to one GitHub release.
 See [the branch workflow](docs/github-branch-workflow.md) and

@@ -2,7 +2,7 @@
 
 Both APKs are built from the same source and belong in one GitHub release. No release was published automatically.
 
-Use `codex/development` for ongoing changes and `codex/stable` for release builds. Both editions live in both branches. See [the GitHub branch workflow](github-branch-workflow.md) for promoting a tested version and publishing both APKs together.
+Use `dev` for ongoing changes and `stable` for release builds. Both editions live in both branches. See [the GitHub branch workflow](github-branch-workflow.md) for promoting a tested version and publishing both APKs together.
 
 | Edition | Android package | Launcher name | Startup |
 | --- | --- | --- | --- |
