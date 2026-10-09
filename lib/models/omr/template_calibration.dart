@@ -41,6 +41,9 @@ class TemplateCalibration {
           qrRegion: t.qrRegion,
           setRegion: t.setRegion,
           setBubbles: List.of(t.setBubbles ?? []),
+          answerBubbles: List.of(t.answerBubbles ?? []),
+          bubbleRadius: t.bubbleRadius,
+          fillThreshold: t.fillThreshold,
           gridStart: t.gridStart,
           gridWidth: t.gridWidth,
           yOffset: t.calibratedYOffset);

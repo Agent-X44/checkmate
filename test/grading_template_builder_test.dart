@@ -64,11 +64,10 @@ void main() {
     expect(result, isNotNull);
     final bubbles = result!.answerBubbles;
     expect(bubbles.length, 120);
-    final region = template.answerRegions.first;
-    // No sampled zones were supplied, so anchors start inside the region.
-    // The 80 px drag on an 800 px-wide image moves first-row A by 0.1.
-    expect(
-        bubbles.first.dx, closeTo(region.left + region.width * .2 + .1, .002));
-    expect(bubbles.last.dx, closeTo(region.left + region.width * .85, 1e-6));
+    // The builder starts from the template's calibrated bubbles. The 80 px
+    // drag on an 800 px-wide image moves first-row A by 0.1; last-row D stays.
+    final start = template.answerBubbles!;
+    expect(bubbles.first.dx, closeTo(start.first.dx + .1, .002));
+    expect((bubbles.last - start.last).distance, lessThan(1e-9));
   });
 }
