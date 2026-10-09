@@ -222,15 +222,23 @@ if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY:
 security = HTTPBearer()
 
 async def get_current_user(credentials = Depends(security)):
-    """Verifies JWT for protected routes."""
+    """Verify the caller's Supabase session for protected routes.
+
+    A missing, invalid or expired token is rejected here, so a route that
+    declares this dependency never runs for an anonymous caller.
+    """
     if not supabase:
+        # No database means no session to verify. Routes still call
+        # _require_user, which rejects this caller as unauthenticated.
         return None
     try:
         user = supabase.auth.get_user(credentials.credentials)
-        if not user: return None
-        return user
-    except:
-        return None
+    except Exception as exc:
+        logger.info("Session verification failed: %s", type(exc).__name__)
+        user = None
+    if not user or not getattr(getattr(user, "user", None), "id", None):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return user
 
 
 def extract_text_from_file(file: UploadFile, content_bytes: bytes) -> str:
@@ -664,8 +672,10 @@ def _restored_question(row: dict) -> dict:
 
 
 @app.post("/generate-exam")
-async def generate_exam(request: ExamRequest):
+async def generate_exam(request: ExamRequest, user=Depends(get_current_user)):
     """Return a fully checked preview; the instructor explicitly saves the draft."""
+    # Generation spends AI quota, so only the course instructor may start it.
+    _instructor_course(request.class_id, user)
     try:
         mcq_count = request.mcq_count if request.mcq_count is not None else request.question_count - request.tf_count
         validate_distribution(request.question_count, mcq_count,
@@ -694,8 +704,11 @@ async def generate_exam_stream(
     source_mode: str = Form("topic"),
     has_multiple_sets: bool = Form(False),
     file: UploadFile | None = File(None),
+    user=Depends(get_current_user),
 ):
     """Stream progress while generating and auditing exact, structured questions."""
+    # Generation spends AI quota, so only the course instructor may start it.
+    _instructor_course(class_id, user)
     try:
         validate_distribution(question_count, mcq_count, tf_count,
                               include_mcq, include_tf)
@@ -903,10 +916,16 @@ class QuestionUpdatePayload(BaseModel):
     correct_answer: str
 
 @app.put("/update-question/{question_id}")
-async def update_question(question_id: str, payload: QuestionUpdatePayload):
-    """Update a specific question in an exam."""
+async def update_question(question_id: str, payload: QuestionUpdatePayload,
+                          user=Depends(get_current_user)):
+    """Update a specific question in an exam the caller teaches."""
     if not supabase:
         raise HTTPException(status_code=500, detail="Database unconfigured")
+    _require_user(user)
+    question = _one("questions", "id", question_id, "id, exam_id")
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+    _instructor_exam(question.get("exam_id"), user)
     try:
         res = supabase.table("questions").update({
             "question_text": payload.question_text,
@@ -1022,10 +1041,11 @@ async def unrelease_results(exam_id: str, user=Depends(get_current_user)):
     return {"status": "success", "exam_id": exam_id, "results_released": False, "exam": updated[0]}
 
 @app.delete("/delete-course/{class_id}")
-async def delete_course(class_id: str):
-    """Admin/Backend cascade deletion of a course bypassing RLS and foreign keys."""
+async def delete_course(class_id: str, user=Depends(get_current_user)):
+    """Cascade deletion of a course, allowed only for the instructor who owns it."""
     if not supabase:
         raise HTTPException(status_code=500, detail="Database unconfigured")
+    _instructor_course(class_id, user)
     try:
         # Get exams
         exam_res = supabase.table("exams").select("id").eq("class_id", class_id).execute()
@@ -1199,6 +1219,17 @@ def _instructor_exam(exam_id, user):
     if course.get("instructor_id") != user_id:
         raise HTTPException(status_code=403, detail="Instructor access required")
     return exam
+
+
+def _instructor_course(class_id, user):
+    """Return the course only when the signed-in caller is its instructor."""
+    user_id = _require_user(user)
+    course = _one("classes", "id", class_id, "id, instructor_id")
+    if not course:
+        raise HTTPException(status_code=404, detail="Class not found")
+    if course.get("instructor_id") != user_id:
+        raise HTTPException(status_code=403, detail="Instructor access required")
+    return course
 
 
 def _paged(query_factory, size=500):

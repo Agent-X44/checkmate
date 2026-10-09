@@ -15,6 +15,8 @@ The developer workspace requires no account or internet. It opens sheet photos, 
 
 Signed-in developers can also open these tools from Evaluation Result and the existing assessment PDF designer. Named presets are selected by base layout, persisted on the device, and used on future matching developer scans. Production ignores all developer presets. Manual bubble positions are ordered by question, then choice (A-D for MCQ, A-B for TF).
 
+Offline camera captures and imported sheet photos detect the matching 30- or 50-question physical layout when it differs from the preferred selection. They open tools and apply presets for the detected layout. A matching mixed question layout keeps its selected configuration. Real assessment scanning still uses the resolved assessment template. See [developer capture layout details](developer-capture-layout-2026-10-08.md).
+
 Developer Firebase/Google sign-in registration is not required for offline work. To enable push and Google sign-in in the optional LMS mode, register com.checkmate.checkmate.dev and its signing certificate with the existing service projects, and put the matching Firebase file in android/app/src/developer/google-services.json. Email/password LMS sign-in still uses normal Supabase authentication. The developer custom link scheme is checkmate-dev; production retains checkmate. The production verified HTTPS links remain present in both editions; Android may offer an app chooser when both are installed.
 
 ## Build two release assets
@@ -22,21 +24,23 @@ Developer Firebase/Google sign-in registration is not required for offline work.
 On Windows:
 
 ```powershell
-./scripts/build-android-editions.ps1 -Flutter C:/flutter/bin/flutter.bat
+./scripts/build-android-editions.ps1 -Flutter C:/flutter/bin/flutter.bat -Force
 ```
 
 The script produces universal APKs covering ARM32, ARM64 and x86_64. For ARM64-only review builds:
 
 ```powershell
-./scripts/build-android-editions.ps1 -Flutter C:/flutter/bin/flutter.bat -TargetPlatforms android-arm64
+./scripts/build-android-editions.ps1 -Flutter C:/flutter/bin/flutter.bat -TargetPlatforms android-arm64 -Force
 ```
 
-Outputs: build/releases/CheckMate-Production.apk, CheckMate-Developer.apk, and SHA256SUMS.txt. Upload both APKs to the same GitHub release and identify the developer build as including offline template tools. Pass -BuildName and -BuildNumber to version both consistently.
+Outputs: build/releases/CheckMate.apk (production), CheckMate-Dev.apk (developer), and SHA256SUMS.txt. The script copies each built flavor to its release filename and updates the checksums to match. Pass -Force to force the APK copies, including replacing read-only destination APKs. Upload both APKs to the same GitHub release and identify the developer build as including offline template tools. Pass -BuildName and -BuildNumber to version both consistently.
+
+The Android configuration refreshes the app's JNI merge step on each build to avoid the [Flutter 3.44 flavored-build regression](https://github.com/flutter/flutter/issues/187553), which can otherwise package older Dart code after a successful incremental build.
 
 Configure android/key.properties using the example before public distribution if a stable release key is available. The key file and keystores are ignored by Git. Without it, builds retain the project's existing debug signing setup; current local review APKs use that setup. Keep each package's signing key consistent for future upgrades.
 
 ## Verification
 
-Flutter analysis passes for all 15 changed source/test files. The isolated pure Flutter suite passes 20 tests in each flavor. The tests cover automatic saving, developer-only evaluation navigation, profile persistence without authentication, invalid imported sampling settings, and production exclusion.
+Flutter analysis passes. The isolated pure Flutter suite passes 26 tests in each flavor. The tests cover offline layout selection, strict real assessment layouts, missing corners, automatic saving, developer-only evaluation navigation, profile persistence without authentication, invalid imported sampling settings, and production exclusion.
 
-Both universal Android release builds pass. APK inspection confirms the distinct package IDs and launcher labels, valid signatures, and complete Flutter engine/application libraries for ARM32, ARM64 and x86_64. The build script also creates SHA256SUMS.txt alongside both APKs. No device is connected here, so on-device camera/PDF behavior and optional developer Google/Firebase registration still require device checks.
+Both universal Android release builds pass. APK inspection confirms the distinct package IDs and launcher labels, valid signatures, and complete Flutter engine/application libraries for ARM32, ARM64 and x86_64. Each packaged app library's ELF build ID matches its fresh Flutter compilation, confirming the APK includes the current code. The build script also creates SHA256SUMS.txt alongside both APKs. No device is connected here, so on-device camera/PDF behavior and optional developer Google/Firebase registration still require device checks.

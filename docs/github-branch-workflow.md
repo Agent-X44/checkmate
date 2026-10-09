@@ -22,10 +22,10 @@ When a version is ready, review a pull request from `dev` into `stable`. Run rel
 Build both APKs from the same commit on `stable`, using the same version name and build number:
 
 ```powershell
-./scripts/build-android-editions.ps1 -Flutter C:/flutter/bin/flutter.bat -BuildName 1.0.2 -BuildNumber 2
+./scripts/build-android-editions.ps1 -Flutter C:/flutter/bin/flutter.bat -BuildName 1.0.2 -BuildNumber 2 -Force
 ```
 
-The version values above are examples; choose the actual next version before publishing. Configure a stable release signing key using `android/key.properties.example`. The resulting `CheckMate-Production.apk`, `CheckMate-Developer.apk` and `SHA256SUMS.txt` are in `build/releases`.
+The version values above are examples; choose the actual next version before publishing. Configure a stable release signing key using `android/key.properties.example`. The resulting `CheckMate.apk` (production), `CheckMate-Dev.apk` (developer) and `SHA256SUMS.txt` are in `build/releases`.
 
 Create one GitHub release whose tag targets that exact stable commit, then attach both APKs and the checksum file. Git branches contain source code; generated APKs stay in release assets. Branch updates do not publish a release automatically.
 

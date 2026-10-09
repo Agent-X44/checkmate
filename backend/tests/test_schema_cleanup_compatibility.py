@@ -88,8 +88,11 @@ async def test_deletion_after_retiring_unused_insight_table(monkeypatch, target)
         db.rows['exams'][0].update(is_approved=False, results_released=False,
                                   classes={'instructor_id': 'teacher'})
         before = copy.deepcopy(db.rows)
-        monkeypatch.setitem(main.app.dependency_overrides, main.get_current_user,
-                            lambda: SimpleNamespace(user=SimpleNamespace(id='teacher')))
+    else:
+        # Course deletion is limited to the instructor who owns the course.
+        db.rows['classes'][0]['instructor_id'] = 'teacher'
+    monkeypatch.setitem(main.app.dependency_overrides, main.get_current_user,
+                        lambda: SimpleNamespace(user=SimpleNamespace(id='teacher')))
 
     async with AsyncClient(transport=ASGITransport(app=main.app),
                            base_url="http://test") as client:

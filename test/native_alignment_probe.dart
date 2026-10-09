@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
+import 'package:checkmate/config/app_build.dart';
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 import 'package:checkmate/services/cv/sheet_alignment_service.dart';
 import 'package:checkmate/services/cv/fiducial_geometry.dart';
@@ -79,6 +80,12 @@ Future<void> main() async {
     final template = layout.asset.contains('30_questions')
         ? Standard30QuestionsTemplate()
         : Standard50QuestionsTemplate();
+    if (AppBuild.developerTools) {
+      await report('${layout.asset} offline capture detects actual layout',
+          () => checkDeveloperLayoutCapture(artwork, layout, template));
+      await report('${layout.asset} offline capture rejects missing marker',
+          () => checkDeveloperMissingMarker(artwork, template));
+    }
     await report(
         '${layout.asset} unreadable captured QR rejects locked identity',
         () => checkUnreadableIdentity(artwork, template));

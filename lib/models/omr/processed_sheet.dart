@@ -31,6 +31,9 @@ class ProcessedSheet {
   /// The name of the template used for processing.
   final String templateName;
 
+  /// Stable base layout ID, retained even when a developer preset is renamed.
+  final String? templateId;
+
   /// Capacity of the matched printed template, supplied by local processing.
   /// This distinguishes unused printed rows from an incomplete detection.
   final int? questionCapacity;
@@ -46,6 +49,7 @@ class ProcessedSheet {
     this.qrData,
     this.detectedSet,
     required this.templateName,
+    this.templateId,
     this.questionCapacity,
     this.questionDetails = const [],
   });
@@ -59,6 +63,7 @@ class ProcessedSheet {
     QrData? qrData,
     String? detectedSet,
     String? templateName,
+    String? templateId,
     int? questionCapacity,
     List<Map<String, dynamic>>? questionDetails,
   }) {
@@ -71,6 +76,7 @@ class ProcessedSheet {
       qrData: qrData ?? this.qrData,
       detectedSet: detectedSet ?? this.detectedSet,
       templateName: templateName ?? this.templateName,
+      templateId: templateId ?? this.templateId,
       questionCapacity: questionCapacity ?? this.questionCapacity,
       questionDetails: questionDetails ?? this.questionDetails,
     );
@@ -87,6 +93,7 @@ class ProcessedSheet {
       'qrData': qrData?.toMap(),
       'detectedSet': detectedSet,
       'templateName': templateName,
+      'templateId': templateId,
       'questionCapacity': questionCapacity,
     };
   }

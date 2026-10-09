@@ -14,6 +14,36 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 import main
 from main import app
 
+TEACHER = SimpleNamespace(user=SimpleNamespace(id="teacher"))
+
+
+class CourseOnlyDatabase:
+    """Answers the instructor check; any other table access fails the test."""
+
+    def table(self, name):
+        if name != "classes":
+            raise AssertionError("Generation must not create a draft before instructor review")
+        return self
+
+    def select(self, *args, **kwargs):
+        return self
+
+    def eq(self, *args, **kwargs):
+        return self
+
+    def limit(self, *args, **kwargs):
+        return self
+
+    def execute(self):
+        return SimpleNamespace(data=[{"id": "course", "instructor_id": "teacher"}])
+
+
+@pytest.fixture
+def as_instructor(monkeypatch):
+    """Sign requests in as the instructor of the requested course."""
+    monkeypatch.setattr(main, "supabase", CourseOnlyDatabase())
+    monkeypatch.setitem(app.dependency_overrides, main.get_current_user, lambda: TEACHER)
+
 @pytest.mark.asyncio
 async def test_read_root():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -211,7 +241,7 @@ def test_legacy_double_labeled_choices_are_restored_once():
     }) == "Which answer?\nA. First\nB. Second\nC. Third\nD. Fourth"
 
 @pytest.mark.asyncio
-async def test_generate_exam_schema(monkeypatch):
+async def test_generate_exam_schema(monkeypatch, as_instructor):
     """The legacy JSON endpoint uses the same exact-count checked pipeline."""
     async def fake_generate(material, mcq_count, tf_count):
         assert (mcq_count, tf_count) == (2, 0)
@@ -231,7 +261,7 @@ async def test_generate_exam_schema(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_stream_keeps_exact_requested_types_without_persisting(monkeypatch):
+async def test_stream_keeps_exact_requested_types_without_persisting(monkeypatch, as_instructor):
     async def fake_generate(material, mcq_count, tf_count, source_mode, report,
                             on_question, on_draft):
         assert (mcq_count, tf_count) == (30, 0)
@@ -246,12 +276,8 @@ async def test_stream_keeps_exact_requested_types_without_persisting(monkeypatch
             await on_question(question, number)
         return questions
 
-    class NoDatabaseWrites:
-        def table(self, name):
-            raise AssertionError("Generation must not create a draft before instructor review")
-
+    # as_instructor's database raises on every table except the course lookup.
     monkeypatch.setattr(main, "generate_verified_questions", fake_generate)
-    monkeypatch.setattr(main, "supabase", NoDatabaseWrites())
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         response = await ac.post("/generate-exam-stream", data={
             "topic": "Differential equations", "class_id": "course-1",
@@ -276,7 +302,7 @@ async def test_stream_keeps_exact_requested_types_without_persisting(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_stream_normalizes_existing_questions_mode_before_generation(monkeypatch):
+async def test_stream_normalizes_existing_questions_mode_before_generation(monkeypatch, as_instructor):
     async def fake_generate(material, mcq_count, tf_count, source_mode, report,
                             on_question, on_draft):
         assert source_mode == "existing_questions"
@@ -303,7 +329,7 @@ async def test_stream_normalizes_existing_questions_mode_before_generation(monke
 
 
 @pytest.mark.asyncio
-async def test_stream_rejects_type_count_mismatch():
+async def test_stream_rejects_type_count_mismatch(as_instructor):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         response = await ac.post("/generate-exam-stream", data={
             "topic": "Differential equations", "class_id": "course-1",
@@ -314,7 +340,7 @@ async def test_stream_rejects_type_count_mismatch():
 
 
 @pytest.mark.asyncio
-async def test_retry_replaces_an_abandoned_assessment_stream(monkeypatch):
+async def test_retry_replaces_an_abandoned_assessment_stream(monkeypatch, as_instructor):
     started = asyncio.Event()
     cancelled = asyncio.Event()
     calls = 0
@@ -337,7 +363,7 @@ async def test_retry_replaces_an_abandoned_assessment_stream(monkeypatch):
     request = dict(topic="Arithmetic", class_id="retry-course", question_count=1,
                    assessment_type="Quiz", include_mcq=True, include_tf=False,
                    mcq_count=1, tf_count=0, source_mode="topic",
-                   has_multiple_sets=False, file=None)
+                   has_multiple_sets=False, file=None, user=TEACHER)
     await main.generate_exam_stream(**request)
     await asyncio.wait_for(started.wait(), timeout=1)
     retry_response = await main.generate_exam_stream(**request)

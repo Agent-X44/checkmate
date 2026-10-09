@@ -75,6 +75,15 @@ android {
 
 }
 
+// Flutter 3.44 can miss changed JNI inputs in flavored builds. Refresh this
+// small merge step so incremental APKs package the freshly compiled app.
+// https://github.com/flutter/flutter/issues/187553
+tasks.configureEach {
+    if (name.startsWith("merge") && name.endsWith("JniLibFolders")) {
+        outputs.upToDateWhen { false }
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17

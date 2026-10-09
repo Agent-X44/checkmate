@@ -681,7 +681,10 @@ class _ScannerScreenState extends State<ScannerScreen> {
             MaterialPageRoute(
                 builder: (_) => DeveloperEvaluationToolsScreen(
                     sheet: sheet,
-                    template: widget.sandboxTemplate ??
+                    template: AnswerSheetTemplateRegistry.byId(
+                            sheet.templateId ?? '') ??
+                        processingTemplate ??
+                        widget.sandboxTemplate ??
                         Standard50QuestionsTemplate())));
         return;
       }
@@ -757,7 +760,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
               developerToolsBuilder: AppBuild.developerTools
                   ? (_) => DeveloperEvaluationToolsScreen(
                         sheet: sheet,
-                        template: processingTemplate ??
+                        template: AnswerSheetTemplateRegistry.byId(
+                                sheet.templateId ?? '') ??
+                            processingTemplate ??
                             AnswerSheetTemplateRegistry.all.firstWhere(
                                 (t) => t.name == sheet.templateName,
                                 orElse: () => AnswerSheetTemplateRegistry
@@ -1459,9 +1464,9 @@ class _ScannerScreenState extends State<ScannerScreen> {
         template: resolvedTemplate,
         expectedQr: _lockedSheetQr,
         developerSandbox: _developerSandbox,
-        calibration: AppBuild.developerTools
-            ? await DeveloperTemplateStore.active(resolvedTemplate.id)
-            : null,
+        calibrationProfiles: AppBuild.developerTools
+            ? await DeveloperTemplateStore.load()
+            : const [],
       );
 
       final processedSheet = await ImageProcessor.processOmr(request);
