@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'dart:convert';
+import 'dart:ui' show Rect;
 import 'bubble_result.dart';
 
 import 'qr_data.dart';
@@ -40,6 +41,13 @@ class ProcessedSheet {
 
   final List<Map<String, dynamic>> questionDetails;
 
+  /// Where each choice was sampled, per question, normalized to [warpedImage].
+  /// Local inspection only; never synchronized.
+  final List<List<Rect>> bubbleZones;
+
+  /// Answer regions actually read, normalized to [warpedImage].
+  final List<Rect> sampledRegions;
+
   ProcessedSheet({
     required this.warpedImage,
     required this.thresholdImage,
@@ -52,6 +60,8 @@ class ProcessedSheet {
     this.templateId,
     this.questionCapacity,
     this.questionDetails = const [],
+    this.bubbleZones = const [],
+    this.sampledRegions = const [],
   });
 
   ProcessedSheet copyWith({
@@ -66,6 +76,8 @@ class ProcessedSheet {
     String? templateId,
     int? questionCapacity,
     List<Map<String, dynamic>>? questionDetails,
+    List<List<Rect>>? bubbleZones,
+    List<Rect>? sampledRegions,
   }) {
     return ProcessedSheet(
       warpedImage: warpedImage ?? this.warpedImage,
@@ -79,6 +91,8 @@ class ProcessedSheet {
       templateId: templateId ?? this.templateId,
       questionCapacity: questionCapacity ?? this.questionCapacity,
       questionDetails: questionDetails ?? this.questionDetails,
+      bubbleZones: bubbleZones ?? this.bubbleZones,
+      sampledRegions: sampledRegions ?? this.sampledRegions,
     );
   }
 

@@ -5,12 +5,18 @@ import '../models/omr/processed_sheet.dart';
 import '../services/sheet_evaluation_service.dart';
 import '../utils/choice_label.dart';
 import '../config/app_build.dart';
+import '../widgets/sheet_overlay_view.dart';
 
-/// Read-only evaluation of the calibrated scan, saved automatically.
+/// Local evaluation of a captured sheet, held as a draft until the instructor
+/// reviews and confirms it (BR-07). Leaving without confirming discards the
+/// draft, so a misaligned or blurry capture never reaches the result queue
+/// and the same paper can be scanned again.
 class SheetEvaluationScreen extends StatefulWidget {
   final ProcessedSheet sheet;
   final Map<String, dynamic> metadata;
   final Future<List<Map<String, dynamic>>> Function(String) loadQuestions;
+
+  /// Durably queues the confirmed evaluation. Called only from Confirm.
   final Future<void> Function(ProcessedSheet) onEvaluated;
   final WidgetBuilder? developerToolsBuilder;
 
@@ -39,55 +45,72 @@ class _SheetEvaluationScreenState extends State<SheetEvaluationScreen> {
   void initState() {
     super.initState();
     _currentSheet = widget.sheet;
-    unawaited(_evaluateAndSave());
+    unawaited(_evaluate());
   }
 
-  Future<void> _evaluateAndSave() async {
-    if (_isLoading || _isSaving || _saved) return;
+  /// Grades the local detections against the answer key. Nothing is saved.
+  Future<void> _evaluate() async {
+    if (_isLoading || _evaluatedSheet != null) return;
     setState(() {
       _isLoading = true;
       _error = null;
     });
     try {
-      if (_evaluatedSheet == null) {
-        final examId = widget.metadata['exam_id']?.toString() ??
-            widget.metadata['exams']?['id']?.toString() ??
-            '';
-        if (examId.isEmpty) {
-          throw const FormatException(
-              'The sheet did not resolve to an assessment.');
-        }
-        final questions = await widget.loadQuestions(examId);
-        if (!mounted) return;
-        _evaluatedSheet = SheetEvaluationService.evaluate(
-            widget.sheet, questions,
-            setType:
-                (widget.metadata['set_type'] ?? widget.sheet.detectedSet ?? 'A')
-                    .toString());
+      final examId = widget.metadata['exam_id']?.toString() ??
+          widget.metadata['exams']?['id']?.toString() ??
+          '';
+      if (examId.isEmpty) {
+        throw const FormatException(
+            'The sheet did not resolve to an assessment.');
       }
-      final evaluated = _evaluatedSheet!;
+      final questions = await widget.loadQuestions(examId);
+      if (!mounted) return;
+      final evaluated = SheetEvaluationService.evaluate(widget.sheet, questions,
+          setType:
+              (widget.metadata['set_type'] ?? widget.sheet.detectedSet ?? 'A')
+                  .toString());
       setState(() {
+        _evaluatedSheet = evaluated;
         _currentSheet = evaluated;
-        _isLoading = false;
-        _isSaving = true;
       });
-      // The callback must finish the durable local queue write before the page
-      // reports success or allows navigation. Network sync runs separately.
-      await widget.onEvaluated(evaluated);
-      if (mounted) setState(() => _saved = true);
     } catch (error) {
       if (mounted) {
         setState(() {
           _error = error is FormatException
               ? error.message.toString()
-              : 'Could not save this evaluation. Check your connection and retry.';
+              : 'Could not load the answer key. Check your connection and retry.';
         });
       }
     } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  /// Instructor review is complete: queue this exact evaluation, then return
+  /// to scanning. A failed write stays on this page for retry.
+  Future<void> _confirm() async {
+    final evaluated = _evaluatedSheet;
+    if (evaluated == null || _isSaving || _saved) return;
+    setState(() {
+      _isSaving = true;
+      _error = null;
+    });
+    try {
+      // The callback must finish the durable local queue write before the page
+      // reports success or allows navigation. Network sync runs separately.
+      await widget.onEvaluated(evaluated);
+      if (!mounted) return;
+      setState(() {
+        _saved = true;
+        _isSaving = false;
+      });
+      Navigator.pop(context);
+    } catch (_) {
       if (mounted) {
         setState(() {
-          _isLoading = false;
           _isSaving = false;
+          _error = 'Could not save this result on the device. Tap confirm to '
+              'retry.';
         });
       }
     }
@@ -117,6 +140,7 @@ class _SheetEvaluationScreenState extends State<SheetEvaluationScreen> {
     final score =
         _currentSheet.results.where((r) => r.isCorrect == true).length;
     final flagged = _currentSheet.results.where((r) => r.isAmbiguous).length;
+    final evaluated = _evaluatedSheet != null;
 
     return PopScope(
       canPop: !_isSaving,
@@ -147,15 +171,15 @@ class _SheetEvaluationScreenState extends State<SheetEvaluationScreen> {
                           style: Theme.of(context).textTheme.titleLarge),
                       Text(title.toString()),
                       const SizedBox(height: 8),
-                      if (!_isLoading && _evaluatedSheet != null)
+                      if (!_isLoading && evaluated)
                         Text('Score: $score / $total',
                             style: Theme.of(context).textTheme.titleMedium),
-                      if (_saved) ...[
+                      if (evaluated && !_saved) ...[
                         const SizedBox(height: 8),
                         const Text(
-                            'Saved on this device. Syncs automatically.'),
-                        const Text(
-                            'Students can view results after instructor release.'),
+                            'Not saved yet. Check the marks against the paper, '
+                            'then confirm. Retake if the photo is blurry or '
+                            'misaligned.'),
                       ],
                       if (flagged > 0 && !_isLoading)
                         Text(
@@ -219,13 +243,25 @@ class _SheetEvaluationScreenState extends State<SheetEvaluationScreen> {
                                   );
                                 },
                               ),
-                              InteractiveViewer(
-                                  child: Image.memory(
-                                _currentSheet.warpedImage,
-                                fit: BoxFit.contain,
-                                errorBuilder: (_, error, stack) =>
-                                    const Text('Image preview unavailable.'),
-                              )),
+                              if (AppBuild.developerTools &&
+                                  _currentSheet.bubbleZones.isNotEmpty)
+                                Column(children: [
+                                  const Padding(
+                                      padding:
+                                          EdgeInsets.fromLTRB(12, 8, 12, 6),
+                                      child: SheetOverlayLegend(graded: true)),
+                                  Expanded(
+                                      child: SheetOverlayView(
+                                          sheet: _currentSheet)),
+                                ])
+                              else
+                                InteractiveViewer(
+                                    child: Image.memory(
+                                  _currentSheet.warpedImage,
+                                  fit: BoxFit.contain,
+                                  errorBuilder: (_, error, stack) =>
+                                      const Text('Image preview unavailable.'),
+                                )),
                             ])),
                           ]),
                         ),
@@ -235,23 +271,34 @@ class _SheetEvaluationScreenState extends State<SheetEvaluationScreen> {
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Column(children: [
-                      if (_error != null)
+                      if (_error != null && !evaluated)
                         TextButton.icon(
-                          onPressed: _evaluateAndSave,
+                          onPressed: _evaluate,
                           icon: const Icon(Icons.refresh),
                           label: const Text('Retry evaluation'),
                         ),
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.icon(
-                          onPressed: _isSaving || _isLoading
-                              ? null
-                              : () => Navigator.pop(context),
-                          icon: const Icon(Icons.qr_code_scanner),
-                          label: Text(
-                              _saved ? 'CONTINUE SCANNING' : 'RETAKE SHEET'),
+                      Row(children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed:
+                                _isSaving ? null : () => Navigator.pop(context),
+                            icon: const Icon(Icons.camera_alt_outlined),
+                            label: const Text('RETAKE SHEET'),
+                          ),
                         ),
-                      ),
+                        if (evaluated) ...[
+                          const SizedBox(width: 12),
+                          Expanded(
+                            flex: 2,
+                            child: FilledButton.icon(
+                              onPressed:
+                                  _isSaving || _isLoading ? null : _confirm,
+                              icon: const Icon(Icons.check_circle),
+                              label: const Text('CONFIRM & CONTINUE'),
+                            ),
+                          ),
+                        ],
+                      ]),
                     ]),
                   ),
                 ),
