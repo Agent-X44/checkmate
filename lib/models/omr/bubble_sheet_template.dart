@@ -44,6 +44,17 @@ class BubbleSheetTemplate {
   final int mcqCount;
   final int tfCount;
 
+  /// Optional exact bubble centres (question order, then choice; A-B for TF
+  /// rows), normalized to the warped sheet. When present, every edition grades
+  /// by sampling these points instead of the row/column grid.
+  final List<Offset>? answerBubbles;
+
+  /// Half the sampled square's side, as a fraction of the sheet width, and
+  /// the ink ratio above which a bubble counts as marked. Used with
+  /// [answerBubbles].
+  final double bubbleRadius;
+  final double fillThreshold;
+
   /// Grid settings for OMR processing
   final double gridStart;
   final double gridWidth;
@@ -74,6 +85,9 @@ class BubbleSheetTemplate {
     this.columns = 1,
     this.mcqCount = 0,
     this.tfCount = 0,
+    this.answerBubbles,
+    this.bubbleRadius = 0.005,
+    this.fillThreshold = 0.18,
     this.gridStart = 0.050,
     this.gridWidth = 0.920,
     this.calibratedYOffset = 0,

@@ -620,13 +620,19 @@ class ImageProcessor {
       }
     }
 
-    final bubbles = calibration?.answerBubbles;
+    // A developer preset decides for itself (an empty list means "use the
+    // grid"); otherwise the built-in template's exact bubbles apply.
+    final bubbles = calibration != null
+        ? calibration.answerBubbles
+        : activeTemplate.answerBubbles;
     if (bubbles != null && bubbles.isNotEmpty) {
       var offset = 0;
       results.clear();
       questionImages.clear();
       bubbleZones.clear();
-      final radius = calibration!.bubbleRadius;
+      final radius = calibration?.bubbleRadius ?? activeTemplate.bubbleRadius;
+      final fillThreshold =
+          calibration?.fillThreshold ?? activeTemplate.fillThreshold;
       for (var i = 0; i < activeTemplate.totalQuestions; i++) {
         final choices =
             activeTemplate.tfCount > 0 && i >= activeTemplate.mcqCount
@@ -638,7 +644,7 @@ class ImageProcessor {
         }
         final points = bubbles.sublist(offset, offset + choices);
         results.add(BubbleDetectionService.detectAtPoints(thresholded, points,
-            radiusRatio: radius, threshold: calibration.fillThreshold));
+            radiusRatio: radius, threshold: fillThreshold));
         bubbleZones.add([
           for (final p in points)
             Rect.fromCenter(
