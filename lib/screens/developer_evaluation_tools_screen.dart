@@ -313,6 +313,24 @@ class _DeveloperEvaluationToolsScreenState
     return _config.copyWith(answerRegions: regions);
   }
 
+  /// Distance between neighbouring A-D bubble centres, as a fraction of the
+  /// answer-region width.
+  double get _choiceSpacing =>
+      _config.gridWidth / widget.template.choicesPerQuestion;
+
+  /// Spreads or tightens the A-D bubbles around the grid's centre. The
+  /// sampled zone keeps its absolute width, so only the gaps change.
+  TemplateCalibration _withChoiceSpacing(double spacing) {
+    final width =
+        (spacing * widget.template.choicesPerQuestion).clamp(.01, 1.0);
+    final centre = _config.gridStart + _config.gridWidth / 2;
+    return _config.copyWith(
+        gridStart: (centre - width / 2).clamp(-.5, 1.5 - width),
+        gridWidth: width,
+        zoneWidth:
+            (_config.zoneWidth * _config.gridWidth / width).clamp(.1, 1.0));
+  }
+
   Widget _alignmentPanel() {
     final column = _column.clamp(0, _config.answerRegions.length - 1);
     final region = _config.answerRegions[column];
@@ -364,10 +382,23 @@ class _DeveloperEvaluationToolsScreenState
                 (v) => _config.copyWith(stripHeight: v)),
             _slider('X-offset', _config.xOffset, -.5, .5,
                 (v) => _config.copyWith(xOffset: v)),
-            _slider('Grid start', _config.gridStart, 0, 1,
-                (v) => _config.copyWith(gridStart: v)),
-            _slider('Grid width', _config.gridWidth, .01, 1,
-                (v) => _config.copyWith(gridWidth: v)),
+            _slider(
+                'Grid start',
+                _config.gridStart,
+                -.5,
+                1,
+                (v) => _config.copyWith(
+                    gridStart: v.clamp(-.5, 1.5 - _config.gridWidth))),
+            _slider(
+                'Grid width',
+                _config.gridWidth,
+                .01,
+                2,
+                (v) => _config.copyWith(
+                    gridWidth: v.clamp(.01, 1.5 - _config.gridStart))),
+            _slider('Choice spacing', _choiceSpacing, .01,
+                2 / widget.template.choicesPerQuestion, _withChoiceSpacing,
+                digits: 3),
             _section('3. BUBBLE SAMPLING'),
             _slider('Fill threshold', _config.fillThreshold, .01, .9,
                 (v) => _config.copyWith(fillThreshold: v)),

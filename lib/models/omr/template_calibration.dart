@@ -171,9 +171,12 @@ class TemplateCalibration {
     }
     final y = number('yOffset', -200, 200);
     if (y != y.roundToDouble()) throw const FormatException('Invalid yOffset');
-    if (number('gridStart', 0, 1) + number('gridWidth', .01, 1) > 1.000001) {
+    // The printed A-D row can be slightly wider than its column box, so the
+    // grid may overhang the region; it must still overlap it substantially.
+    final gridEnd = number('gridStart', -.5, 1) + number('gridWidth', .01, 2);
+    if (gridEnd > 1.5 || gridEnd <= 0) {
       throw const FormatException(
-          'Grid start plus width must fit within the answer region');
+          'The bubble grid must stay over the answer region');
     }
     return TemplateCalibration(
         name: m['name'],
@@ -183,8 +186,8 @@ class TemplateCalibration {
         setRegion: rect(m['setRegion']),
         setBubbles: points(m['setBubbles']),
         answerBubbles: points(m['answerBubbles']),
-        gridStart: number('gridStart', 0, 1),
-        gridWidth: number('gridWidth', .01, 1),
+        gridStart: number('gridStart', -.5, 1),
+        gridWidth: number('gridWidth', .01, 2),
         xOffset: number('xOffset', -.5, .5),
         rowSpacing: number('rowSpacing', -10, 10),
         stripHeight: number('stripHeight', .3, 3),
