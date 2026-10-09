@@ -2,12 +2,72 @@ import 'dart:math' as math;
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 import 'package:checkmate/models/omr/bubble_sheet_template.dart';
 import 'package:checkmate/models/omr/qr_data.dart';
+import 'package:checkmate/models/omr/template_calibration.dart';
+import 'package:checkmate/models/omr/templates/standard_30_questions.dart';
+import 'package:checkmate/models/omr/templates/standard_50_questions.dart';
 import 'package:checkmate/services/cv/qr_detection_service.dart';
 import 'package:checkmate/services/image_processor.dart';
 import 'package:checkmate/services/cv/sheet_alignment_service.dart';
 import 'package:checkmate/services/cv/fiducial_geometry.dart';
 import 'sheet_alignment_scenarios.dart';
 import 'sheet_qr_fixture.dart';
+
+Future<String?> checkDeveloperLayoutCapture(cv.Mat artwork, SheetLayout layout,
+    BubbleSheetTemplate actualTemplate) async {
+  final preferred = actualTemplate.totalQuestions == 30
+      ? Standard50QuestionsTemplate()
+      : Standard30QuestionsTemplate();
+  final profile = TemplateCalibration.fromTemplate(actualTemplate)
+      .copyWith(name: 'Local ${actualTemplate.totalQuestions} profile');
+  final wrongProfile = TemplateCalibration.fromTemplate(preferred)
+      .copyWith(name: 'Wrong layout profile');
+  final capture = captureArtwork(artwork, layout, captureScenarios.first);
+  try {
+    final (_, bytes) = cv.imencode('.png', capture.image);
+    final result = await ImageProcessor.processOmr(OmrRequest(
+        bytes: bytes,
+        corners: const [],
+        template: preferred,
+        developerSandbox: true,
+        calibration: wrongProfile,
+        calibrationProfiles: [profile, wrongProfile]));
+    if (result == null) return 'No offline capture result';
+    if (result.templateId != actualTemplate.id ||
+        result.questionCapacity != actualTemplate.totalQuestions ||
+        result.results.length != actualTemplate.totalQuestions) {
+      return 'Offline capture did not use the detected physical layout';
+    }
+    if (result.templateName != profile.name) {
+      return 'The selected layout preset leaked into a different layout';
+    }
+    if (result.qrData != null) {
+      return 'Offline capture resolved a real identity';
+    }
+    return null;
+  } finally {
+    capture.dispose();
+  }
+}
+
+Future<String?> checkDeveloperMissingMarker(
+    cv.Mat artwork, BubbleSheetTemplate preferred) async {
+  final missing = artwork.clone();
+  try {
+    cv.rectangle(missing, cv.Rect(0, 0, 160, 160), cv.Scalar.all(255),
+        thickness: -1);
+    final (_, bytes) = cv.imencode('.png', missing);
+    await ImageProcessor.processOmr(OmrRequest(
+        bytes: bytes,
+        corners: const [],
+        template: preferred,
+        developerSandbox: true));
+    return 'Offline capture accepted a sheet with a missing registration marker';
+  } on SheetAlignmentException {
+    return null;
+  } finally {
+    missing.dispose();
+  }
+}
 
 String? checkMissingMarker(cv.Mat artwork, SheetLayout layout) {
   final missing = artwork.clone();

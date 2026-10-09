@@ -71,6 +71,7 @@ class OmrRequest {
   final List<Offset>? customSetBubbles;
   final QrData? expectedQr;
   final TemplateCalibration? calibration;
+  final List<TemplateCalibration> calibrationProfiles;
   final bool developerSandbox;
 
   OmrRequest({
@@ -83,6 +84,7 @@ class OmrRequest {
     this.customSetBubbles,
     this.expectedQr,
     this.calibration,
+    this.calibrationProfiles = const [],
     this.developerSandbox = false,
   });
 }
@@ -404,16 +406,29 @@ class ImageProcessor {
             "OMR: Found QR on raw unwarped image -> ${rawImageQr.sheetIdentifier}");
       }
 
-      final activeTemplate = _processingTemplate(
+      final preferredTemplate = _processingTemplate(
           message.template, rawImageQr ?? message.expectedQr);
       // Preview and still capture can differ in field of view, rotation, and
       // timing. Resolve markers afresh in the decoded photograph.
-      final capturedMarkers = SheetAlignmentService.detectMarkerPoints(mat,
-          aspectRatio: activeTemplate.fiducialAspectRatio,
-          diameterRatio: activeTemplate.fiducialDiameterRatio,
+      final markerMatch = SheetAlignmentService.detectTemplateMarkers(mat,
+          preferred: preferredTemplate,
+          developerSandbox: sandbox,
           qrCenter: _qrCenter(capturedQr?.corners, mat.width, mat.height));
-      if (capturedMarkers == null) {
+      if (markerMatch == null) {
         throw const SheetAlignmentException();
+      }
+      final activeTemplate = markerMatch.template;
+      final capturedMarkers = markerMatch.corners;
+      TemplateCalibration? calibration;
+      if (AppBuild.developerTools) {
+        for (final profile in message.calibrationProfiles) {
+          if (profile.baseTemplateId == activeTemplate.id) {
+            calibration = profile;
+          }
+        }
+        if (message.calibration?.baseTemplateId == activeTemplate.id) {
+          calibration = message.calibration;
+        }
       }
       final targetWidth = activeTemplate.targetWidth;
       final outputRatio = activeTemplate.paperAspectRatio > 0.1
@@ -445,7 +460,7 @@ class ImageProcessor {
         }
 
         final qrRegion = AppBuild.developerTools
-            ? message.calibration?.qrRegion ?? activeTemplate.qrRegion
+            ? calibration?.qrRegion ?? activeTemplate.qrRegion
             : activeTemplate.qrRegion;
         if ((qrData == null || qrData.examCode == "UNKNOWN") &&
             qrRegion != null) {
@@ -488,7 +503,7 @@ class ImageProcessor {
           stripHeight: message.stripHeightMultiplier,
           customSetRegion: message.customSetRegion,
           customSetBubbles: message.customSetBubbles,
-          calibration: AppBuild.developerTools ? message.calibration : null);
+          calibration: calibration);
     } on SheetAlignmentException {
       rethrow;
     } on SheetIdentityException {
@@ -625,6 +640,7 @@ class ImageProcessor {
       qrData: qrData,
       detectedSet: detectedSet,
       templateName: calibration?.name ?? activeTemplate.name,
+      templateId: activeTemplate.id,
       questionCapacity: activeTemplate.totalQuestions,
     );
   }

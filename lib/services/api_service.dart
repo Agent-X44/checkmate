@@ -82,7 +82,8 @@ class ApiService {
     }
 
     try {
-      final response = await _dio.post('/generate-exam', data: {
+      final response = await _dio
+          .post('/generate-exam', options: _authenticatedOptions(), data: {
         'topic': topic,
         'class_id': classId,
         'question_count': questionCount,
@@ -285,11 +286,13 @@ class ApiService {
     required String correctAnswer,
   }) async {
     try {
-      await _dio.put('/update-question/$questionId', data: {
-        'question_text': questionText,
-        'options': options,
-        'correct_answer': correctAnswer,
-      });
+      await _dio.put('/update-question/$questionId',
+          options: _authenticatedOptions(),
+          data: {
+            'question_text': questionText,
+            'options': options,
+            'correct_answer': correctAnswer,
+          });
     } catch (e) {
       debugPrint("API Error (updateQuestion): $e");
       rethrow;
@@ -316,7 +319,8 @@ class ApiService {
 
   static Future<void> deleteCourse(String classId) async {
     try {
-      await _dio.delete('/delete-course/$classId');
+      await _dio.delete('/delete-course/$classId',
+          options: _authenticatedOptions());
     } catch (e) {
       debugPrint("API Error (deleteCourse): $e");
       rethrow;
@@ -410,7 +414,9 @@ class ApiService {
       final response = await _dio.post(
         '/generate-exam-stream',
         data: formData,
-        options: dio.Options(responseType: dio.ResponseType.stream),
+        options: dio.Options(
+            responseType: dio.ResponseType.stream,
+            headers: _authenticatedOptions().headers),
       );
       final byteStream = (response.data as dio.ResponseBody).stream;
       await for (final line
@@ -467,7 +473,10 @@ class ApiService {
         data: formData,
         options: dio.Options(
             responseType: dio.ResponseType.stream,
-            headers: {'Content-Type': 'multipart/form-data'}),
+            headers: {
+              ...?_authenticatedOptions().headers,
+              'Content-Type': 'multipart/form-data',
+            }),
       );
 
       // Dio wraps streamed responses in ResponseBody.

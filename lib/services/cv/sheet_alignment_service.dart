@@ -1,11 +1,31 @@
 import 'dart:math' as math;
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 import 'fiducial_geometry.dart';
+import '../../models/omr/bubble_sheet_template.dart';
+import 'sheet_template_selection.dart';
 
 /// Finds the four printed registration circles directly in the current image.
 /// It does not depend on preview coordinates, paper/background contrast, or
 /// fixed image quadrants, which all become unreliable with strong perspective.
 class SheetAlignmentService {
+  static TemplateMarkerMatch? detectTemplateMarkers(
+    cv.Mat source, {
+    required BubbleSheetTemplate preferred,
+    bool developerSandbox = false,
+    SheetPoint? qrCenter,
+  }) {
+    TemplateMarkerMatch? select(List<FiducialCandidate> candidates) =>
+        SheetTemplateSelection.select(candidates,
+            preferred: preferred,
+            imageArea: (source.width * source.height).toDouble(),
+            developerSandbox: developerSandbox,
+            qrCenter: qrCenter);
+    var match = select(findCandidates(source));
+    match ??= select(findCandidates(source,
+        maxDimension: 2400, thresholdWindows: const [151, 401]));
+    return match;
+  }
+
   static cv.VecPoint? detectMarkers(
     cv.Mat source, {
     required double aspectRatio,

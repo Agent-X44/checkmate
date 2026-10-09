@@ -42,13 +42,13 @@ class _DeveloperWorkspaceScreenState extends State<DeveloperWorkspaceScreen> {
       _error = null;
     });
     try {
-      final calibration = await DeveloperTemplateStore.active(_template.id);
+      final profiles = await DeveloperTemplateStore.load();
       final sheet = align
           ? await ImageProcessor.processOmr(OmrRequest(
               bytes: bytes,
               corners: const [],
               template: _template,
-              calibration: calibration,
+              calibrationProfiles: profiles,
               developerSandbox: true))
           : ProcessedSheet(
               warpedImage: bytes,
@@ -57,6 +57,7 @@ class _DeveloperWorkspaceScreenState extends State<DeveloperWorkspaceScreen> {
               questionImages: [],
               results: [],
               templateName: _template.name,
+              templateId: _template.id,
               questionCapacity: _template.totalQuestions);
       if (sheet == null) {
         throw const FormatException('Could not process this photo');
@@ -66,7 +67,10 @@ class _DeveloperWorkspaceScreenState extends State<DeveloperWorkspaceScreen> {
           context,
           MaterialPageRoute(
               builder: (_) => DeveloperEvaluationToolsScreen(
-                  sheet: sheet, template: _template)));
+                  sheet: sheet,
+                  template: AnswerSheetTemplateRegistry.byId(
+                          sheet.templateId ?? '') ??
+                      _template)));
     } catch (e) {
       debugPrint('Developer image failed: $e');
       if (mounted) {
@@ -137,7 +141,7 @@ class _DeveloperWorkspaceScreenState extends State<DeveloperWorkspaceScreen> {
                   DropdownButtonFormField<BubbleSheetTemplate>(
                       initialValue: _template,
                       decoration: const InputDecoration(
-                          labelText: 'Base answer-sheet layout'),
+                          labelText: 'Preferred answer-sheet layout'),
                       items: AnswerSheetTemplateRegistry.all
                           .map((t) =>
                               DropdownMenuItem(value: t, child: Text(t.name)))
@@ -145,6 +149,9 @@ class _DeveloperWorkspaceScreenState extends State<DeveloperWorkspaceScreen> {
                       onChanged:
                           _busy ? null : (t) => setState(() => _template = t!)),
                   const SizedBox(height: 20),
+                  const Text(
+                      'Scanning detects the matching 30- or 50-question layout. The selected layout is used when its corner marks match.'),
+                  const SizedBox(height: 12),
                   FilledButton.icon(
                       onPressed: _busy ? null : _camera,
                       icon: const Icon(Icons.camera_alt),

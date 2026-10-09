@@ -39,10 +39,9 @@ app.*.symbols
 # Obfuscation related
 app.*.map.json
 
-# AI/API Secrets
+# AI/API Secrets (backend/.env.example holds placeholders only and stays tracked)
 .env
 backend/.env
-backend/.env.example
 *.env
 
 # Android Studio will place build artifacts here
@@ -55,3 +54,8 @@ hf_space/
 android/key.properties
 *.jks
 *.keystore
+
+# Build output and local scratch that must not be committed
+/android/build/
+/index.html
+.artifacts/

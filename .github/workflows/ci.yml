@@ -1,0 +1,74 @@
+name: CI
+
+# Runs the checks that were previously run by hand, on every pull request
+# and push to the two long-lived branches.
+on:
+  pull_request:
+    branches: [dev, stable]
+  push:
+    branches: [dev, stable]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      # Tests use in-memory fakes and must never reach a real project.
+      SUPABASE_URL: ""
+      SUPABASE_KEY: ""
+      SUPABASE_SERVICE_ROLE_KEY: ""
+      OPENROUTER_API_KEY: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # Same interpreter as backend/Dockerfile.
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pytest-asyncio
+      - name: Run pytest
+        run: python -m pytest -q
+
+  analyze:
+    name: Flutter analyze
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+
+  app-tests:
+    name: Flutter tests (informational)
+    runs-on: ubuntu-latest
+    # The OpenCV package compiles native code before tests start, and that
+    # step has not been confirmed on a hosted runner yet. Remove this line
+    # once the job is green so failures block merging.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Install native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config
+      - run: flutter pub get
+      - run: flutter test

@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:checkmate/config/app_build.dart';
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 import 'package:checkmate/models/omr/templates/standard_30_questions.dart';
 import 'package:checkmate/models/omr/templates/standard_50_questions.dart';
@@ -20,6 +21,20 @@ void main() {
     final template = layout.asset.contains('30_questions')
         ? Standard30QuestionsTemplate()
         : Standard50QuestionsTemplate();
+    if (AppBuild.developerTools) {
+      test(
+          '${layout.asset}: offline capture corrects a selected layout mismatch',
+          () async {
+        final artwork = cv.imread(layout.asset);
+        try {
+          expect(await checkDeveloperLayoutCapture(artwork, layout, template),
+              isNull);
+          expect(await checkDeveloperMissingMarker(artwork, template), isNull);
+        } finally {
+          artwork.dispose();
+        }
+      });
+    }
     test('${layout.asset}: unreadable capture QR cannot reuse locked identity',
         () async {
       final artwork = cv.imread(layout.asset);
