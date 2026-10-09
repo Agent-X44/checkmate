@@ -555,6 +555,10 @@ class ImageProcessor {
 
     final List<BubbleResult> results = [];
     final List<Uint8List> questionImages = [];
+    final List<List<Rect>> bubbleZones = [];
+    final List<Rect> sampledRegions = [];
+    final int sheetW = thresholded.width;
+    final int sheetH = thresholded.height;
 
     double gridStart = calibration?.gridStart ?? activeTemplate.gridStart;
     double gridWidth = calibration?.gridWidth ?? activeTemplate.gridWidth;
@@ -567,23 +571,30 @@ class ImageProcessor {
 
     for (int i = 0; i < activeRegions.length; i++) {
       final region = activeRegions[i];
-      final regionMat = pool.add(TemplateService.extractRegion(
-          thresholded, region,
-          xOffset: calibration?.xOffset ?? 0));
+      final xOffset = calibration?.xOffset ?? 0;
+      final (rx, ry, rw, rh) = TemplateService.regionBounds(
+          sheetW, sheetH, region,
+          xOffset: xOffset);
+      sampledRegions.add(
+          Rect.fromLTWH(rx / sheetW, ry / sheetH, rw / sheetW, rh / sheetH));
+      final regionMat = pool.add(
+          TemplateService.extractRegion(thresholded, region, xOffset: xOffset));
       final questionsInThisRegion = (i == activeRegions.length - 1)
           ? activeTemplate.totalQuestions - (questionsPerRegion * i)
           : questionsPerRegion;
 
-      final questionMats = TemplateService.splitQuestions(
+      final rows = TemplateService.questionRows(
         regionMat,
         questionsInThisRegion,
         yOffset: calibratedY,
         heightMultiplier: calibration?.stripHeight ?? stripHeight,
         ySpace: calibration?.rowSpacing ?? 0,
       );
+      final zoneWidth = calibration?.zoneWidth ?? .45;
+      final zoneHeight = calibration?.zoneHeight ?? .60;
 
-      for (final m in questionMats) {
-        pool.add(m);
+      for (final (top, height) in rows) {
+        final m = pool.add(regionMat.region(cv.Rect(0, top, rw, height)));
         final result = BubbleDetectionService.detectFilledBubble(
           m,
           activeTemplate.choicesPerQuestion,
@@ -591,11 +602,21 @@ class ImageProcessor {
           gridStart: gridStart,
           gridWidthRatio: gridWidth,
           threshold: calibration?.fillThreshold ?? .18,
-          zoneWidthRatio: calibration?.zoneWidth ?? .45,
-          zoneHeightRatio: calibration?.zoneHeight ?? .60,
+          zoneWidthRatio: zoneWidth,
+          zoneHeightRatio: zoneHeight,
         );
         results.add(result);
         questionImages.add(Uint8List.fromList(cv.imencode(".jpg", m).$2));
+        bubbleZones.add([
+          for (final (x, y, w, h) in BubbleDetectionService.choiceZones(
+              rw, height, activeTemplate.choicesPerQuestion,
+              gridStart: gridStart,
+              gridWidthRatio: gridWidth,
+              zoneWidthRatio: zoneWidth,
+              zoneHeightRatio: zoneHeight))
+            Rect.fromLTWH((rx + x) / sheetW, (ry + top + y) / sheetH,
+                w / sheetW, h / sheetH)
+        ]);
       }
     }
 
@@ -604,6 +625,8 @@ class ImageProcessor {
       var offset = 0;
       results.clear();
       questionImages.clear();
+      bubbleZones.clear();
+      final radius = calibration!.bubbleRadius;
       for (var i = 0; i < activeTemplate.totalQuestions; i++) {
         final choices =
             activeTemplate.tfCount > 0 && i >= activeTemplate.mcqCount
@@ -613,10 +636,16 @@ class ImageProcessor {
           throw const FormatException(
               'Add every answer bubble, in question and choice order');
         }
-        results.add(BubbleDetectionService.detectAtPoints(
-            thresholded, bubbles.sublist(offset, offset + choices),
-            radiusRatio: calibration!.bubbleRadius,
-            threshold: calibration.fillThreshold));
+        final points = bubbles.sublist(offset, offset + choices);
+        results.add(BubbleDetectionService.detectAtPoints(thresholded, points,
+            radiusRatio: radius, threshold: calibration.fillThreshold));
+        bubbleZones.add([
+          for (final p in points)
+            Rect.fromCenter(
+                center: p,
+                width: radius * 2,
+                height: radius * 2 * sheetW / sheetH)
+        ]);
         offset += choices;
       }
       if (offset != bubbles.length) {
@@ -642,6 +671,8 @@ class ImageProcessor {
       templateName: calibration?.name ?? activeTemplate.name,
       templateId: activeTemplate.id,
       questionCapacity: activeTemplate.totalQuestions,
+      bubbleZones: bubbleZones,
+      sampledRegions: sampledRegions,
     );
   }
 

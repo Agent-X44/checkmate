@@ -804,7 +804,12 @@ class _ScannerScreenState extends State<ScannerScreen> {
         );
 
         if (!queued) {
+          // Unconfirmed drafts are discarded; the paper stays scannable.
           _processedSheetIds.remove(rawIdentifier);
+          if (mounted) {
+            _showSuccessSnackBar(
+                'Not saved. Retake $studentName\'s sheet when ready.');
+          }
         } else if (mounted) {
           _showSuccessSnackBar(
               'Result queued for $studentName. Ready for the next sheet.');

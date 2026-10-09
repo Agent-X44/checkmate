@@ -43,20 +43,23 @@ class TemplateService {
     return detectedBoxes;
   }
 
-  /// Extracts a specific rectangular region from the warped paper.
-  static cv.Mat extractRegion(cv.Mat warped, Rect region,
+  /// Pixel bounds of a normalized region, exactly as [extractRegion] crops it.
+  static (int, int, int, int) regionBounds(int w, int h, Rect region,
       {double xOffset = 0.0}) {
-    if (warped.isEmpty) return warped;
-    final int h = warped.height;
-    final int w = warped.width;
-
     final int rectX = ((region.left + xOffset) * w).toInt().clamp(0, w - 1);
     final int rectY = (region.top * h).toInt().clamp(0, h - 1);
     final int rectW = (region.width * w).toInt().clamp(1, w - rectX);
     final int rectH = (region.height * h).toInt().clamp(1, h - rectY);
+    return (rectX, rectY, rectW, rectH);
+  }
 
-    final rect = cv.Rect(rectX, rectY, rectW, rectH);
-    return warped.region(rect);
+  /// Extracts a specific rectangular region from the warped paper.
+  static cv.Mat extractRegion(cv.Mat warped, Rect region,
+      {double xOffset = 0.0}) {
+    if (warped.isEmpty) return warped;
+    final (x, y, w, h) =
+        regionBounds(warped.width, warped.height, region, xOffset: xOffset);
+    return warped.region(cv.Rect(x, y, w, h));
   }
 
   /// Extracts the main bubble regions from the warped paper.
@@ -69,6 +72,21 @@ class TemplateService {
 
   /// Splits the answer region into individual question rows.
   static List<cv.Mat> splitQuestions(
+          cv.Mat answerArea, int questionsInThisRegion,
+          {int yOffset = 60,
+          double heightMultiplier = 1.2,
+          double ySpace = 0.0}) =>
+      [
+        for (final (top, height) in questionRows(
+            answerArea, questionsInThisRegion,
+            yOffset: yOffset,
+            heightMultiplier: heightMultiplier,
+            ySpace: ySpace))
+          answerArea.region(cv.Rect(0, top, answerArea.width, height))
+      ];
+
+  /// Vertical (top, height) bounds of each question row within the region.
+  static List<(int, int)> questionRows(
       cv.Mat answerArea, int questionsInThisRegion,
       {int yOffset = 60, double heightMultiplier = 1.2, double ySpace = 0.0}) {
     if (answerArea.isEmpty) return [];
@@ -120,9 +138,7 @@ class TemplateService {
       }
     }
 
-    final List<cv.Mat> rowMats = [];
-    const int startX = 0;
-    final int rowW = answerArea.width;
+    final List<(int, int)> rows = [];
 
     if (peakIndices.length >= questionsInThisRegion) {
       int totalDist = 0;
@@ -138,10 +154,7 @@ class TemplateService {
             math.max(0, math.min(h - 1, centerY - (cropHeight ~/ 2)));
         final int actualH = math.min(h - startY, cropHeight);
 
-        if (actualH > 0 && startX + rowW <= answerArea.width) {
-          rowMats
-              .add(answerArea.region(cv.Rect(startX, startY, rowW, actualH)));
-        }
+        if (actualH > 0) rows.add((startY, actualH));
       }
     } else {
       final double rowH = h / questionsInThisRegion;
@@ -153,13 +166,10 @@ class TemplateService {
         final int actualH =
             math.min(h - startY, (rowH * heightMultiplier).toInt());
 
-        if (actualH > 0 && startX + rowW <= answerArea.width) {
-          rowMats
-              .add(answerArea.region(cv.Rect(startX, startY, rowW, actualH)));
-        }
+        if (actualH > 0) rows.add((startY, actualH));
       }
     }
 
-    return rowMats;
+    return rows;
   }
 }

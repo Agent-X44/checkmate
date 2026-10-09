@@ -32,6 +32,32 @@ class BubbleDetectionService {
         isAmbiguous: answers.length > 1);
   }
 
+  /// Pixel (x, y, width, height) of each choice's sampled zone in a row of
+  /// size [w] x [h]. Shared by grading and the developer overlay.
+  static List<(int, int, int, int)> choiceZones(int w, int h, int choicesCount,
+      {required double gridStart,
+      required double gridWidthRatio,
+      required double zoneWidthRatio,
+      required double zoneHeightRatio}) {
+    final double gridStartX = w * gridStart;
+    final double cellWidth = w * gridWidthRatio / choicesCount;
+    return [
+      for (int i = 0; i < choicesCount; i++)
+        () {
+          final double xStart = gridStartX +
+              (i * cellWidth) +
+              (cellWidth * (1 - zoneWidthRatio) / 2);
+          final double yStart = h * (1 - zoneHeightRatio) / 2;
+          return (
+            xStart.toInt().clamp(0, w - 1),
+            yStart.toInt().clamp(0, h - 1),
+            (cellWidth * zoneWidthRatio).toInt().clamp(1, w - xStart.toInt()),
+            (h * zoneHeightRatio).toInt().clamp(1, h - yStart.toInt()),
+          );
+        }()
+    ];
+  }
+
   /// Processes a single question row using HIGH-PRECISION GRID mapping.
   static BubbleResult detectFilledBubble(
     cv.Mat rowMat,
@@ -74,30 +100,17 @@ class BubbleDetectionService {
         fillRatios.add(cv.countNonZero(cellMat) / (rect.width * rect.height));
       }
     } else {
-      final double gridStartX = w * gridStart;
-      final double gridWidth = w * gridWidthRatio;
-      final double cellWidth = gridWidth / choicesCount;
-
-      for (int i = 0; i < choicesCount; i++) {
-        final double xStart = gridStartX + (i * cellWidth);
-        final rect = cv.Rect(
-          (xStart + (cellWidth * (1 - zoneWidthRatio) / 2))
-              .toInt()
-              .clamp(0, w - 1),
-          (h * (1 - zoneHeightRatio) / 2).toInt().clamp(0, h - 1),
-          (cellWidth * zoneWidthRatio).toInt().clamp(
-              1, w - (xStart + (cellWidth * (1 - zoneWidthRatio) / 2)).toInt()),
-          (h * zoneHeightRatio)
-              .toInt()
-              .clamp(1, h - (h * (1 - zoneHeightRatio) / 2).toInt()),
-        );
-
-        final cellMat = binary.region(rect);
+      for (final (x, y, zw, zh) in choiceZones(w, h, choicesCount,
+          gridStart: gridStart,
+          gridWidthRatio: gridWidthRatio,
+          zoneWidthRatio: zoneWidthRatio,
+          zoneHeightRatio: zoneHeightRatio)) {
+        final cellMat = binary.region(cv.Rect(x, y, zw, zh));
 
         // Binary ink is white after inverse thresholding. Count only actual
         // ink pixels: the external contour area of an unfilled printed ring
         // includes its empty center and can falsely grade it as marked.
-        fillRatios.add(cv.countNonZero(cellMat) / (rect.width * rect.height));
+        fillRatios.add(cv.countNonZero(cellMat) / (zw * zh));
       }
     }
 

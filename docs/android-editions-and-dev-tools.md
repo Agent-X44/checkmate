@@ -13,6 +13,8 @@ They install side by side with separate local data, pending-grade queues and tem
 
 The developer workspace requires no account or internet. It opens sheet photos, aligned or cropped images, camera captures and bundled sample artwork. It includes evaluation-image inspection, row/grid/threshold calibration, direct bubble sampling, editable answer/QR/set regions and set bubbles, named local template presets, full JSON import/export, and PDF alignment/sample-sheet printing. Its test scores are local previews. Course result synchronization remains authenticated, identity-verified and explicitly released by the instructor.
 
+Evaluation Dev Tools opens on a cropped answer-area view that outlines every sampled bubble where it was actually read: green for correct, red for wrong or ambiguous, a hollow green ring for a missed key answer, blue for a mark detected without a key, yellow for unmarked, and cyan for the answer region. A collapsible Quick Alignment panel (the tune icon) holds the column box, row/grid and sampling sliders; each change re-grades the preview automatically. In the developer edition, the Evaluation Result cropped-image tab shows the same overlay; production is unchanged.
+
 Signed-in developers can also open these tools from Evaluation Result and the existing assessment PDF designer. Named presets are selected by base layout, persisted on the device, and used on future matching developer scans. Production ignores all developer presets. Manual bubble positions are ordered by question, then choice (A-D for MCQ, A-B for TF).
 
 Offline camera captures and imported sheet photos detect the matching 30- or 50-question physical layout when it differs from the preferred selection. They open tools and apply presets for the detected layout. A matching mixed question layout keeps its selected configuration. Real assessment scanning still uses the resolved assessment template. See [developer capture layout details](developer-capture-layout-2026-10-08.md).
@@ -41,6 +43,6 @@ Configure android/key.properties using the example before public distribution if
 
 ## Verification
 
-Flutter analysis passes. The isolated pure Flutter suite passes 26 tests in each flavor. The tests cover offline layout selection, strict real assessment layouts, missing corners, automatic saving, developer-only evaluation navigation, profile persistence without authentication, invalid imported sampling settings, and production exclusion.
+Flutter analysis passes. The isolated pure Flutter suite passes 26 tests in each flavor. The tests cover offline layout selection, strict real assessment layouts, missing corners, confirm-before-save evaluation drafts, developer-only evaluation navigation, profile persistence without authentication, invalid imported sampling settings, and production exclusion.
 
 Both universal Android release builds pass. APK inspection confirms the distinct package IDs and launcher labels, valid signatures, and complete Flutter engine/application libraries for ARM32, ARM64 and x86_64. Each packaged app library's ELF build ID matches its fresh Flutter compilation, confirming the APK includes the current code. The build script also creates SHA256SUMS.txt alongside both APKs. No device is connected here, so on-device camera/PDF behavior and optional developer Google/Firebase registration still require device checks.

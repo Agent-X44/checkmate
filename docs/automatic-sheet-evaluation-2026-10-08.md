@@ -1,5 +1,13 @@
 # Automatic sheet evaluation — 8 October 2026
 
+> **Superseded on 9 October 2026:** saving is no longer automatic. The page
+> grades the capture as an unsaved draft. Only **Confirm & Continue** writes it
+> to the retry queue (BR-07: queue after instructor review). Retake, or going
+> back without confirming, discards the draft. That leaves a blurry or
+> misaligned capture out of the results, and the same paper can be scanned
+> again. A failed queue write stays on the page, and Confirm retries the same
+> result. The rest of this note still applies.
+
 At the user's request, the evaluation page no longer requires per-sheet
 approval. It automatically evaluates the calibrated local detections against
 the resolved assessment's answer key and writes the resulting JSON to the
