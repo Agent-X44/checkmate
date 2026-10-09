@@ -48,10 +48,15 @@ class BubbleDetectionService {
               (i * cellWidth) +
               (cellWidth * (1 - zoneWidthRatio) / 2);
           final double yStart = h * (1 - zoneHeightRatio) / 2;
+          // A wide grid may place an outer zone partly past the region edge;
+          // sample only the part inside it.
+          final x = xStart.toInt().clamp(0, w - 1);
+          var width = (cellWidth * zoneWidthRatio).toInt();
+          if (xStart < 0) width += xStart.toInt();
           return (
-            xStart.toInt().clamp(0, w - 1),
+            x,
             yStart.toInt().clamp(0, h - 1),
-            (cellWidth * zoneWidthRatio).toInt().clamp(1, w - xStart.toInt()),
+            width.clamp(1, w - x),
             (h * zoneHeightRatio).toInt().clamp(1, h - yStart.toInt()),
           );
         }()
