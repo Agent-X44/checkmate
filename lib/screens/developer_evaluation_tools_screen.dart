@@ -10,6 +10,7 @@ import '../services/developer_template_store.dart';
 import '../services/image_processor.dart';
 import '../services/sheet_evaluation_service.dart';
 import '../widgets/sheet_overlay_view.dart';
+import 'grading_template_builder_screen.dart';
 import 'template_designer_screen.dart';
 
 class DeveloperEvaluationToolsScreen extends StatefulWidget {
@@ -313,28 +314,78 @@ class _DeveloperEvaluationToolsScreenState
     return _config.copyWith(answerRegions: regions);
   }
 
-  /// Distance between neighbouring A-D bubble centres, as a fraction of the
-  /// answer-region width.
-  double get _choiceSpacing =>
-      _config.gridWidth / widget.template.choicesPerQuestion;
+  Future<void> _openBuilder() async {
+    // The builder previews ink against the threshold image of a fresh read.
+    if (_preview.thresholdImage.isEmpty) await _run();
+    if (!mounted) return;
+    final result = await Navigator.push<TemplateCalibration>(
+        context,
+        MaterialPageRoute(
+            builder: (_) => GradingTemplateBuilderScreen(
+                sheet: _preview, template: widget.template, config: _config)));
+    if (result != null && mounted) _adjust(result);
+  }
 
-  /// Spreads or tightens the A-D bubbles around the grid's centre. The
-  /// sampled zone keeps its absolute width, so only the gaps change.
-  TemplateCalibration _withChoiceSpacing(double spacing) {
-    final width =
-        (spacing * widget.template.choicesPerQuestion).clamp(.01, 1.0);
-    final centre = _config.gridStart + _config.gridWidth / 2;
-    return _config.copyWith(
-        gridStart: (centre - width / 2).clamp(-.5, 1.5 - width),
-        gridWidth: width,
-        zoneWidth:
-            (_config.zoneWidth * _config.gridWidth / width).clamp(.1, 1.0));
+  Widget _gridSliders() {
+    final column = _column.clamp(0, _config.answerRegions.length - 1);
+    final region = _config.answerRegions[column];
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      if (_config.answerBubbles.isNotEmpty)
+        const Text(
+            'Ignored for grading while a bubble template is in use. Column '
+            'boxes still set the builder\'s starting position.',
+            style: TextStyle(fontSize: 12, color: Colors.orange)),
+      _section('COLUMN BOUNDING BOXES'),
+      if (_config.answerRegions.length > 1)
+        Wrap(spacing: 8, children: [
+          for (var i = 0; i < _config.answerRegions.length; i++)
+            ChoiceChip(
+                label: Text('Col ${i + 1}'),
+                selected: column == i,
+                onSelected: (_) => setState(() => _column = i)),
+        ]),
+      _slider('Col${column + 1} X', region.left, 0, 1,
+          (v) => _withColumn((r) => r.translate(v - r.left, 0))),
+      _slider('Col${column + 1} Y', region.top, 0, 1,
+          (v) => _withColumn((r) => r.translate(0, v - r.top))),
+      _slider('Col width', region.width, .02, 1,
+          (v) => _withColumn((r) => Rect.fromLTWH(r.left, r.top, v, r.height))),
+      _slider('Col height', region.height, .02, 1,
+          (v) => _withColumn((r) => Rect.fromLTWH(r.left, r.top, r.width, v))),
+      _section('ROW & GRID'),
+      _slider('Y-offset (px)', _config.yOffset.toDouble(), -200, 200,
+          (v) => _config.copyWith(yOffset: v.round()),
+          digits: 0),
+      _slider('Row spacing', _config.rowSpacing, -10, 10,
+          (v) => _config.copyWith(rowSpacing: v)),
+      _slider('Strip height', _config.stripHeight, .3, 3,
+          (v) => _config.copyWith(stripHeight: v)),
+      _slider('X-offset', _config.xOffset, -.5, .5,
+          (v) => _config.copyWith(xOffset: v)),
+      _slider(
+          'Grid start',
+          _config.gridStart,
+          -.5,
+          1,
+          (v) => _config.copyWith(
+              gridStart: v.clamp(-.5, 1.5 - _config.gridWidth))),
+      _slider(
+          'Grid width',
+          _config.gridWidth,
+          .01,
+          2,
+          (v) => _config.copyWith(
+              gridWidth: v.clamp(.01, 1.5 - _config.gridStart))),
+      _slider('Zone width', _config.zoneWidth, .1, 1,
+          (v) => _config.copyWith(zoneWidth: v)),
+      _slider('Zone height', _config.zoneHeight, .1, 1,
+          (v) => _config.copyWith(zoneHeight: v)),
+    ]);
   }
 
   Widget _alignmentPanel() {
-    final column = _column.clamp(0, _config.answerRegions.length - 1);
-    final region = _config.answerRegions[column];
-    final accent = Theme.of(context).colorScheme.secondary;
+    final scheme = Theme.of(context).colorScheme;
+    final manual = _config.answerBubbles.isNotEmpty;
     return Container(
       color: Colors.black,
       constraints:
@@ -342,80 +393,46 @@ class _DeveloperEvaluationToolsScreenState
       child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
           children: [
-            Text('QUICK ALIGNMENT',
+            Text('GRADING TEMPLATE',
                 style: TextStyle(
-                    color: accent, fontWeight: FontWeight.bold, fontSize: 13)),
-            _section('1. COLUMN BOUNDING BOXES'),
-            if (_config.answerRegions.length > 1)
-              Wrap(spacing: 8, children: [
-                for (var i = 0; i < _config.answerRegions.length; i++)
-                  ChoiceChip(
-                      label: Text('Col ${i + 1}'),
-                      selected: column == i,
-                      onSelected: (_) => setState(() => _column = i)),
-              ]),
-            _slider('Col${column + 1} X', region.left, 0, 1,
-                (v) => _withColumn((r) => r.translate(v - r.left, 0))),
-            _slider('Col${column + 1} Y', region.top, 0, 1,
-                (v) => _withColumn((r) => r.translate(0, v - r.top))),
-            _slider(
-                'Col width',
-                region.width,
-                .02,
-                1,
-                (v) => _withColumn(
-                    (r) => Rect.fromLTWH(r.left, r.top, v, r.height))),
-            _slider(
-                'Col height',
-                region.height,
-                .02,
-                1,
-                (v) => _withColumn(
-                    (r) => Rect.fromLTWH(r.left, r.top, r.width, v))),
-            _section('2. ROW & GRID ALIGNMENT'),
-            _slider('Y-offset (px)', _config.yOffset.toDouble(), -200, 200,
-                (v) => _config.copyWith(yOffset: v.round()),
-                digits: 0),
-            _slider('Row spacing', _config.rowSpacing, -10, 10,
-                (v) => _config.copyWith(rowSpacing: v)),
-            _slider('Strip height', _config.stripHeight, .3, 3,
-                (v) => _config.copyWith(stripHeight: v)),
-            _slider('X-offset', _config.xOffset, -.5, .5,
-                (v) => _config.copyWith(xOffset: v)),
-            _slider(
-                'Grid start',
-                _config.gridStart,
-                -.5,
-                1,
-                (v) => _config.copyWith(
-                    gridStart: v.clamp(-.5, 1.5 - _config.gridWidth))),
-            _slider(
-                'Grid width',
-                _config.gridWidth,
-                .01,
-                2,
-                (v) => _config.copyWith(
-                    gridWidth: v.clamp(.01, 1.5 - _config.gridStart))),
-            _slider('Choice spacing', _choiceSpacing, .01,
-                2 / widget.template.choicesPerQuestion, _withChoiceSpacing,
-                digits: 3),
-            _section('3. BUBBLE SAMPLING'),
+                    color: scheme.secondary,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13)),
+            const SizedBox(height: 6),
+            Text(
+                manual
+                    ? 'Bubble template: ${_config.answerBubbles.length} '
+                        'bubbles placed from anchors. Grading samples exactly '
+                        'these positions.'
+                    : 'Using the automatic grid. Build a bubble template to '
+                        'place every bubble by dragging four handles per '
+                        'column.',
+                style: const TextStyle(fontSize: 12, color: Colors.white70)),
+            const SizedBox(height: 8),
+            FilledButton.icon(
+                style: FilledButton.styleFrom(
+                    backgroundColor: scheme.secondary,
+                    foregroundColor: scheme.onSecondary),
+                onPressed: _busy ? null : _openBuilder,
+                icon: const Icon(Icons.open_with),
+                label: Text(manual
+                    ? 'Adjust bubble template'
+                    : 'Build bubble template')),
+            if (manual)
+              TextButton.icon(
+                  onPressed: () =>
+                      _adjust(_config.copyWith(answerBubbles: const [])),
+                  icon: const Icon(Icons.grid_off, color: Colors.white70),
+                  label: const Text('Remove bubble template (use grid)',
+                      style: TextStyle(color: Colors.white70))),
             _slider('Fill threshold', _config.fillThreshold, .01, .9,
                 (v) => _config.copyWith(fillThreshold: v)),
-            _slider('Zone width', _config.zoneWidth, .1, 1,
-                (v) => _config.copyWith(zoneWidth: v)),
-            _slider('Zone height', _config.zoneHeight, .1, 1,
-                (v) => _config.copyWith(zoneHeight: v)),
-            if (_config.answerBubbles.isNotEmpty) ...[
-              _slider('Bubble radius', _config.bubbleRadius, .001, .03,
+            if (manual)
+              _slider('Bubble size', _config.bubbleRadius, .002, .03,
                   (v) => _config.copyWith(bubbleRadius: v),
                   digits: 3),
-              Text(
-                  'Manual bubbles: ${_config.answerBubbles.length}. They replace the grid; place them in question order, A to D (A to B for TF).',
-                  style: const TextStyle(fontSize: 12, color: Colors.white70)),
-            ],
             if (widget.loadQuestions == null) ...[
-              _section('4. TEST ANSWER KEY'),
+              _section('TEST ANSWER KEY'),
               TextField(
                   controller: _key,
                   maxLines: 2,
@@ -425,6 +442,18 @@ class _DeveloperEvaluationToolsScreenState
                       hintText: 'A B C D ...; TRUE/FALSE for TF rows',
                       hintStyle: TextStyle(color: Colors.white38))),
             ],
+            Theme(
+              data:
+                  Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  childrenPadding: EdgeInsets.zero,
+                  iconColor: Colors.white70,
+                  collapsedIconColor: Colors.white70,
+                  title: const Text('Advanced: automatic grid sliders',
+                      style: TextStyle(fontSize: 13, color: Colors.white70)),
+                  children: [_gridSliders()]),
+            ),
           ]),
     );
   }
