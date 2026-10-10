@@ -1470,7 +1470,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
         expectedQr: _lockedSheetQr,
         developerSandbox: _developerSandbox,
         calibrationProfiles: AppBuild.developerTools
-            ? await DeveloperTemplateStore.load()
+            ? await DeveloperTemplateStore.activeProfiles()
             : const [],
       );
 

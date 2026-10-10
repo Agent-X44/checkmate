@@ -15,7 +15,16 @@ The developer workspace requires no account or internet. It opens sheet photos, 
 
 Evaluation Dev Tools opens on a cropped answer-area view that outlines every sampled bubble where it was actually read: green for correct, red for wrong or ambiguous, a hollow green ring for a missed key answer, blue for a mark detected without a key, yellow for unmarked, and cyan for the answer region. The tune icon opens the Grading Template panel. **Build bubble template** opens a builder with four colored handles per answer column: the first and last choice of the first row, and of the last row. Drag each handle onto the centre of the printed bubble it names, or nudge it 1 or 5 px at a time; a second pad moves the whole column. Every other bubble is interpolated between the handles, which also absorbs slight rotation. Bubbles turn blue live when they sit on ink, and a counter shows answered and ambiguous rows. **Use this template** stores the result as manual bubbles plus bubble size and fill threshold; grading then samples exactly those positions. True/false rows use the A and B positions. The older automatic-grid sliders remain under Advanced, and each change re-grades the preview automatically. In the developer edition, the Evaluation Result cropped-image tab shows the same overlay; production is unchanged.
 
-The built-in Standard 30 Questions template carries calibrated bubble positions (120 centres, bubble size 0.0184, fill threshold 0.365) made with the builder. Both editions grade 30-question sheets by sampling exactly those points. They are defined by four anchors in `lib/models/omr/templates/standard_30_questions.dart`. In the developer edition, a saved local preset for this layout still overrides them, and Reset adjustments returns to them.
+The built-in Standard 30 Questions template carries calibrated bubble positions (120 centres, bubble size 0.0184, fill threshold 0.365) made with the builder. Both editions grade 30-question sheets by sampling exactly those points. They are defined by four anchors in `lib/models/omr/templates/standard_30_questions.dart`.
+
+The developer edition also uses each layout's built-in template unless a saved template is explicitly selected for it. The ⋮ menu in Evaluation Dev Tools manages this:
+
+- **Saved templates…**: tap a template to load it into the editor. The radio button chooses what developer scans use. Built-in is listed first; the bin deletes a template.
+- **Save and use for scans**: saves the edited template and selects it.
+- **Use built-in template**: loads the built-in template and clears the selection without deleting anything.
+- **Import JSON file… / Export JSON file… / Share JSON file…**: work with `.json` files in the same format as **Copy JSON** and **Paste JSON…**. An imported file for this layout opens in the editor for preview. A file for another layout is saved under that layout's templates. Invalid files are rejected with the reason, and unknown keys are ignored.
+
+The header shows which template developer scans use. Templates saved before this change stay available but are no longer applied automatically.
 
 Signed-in developers can also open these tools from Evaluation Result and the existing assessment PDF designer. Named presets are selected by base layout, persisted on the device, and used on future matching developer scans. Production ignores all developer presets. Manual bubble positions are ordered by question, then choice (A-D for MCQ, A-B for TF).
 
