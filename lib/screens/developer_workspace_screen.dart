@@ -42,7 +42,7 @@ class _DeveloperWorkspaceScreenState extends State<DeveloperWorkspaceScreen> {
       _error = null;
     });
     try {
-      final profiles = await DeveloperTemplateStore.load();
+      final profiles = await DeveloperTemplateStore.activeProfiles();
       final sheet = align
           ? await ImageProcessor.processOmr(OmrRequest(
               bytes: bytes,

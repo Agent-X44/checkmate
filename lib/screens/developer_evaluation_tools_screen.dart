@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../config/app_build.dart';
@@ -12,6 +11,7 @@ import '../services/sheet_evaluation_service.dart';
 import '../widgets/sheet_overlay_view.dart';
 import 'grading_template_builder_screen.dart';
 import 'template_designer_screen.dart';
+import '../services/template_file_service.dart';
 
 class DeveloperEvaluationToolsScreen extends StatefulWidget {
   final ProcessedSheet sheet;
@@ -39,6 +39,9 @@ class _DeveloperEvaluationToolsScreenState
   int _column = 0;
   Timer? _debounce;
   String? _error;
+
+  /// Saved template developer scans use for this layout; null = built-in.
+  String? _scanTemplate;
   @override
   void initState() {
     super.initState();
@@ -46,7 +49,12 @@ class _DeveloperEvaluationToolsScreenState
     _preview = widget.sheet;
     DeveloperTemplateStore.active(widget.template.id).then((c) {
       if (!mounted) return;
-      if (c != null) setState(() => _config = c);
+      if (c != null) {
+        setState(() {
+          _config = c;
+          _scanTemplate = c.name;
+        });
+      }
       _run();
     });
   }
@@ -148,6 +156,17 @@ class _DeveloperEvaluationToolsScreenState
                 })));
   }
 
+  void _notify(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _refreshScanTemplate() async {
+    final active = await DeveloperTemplateStore.active(widget.template.id);
+    if (mounted) setState(() => _scanTemplate = active?.name);
+  }
+
   Future<void> _save() async {
     final controller = TextEditingController(text: _config.name);
     final name = await showDialog<String>(
@@ -172,94 +191,177 @@ class _DeveloperEvaluationToolsScreenState
     try {
       final config = _config.copyWith(name: name);
       await DeveloperTemplateStore.save(config);
-      if (mounted) {
-        setState(() => _config = config);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text(
-                'Template saved on this device. Used for the next matching developer scan.')));
-      }
+      setState(() {
+        _config = config;
+        _scanTemplate = name;
+      });
+      _notify('Saved on this device and selected for developer scans.');
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     }
   }
 
-  Future<void> _transfer(String action) async {
-    if (action == 'reset') {
-      _adjust(TemplateCalibration.fromTemplate(widget.template));
+  /// Loads an imported template into the editor when it is for this layout;
+  /// otherwise keeps it as a saved template for its own layout.
+  Future<void> _receive(TemplateCalibration config, String source) async {
+    if (config.baseTemplateId == widget.template.id) {
+      _adjust(config);
+      _notify('$source "${config.name}". Previewing now; tap Save to use it '
+          'for scans.');
       return;
     }
-    if (action == 'load') {
-      final profiles = (await DeveloperTemplateStore.load())
-          .where((c) => c.baseTemplateId == widget.template.id)
-          .toList();
-      if (!mounted) return;
-      final selected = await showDialog<TemplateCalibration>(
-          context: context,
-          builder: (context) => SimpleDialog(
-              title: const Text('Local templates'),
-              children: profiles.isEmpty
-                  ? [
-                      const Padding(
-                          padding: EdgeInsets.all(16),
-                          child: Text('No saved templates for this layout.'))
-                    ]
-                  : profiles
-                      .map((p) => SimpleDialogOption(
-                          onPressed: () => Navigator.pop(context, p),
-                          child: Text(p.name)))
-                      .toList()));
-      if (selected != null && mounted) _adjust(selected);
-      return;
+    await DeveloperTemplateStore.save(config, activate: false);
+    _notify('"${config.name}" is for layout ${config.baseTemplateId}. Saved '
+        'it under Saved templates for that layout.');
+  }
+
+  Future<void> _menu(String action) async {
+    try {
+      switch (action) {
+        case 'design':
+          await _design();
+        case 'save':
+          await _save();
+        case 'templates':
+          await _templates();
+        case 'builtin':
+          _adjust(TemplateCalibration.fromTemplate(widget.template));
+          await DeveloperTemplateStore.setActive(widget.template.id, null);
+          await _refreshScanTemplate();
+          _notify('Using the built-in template for previews and scans.');
+        case 'open_file':
+          final config = await TemplateFileService.open();
+          if (config != null) await _receive(config, 'Imported');
+        case 'save_file':
+          final path = await TemplateFileService.save(_config);
+          if (path != null) {
+            _notify('Saved ${TemplateFileService.fileName(_config)}');
+          }
+        case 'share_file':
+          await TemplateFileService.share(_config);
+        case 'copy':
+          await Clipboard.setData(
+              ClipboardData(text: TemplateFileService.encode(_config)));
+          _notify('Template JSON copied.');
+        case 'paste':
+          final text = await _pasteDialog();
+          if (text != null && text.trim().isNotEmpty) {
+            await _receive(TemplateFileService.decode(text), 'Pasted');
+          }
+      }
+    } on FormatException catch (e) {
+      if (mounted) {
+        setState(() => _error = 'Template not imported: ${e.message}');
+      }
+    } catch (e) {
+      debugPrint('Template action $action failed: $e');
+      if (mounted) setState(() => _error = 'Could not complete that action.');
     }
-    final controller = TextEditingController(
-        text: action == 'export'
-            ? const JsonEncoder.withIndent('  ').convert(_config.toMap())
-            : '');
+  }
+
+  Future<String?> _pasteDialog() async {
+    final controller = TextEditingController();
+    final clip = await Clipboard.getData(Clipboard.kTextPlain);
+    controller.text = clip?.text ?? '';
+    if (!mounted) return null;
     final text = await showDialog<String>(
         context: context,
         builder: (context) => AlertDialog(
-                title: Text(action == 'export'
-                    ? 'Export template JSON'
-                    : 'Import template JSON'),
+                title: const Text('Paste template JSON'),
                 content: SizedBox(
                     width: 650,
                     child: TextField(
                         controller: controller,
-                        readOnly: action == 'export',
                         maxLines: 12,
                         decoration: const InputDecoration(
                             hintText: 'Paste template JSON'))),
                 actions: [
                   TextButton(
                       onPressed: () => Navigator.pop(context),
-                      child: const Text('Close')),
+                      child: const Text('Cancel')),
                   FilledButton(
-                      onPressed: () async {
-                        if (action == 'export') {
-                          await Clipboard.setData(
-                              ClipboardData(text: controller.text));
-                        }
-                        if (context.mounted) {
-                          Navigator.pop(context, controller.text);
-                        }
-                      },
-                      child: Text(action == 'export' ? 'Copy JSON' : 'Import'))
+                      onPressed: () => Navigator.pop(context, controller.text),
+                      child: const Text('Import'))
                 ]));
     controller.dispose();
-    if (text == null || action == 'export' || !mounted) return;
-    try {
-      final config = TemplateCalibration.fromMap(
-          Map<String, dynamic>.from(jsonDecode(text)));
-      if (config.baseTemplateId != widget.template.id) {
-        throw const FormatException(
-            'Choose the matching base layout before importing');
-      }
-      _adjust(config);
-    } catch (e) {
-      setState(() => _error = e is FormatException
-          ? e.message.toString()
-          : 'Invalid template JSON');
-    }
+    return text;
+  }
+
+  /// Built-in plus saved templates for this layout: tap to edit, the radio
+  /// chooses what developer scans use, the bin deletes.
+  Future<void> _templates() async {
+    var rows = (await DeveloperTemplateStore.load())
+        .where((c) => c.baseTemplateId == widget.template.id)
+        .toList();
+    String? active = _scanTemplate;
+    if (!mounted) return;
+    final chosen = await showDialog<TemplateCalibration>(
+        context: context,
+        builder: (context) => StatefulBuilder(builder: (context, update) {
+              Future<void> select(String? name) async {
+                await DeveloperTemplateStore.setActive(
+                    widget.template.id, name);
+                update(() => active = name);
+              }
+
+              Widget tile(TemplateCalibration config, String? name,
+                      {bool builtIn = false}) =>
+                  ListTile(
+                    leading: Radio<String?>(value: name, toggleable: false),
+                    title: Text(
+                        builtIn ? 'Built-in: ${config.name}' : config.name),
+                    subtitle: Text(config.answerBubbles.isEmpty
+                        ? 'Automatic grid'
+                        : '${config.answerBubbles.length} bubbles'),
+                    onTap: () => Navigator.pop(context, config),
+                    trailing: builtIn
+                        ? null
+                        : IconButton(
+                            tooltip: 'Delete',
+                            icon: const Icon(Icons.delete_outline),
+                            onPressed: () async {
+                              await DeveloperTemplateStore.delete(
+                                  widget.template.id, config.name);
+                              final remaining =
+                                  (await DeveloperTemplateStore.load())
+                                      .where((c) =>
+                                          c.baseTemplateId ==
+                                          widget.template.id)
+                                      .toList();
+                              update(() {
+                                rows = remaining;
+                                if (active == config.name) active = null;
+                              });
+                            }),
+                  );
+
+              return AlertDialog(
+                title: const Text('Grading templates'),
+                content: SizedBox(
+                  width: 520,
+                  child: RadioGroup<String?>(
+                    groupValue: active,
+                    onChanged: select,
+                    child: ListView(shrinkWrap: true, children: [
+                      const Text(
+                          'The selected circle is used for developer scans. Tap '
+                          'a name to load it into the editor.'),
+                      tile(TemplateCalibration.fromTemplate(widget.template),
+                          null,
+                          builtIn: true),
+                      for (final row in rows) tile(row, row.name),
+                    ]),
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('Close'))
+                ],
+              );
+            }));
+    await _refreshScanTemplate();
+    if (chosen != null && mounted) _adjust(chosen);
   }
 
   Widget _section(String title) => Padding(
@@ -493,7 +595,9 @@ class _DeveloperEvaluationToolsScreenState
                         color: theme.colorScheme.secondary,
                         fontWeight: FontWeight.bold))),
         ]),
-        Text('Local test preview • never changes course results',
+        Text(
+            'Scans use: ${_scanTemplate == null ? 'built-in template' : '"$_scanTemplate"'}'
+            ' • local preview, never changes course results',
             style: theme.textTheme.bodySmall),
         const Divider(height: 20),
         Row(children: [
@@ -606,24 +710,55 @@ class _DeveloperEvaluationToolsScreenState
               onPressed: () =>
                   setState(() => _showAlignment = !_showAlignment)),
           PopupMenuButton<String>(
-              onSelected: (action) => action == 'design'
-                  ? _design()
-                  : action == 'save'
-                      ? _save()
-                      : _transfer(action),
+              onSelected: _menu,
               itemBuilder: (_) => const [
                     PopupMenuItem(
-                        value: 'design',
-                        child: Text('Edit regions and bubbles')),
+                        value: 'templates',
+                        child: ListTile(
+                            leading: Icon(Icons.layers_outlined),
+                            title: Text('Saved templates…'))),
                     PopupMenuItem(
-                        value: 'save', child: Text('Save local template')),
+                        value: 'save',
+                        child: ListTile(
+                            leading: Icon(Icons.save_outlined),
+                            title: Text('Save and use for scans'))),
+                    PopupMenuItem(
+                        value: 'builtin',
+                        child: ListTile(
+                            leading: Icon(Icons.restart_alt),
+                            title: Text('Use built-in template'))),
                     PopupMenuDivider(),
                     PopupMenuItem(
-                        value: 'load', child: Text('Load local template')),
-                    PopupMenuItem(value: 'import', child: Text('Import JSON')),
-                    PopupMenuItem(value: 'export', child: Text('Export JSON')),
+                        value: 'open_file',
+                        child: ListTile(
+                            leading: Icon(Icons.file_open_outlined),
+                            title: Text('Import JSON file…'))),
                     PopupMenuItem(
-                        value: 'reset', child: Text('Reset adjustments'))
+                        value: 'save_file',
+                        child: ListTile(
+                            leading: Icon(Icons.file_download_outlined),
+                            title: Text('Export JSON file…'))),
+                    PopupMenuItem(
+                        value: 'share_file',
+                        child: ListTile(
+                            leading: Icon(Icons.share_outlined),
+                            title: Text('Share JSON file…'))),
+                    PopupMenuItem(
+                        value: 'copy',
+                        child: ListTile(
+                            leading: Icon(Icons.copy),
+                            title: Text('Copy JSON'))),
+                    PopupMenuItem(
+                        value: 'paste',
+                        child: ListTile(
+                            leading: Icon(Icons.content_paste),
+                            title: Text('Paste JSON…'))),
+                    PopupMenuDivider(),
+                    PopupMenuItem(
+                        value: 'design',
+                        child: ListTile(
+                            leading: Icon(Icons.design_services_outlined),
+                            title: Text('Edit regions and bubbles'))),
                   ])
         ]),
         body: DefaultTabController(

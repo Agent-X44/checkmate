@@ -95,4 +95,41 @@ void main() {
     expect((await DeveloperTemplateStore.active('test'))!.yOffset, 12);
     expect(await DeveloperTemplateStore.active('another-layout'), isNull);
   });
+
+  test('layouts use the built-in template until one is selected', () async {
+    if (!AppBuild.developerTools) return;
+    final base = TemplateCalibration.fromTemplate(template);
+    // A preset saved before selections existed must not take over scans.
+    SharedPreferences.setMockInitialValues({
+      'checkmate_developer_templates_v1':
+          jsonEncode([base.copyWith(name: 'Legacy', yOffset: 3).toMap()])
+    });
+    expect(await DeveloperTemplateStore.active('test'), isNull);
+    expect(await DeveloperTemplateStore.activeProfiles(), isEmpty);
+    expect((await DeveloperTemplateStore.load()).single.name, 'Legacy');
+
+    await DeveloperTemplateStore.setActive('test', 'Legacy');
+    expect((await DeveloperTemplateStore.active('test'))!.yOffset, 3);
+    expect(
+        (await DeveloperTemplateStore.activeProfiles()).single.name, 'Legacy');
+
+    await DeveloperTemplateStore.save(base.copyWith(name: 'Kept', yOffset: 5),
+        activate: false);
+    expect((await DeveloperTemplateStore.active('test'))!.name, 'Legacy');
+
+    await DeveloperTemplateStore.setActive('test', null);
+    expect(await DeveloperTemplateStore.active('test'), isNull);
+    expect((await DeveloperTemplateStore.load()).length, 2);
+  });
+
+  test('deleting the selected template returns to the built-in one', () async {
+    if (!AppBuild.developerTools) return;
+    SharedPreferences.setMockInitialValues({});
+    final base = TemplateCalibration.fromTemplate(template);
+    await DeveloperTemplateStore.save(base.copyWith(name: 'Temp'));
+    expect((await DeveloperTemplateStore.active('test'))!.name, 'Temp');
+    await DeveloperTemplateStore.delete('test', 'Temp');
+    expect(await DeveloperTemplateStore.active('test'), isNull);
+    expect(await DeveloperTemplateStore.load(), isEmpty);
+  });
 }
