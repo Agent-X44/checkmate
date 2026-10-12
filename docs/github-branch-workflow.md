@@ -29,4 +29,6 @@ The version values above are examples; choose the actual next version before pub
 
 Create one GitHub release whose tag targets that exact stable commit, then attach both APKs and the checksum file. Git branches contain source code; generated APKs stay in release assets. Branch updates do not publish a release automatically.
 
+For step-by-step commit and push commands, see [Committing and pushing across branches](committing-and-pushing.md).
+
 See [Android edition details](android-editions-and-dev-tools.md) for offline tools, package IDs, signing and optional developer Firebase setup.
