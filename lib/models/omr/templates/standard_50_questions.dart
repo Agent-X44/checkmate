@@ -46,6 +46,9 @@ class Standard50QuestionsTemplate extends BubbleSheetTemplate {
           calibratedYOffset: 0,
           gridStart: 0.050,
           gridWidth: 0.920,
+          answerBubbles: _answerBubbles(),
+          bubbleRadius: 9.3 / _markerFrameWidth,
+          fillThreshold: 0.45,
         );
 
   /// Horizontal calibration offset used during OMR processing.
@@ -60,3 +63,32 @@ class Standard50QuestionsTemplate extends BubbleSheetTemplate {
   /// The normalized height of an individual question strip for processing.
   static const double defaultStripHeight = 0.970;
 }
+
+// Bubble centres measured from the printed ring outlines in
+// assets/50_questions.png (pixels), normalized to its marker frame. Row
+// spacing narrows from about 30 px at the top to 24 px at the bottom, so a
+// linear grid between the first and last rows drifts by most of a bubble.
+const _markerLeft = 49.5, _markerTop = 49.5;
+const _markerFrameWidth = 1000.5 - _markerLeft;
+const _markerFrameHeight = 1446.5 - _markerTop;
+
+/// A-D centres of the left (Q1-25) and right (Q26-50) columns.
+const _columnX = [
+  [196.5, 280.5, 364.5, 449.0],
+  [674.5, 759.0, 844.5, 929.5],
+];
+
+/// Shared by both columns.
+const _rowY = [
+  621.5, 651.0, 680.5, 710.0, 739.5, 768.5, 797.5, 825.5, 854.0, 882.5, //
+  910.5, 938.5, 966.5, 994.5, 1023.5, 1051.5, 1079.5, 1107.25, 1135.5, //
+  1162.5, 1189.5, 1216.5, 1242.5, 1269.5, 1293.5,
+];
+
+List<Offset> _answerBubbles() => [
+      for (final column in _columnX)
+        for (final y in _rowY)
+          for (final x in column)
+            Offset((x - _markerLeft) / _markerFrameWidth,
+                (y - _markerTop) / _markerFrameHeight)
+    ];
