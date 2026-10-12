@@ -20,8 +20,8 @@ class BubbleDetectionService {
       ratios.add(cv.countNonZero(cell) / (width * height));
     }
     final answers = [
-      for (var i = 0; i < ratios.length; i++)
-        if (ratios[i] > threshold) String.fromCharCode(65 + i)
+      for (final i in markedChoices(ratios, threshold))
+        String.fromCharCode(65 + i)
     ];
     final sorted = List<double>.of(ratios)..sort((a, b) => b.compareTo(a));
     return BubbleResult(
@@ -30,6 +30,35 @@ class BubbleDetectionService {
         isFilled: answers.isNotEmpty,
         multipleAnswers: answers,
         isAmbiguous: answers.length > 1);
+  }
+
+  /// Choices counted as marked, from each sampled zone's dark-pixel ratio.
+  ///
+  /// A zone above [threshold] is marked. A small but clear dot can cover less
+  /// than that, so a zone also counts when it reaches 70% of [threshold] and
+  /// is at least 3x the median of the row's other zones. Where a camera turns
+  /// the printed rings dark, every blank already covers about a quarter of
+  /// its zone, so only the absolute threshold can apply.
+  static List<int> markedChoices(List<double> ratios, double threshold) {
+    return [
+      for (var i = 0; i < ratios.length; i++)
+        if (ratios[i] > threshold ||
+            (ratios[i] >= threshold * 0.7 &&
+                ratios[i] >= 3 * (_medianOfOthers(ratios, i) + 0.02)))
+          i
+    ];
+  }
+
+  static double _medianOfOthers(List<double> ratios, int skip) {
+    final others = [
+      for (var i = 0; i < ratios.length; i++)
+        if (i != skip) ratios[i]
+    ]..sort();
+    if (others.isEmpty) return 0;
+    final middle = others.length ~/ 2;
+    return others.length.isOdd
+        ? others[middle]
+        : (others[middle - 1] + others[middle]) / 2;
   }
 
   /// Pixel (x, y, width, height) of each choice's sampled zone in a row of
