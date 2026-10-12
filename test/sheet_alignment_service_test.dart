@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:opencv_dart/opencv_dart.dart' as cv;
 import 'package:checkmate/services/cv/sheet_alignment_service.dart';
 import 'package:checkmate/services/cv/fiducial_geometry.dart';
+import 'package:checkmate/services/cv/live_scan_policy.dart';
 import 'helpers/sheet_alignment_scenarios.dart';
 import 'helpers/sheet_native_checks.dart';
 
@@ -9,6 +10,7 @@ import 'helpers/sheet_native_checks.dart';
 // filled shading example. Requires a native OpenCV test build.
 // Android fallback: flutter run -d <device> -t test/native_alignment_probe.dart.
 void main() {
+  liveAcquisitionTests();
   for (final layout in sheetLayouts) {
     for (final scenario in captureScenarios) {
       test('${layout.asset}: ${scenario.name}', () {
@@ -43,5 +45,42 @@ void main() {
         artwork.dispose();
       }
     });
+  }
+}
+
+// The scanner overlay drops live results older than
+// LiveScanPolicy.maxOverlayAge, so acquiring the markers from scratch must
+// stay well inside it, or the corners and frame never appear on a phone.
+void liveAcquisitionTests() {
+  for (final layout in sheetLayouts) {
+    for (final scenario in [captureScenarios[0], captureScenarios[1]]) {
+      test('${layout.asset}: live preview finds markers at ${scenario.name}',
+          () {
+        final artwork = cv.imread(layout.asset);
+        final capture = captureArtwork(artwork, layout, scenario);
+        final gray = cv.cvtColor(capture.image, cv.COLOR_BGR2GRAY);
+        final scale = LiveScanPolicy.previewMaxDimension / gray.height;
+        final preview = cv.resize(gray,
+            ((gray.width * scale).round(), LiveScanPolicy.previewMaxDimension));
+        try {
+          final clock = Stopwatch()..start();
+          final candidates = SheetAlignmentService.findCandidates(preview,
+              thresholdWindows: const [51]);
+          final found = FiducialGeometry.selectMarkers(candidates,
+              imageArea: (preview.width * preview.height).toDouble(),
+              aspectRatio: layout.aspectRatio,
+              diameterRatio: layout.diameterRatio);
+          clock.stop();
+          expect(found, isNotNull);
+          // Desktop runs take about 50-120 ms; a phone is several times slower.
+          expect(clock.elapsedMilliseconds, lessThan(600));
+        } finally {
+          preview.dispose();
+          gray.dispose();
+          capture.dispose();
+          artwork.dispose();
+        }
+      });
+    }
   }
 }

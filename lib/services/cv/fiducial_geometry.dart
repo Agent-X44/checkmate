@@ -109,7 +109,15 @@ class FiducialGeometry {
                     qr.y > 0.35) {
                   continue;
                 }
-              } else {
+              }
+              // Most hypotheses fail their physical marker dimensions. Check
+              // that first, so the outside scan and refinement below run only
+              // for plausible frames and the live search stays inexpensive.
+              if (_markerError(group, transform, aspectRatio, diameterRatio) ==
+                  null) {
+                continue;
+              }
+              if (qrCenter == null) {
                 // Without a QR location, a smaller answer-bubble rectangle
                 // must not replace the outer registration frame. Ignore tiny
                 // noise outside the frame, and round background shapes that
@@ -131,12 +139,6 @@ class FiducialGeometry {
                           null;
                 });
                 if (outside) continue;
-              }
-              // Most hypotheses fail their physical marker dimensions. Refine
-              // only plausible frames to keep the bounded search inexpensive.
-              if (_markerError(group, transform, aspectRatio, diameterRatio) ==
-                  null) {
-                continue;
               }
               final orderedMarkers = corners
                   .map((p) => group.firstWhere((m) => m.center == p))
@@ -266,6 +268,13 @@ class FiducialGeometry {
       final width = xs.reduce(math.max) - xs.reduce(math.min);
       final height = ys.reduce(math.max) - ys.reduce(math.min);
       final size = (width + height) / 2;
+      if (height <= 0 ||
+          size < diameterRatio * 0.70 ||
+          size > diameterRatio * 1.30 ||
+          width / height < 0.70 ||
+          width / height > 1.43) {
+        return null;
+      }
       // Rectifying a strongly foreshortened contour magnifies its pixel
       // stair-steps into a jagged outline whose perimeter understates
       // circularity. Its convex hull removes the inward steps; a square
@@ -278,15 +287,7 @@ class FiducialGeometry {
       }
       final circularity =
           4 * math.pi * polygonArea(outline) / (perimeter * perimeter);
-      if (!circularity.isFinite ||
-          height <= 0 ||
-          size < diameterRatio * 0.70 ||
-          size > diameterRatio * 1.30 ||
-          circularity < 0.80 ||
-          width / height < 0.70 ||
-          width / height > 1.43) {
-        return null;
-      }
+      if (!circularity.isFinite || circularity < 0.80) return null;
       sizes.add(size);
       error += (size / diameterRatio - 1).abs() + (width / height - 1).abs();
     }
