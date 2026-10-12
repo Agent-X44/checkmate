@@ -112,16 +112,23 @@ class FiducialGeometry {
               } else {
                 // Without a QR location, a smaller answer-bubble rectangle
                 // must not replace the outer registration frame. Ignore tiny
-                // noise outside the frame, but require larger marks inside.
+                // noise outside the frame, and round background shapes that
+                // would not be a registration circle in this frame.
                 final minimumArea = group.map((m) => m.area).reduce(math.min);
                 final outside = candidates.any((m) {
                   if (m.area < minimumArea * 0.5) return false;
                   final p = transform.map(m.center);
+                  if (p != null &&
+                      p.x >= -0.08 &&
+                      p.x <= 1.08 &&
+                      p.y >= -0.08 &&
+                      p.y <= 1.08) {
+                    return false;
+                  }
                   return p == null ||
-                      p.x < -0.08 ||
-                      p.x > 1.08 ||
-                      p.y < -0.08 ||
-                      p.y > 1.08;
+                      _markerError([m], transform, aspectRatio,
+                              diameterRatio) !=
+                          null;
                 });
                 if (outside) continue;
               }
@@ -259,7 +266,12 @@ class FiducialGeometry {
       final width = xs.reduce(math.max) - xs.reduce(math.min);
       final height = ys.reduce(math.max) - ys.reduce(math.min);
       final size = (width + height) / 2;
-      final outline = List.generate(xs.length, (i) => SheetPoint(xs[i], ys[i]));
+      // Rectifying a strongly foreshortened contour magnifies its pixel
+      // stair-steps into a jagged outline whose perimeter understates
+      // circularity. Its convex hull removes the inward steps; a square
+      // still measures 0.785.
+      final outline = _convexHull(
+          List.generate(xs.length, (i) => SheetPoint(xs[i], ys[i])));
       var perimeter = 0.0;
       for (var i = 0; i < outline.length; i++) {
         perimeter += outline[i].distanceTo(outline[(i + 1) % outline.length]);
@@ -333,9 +345,14 @@ class FiducialGeometry {
     return center.x.isFinite && center.y.isFinite ? center : null;
   }
 
-  static Set<SheetPoint> _outerPoints(List<SheetPoint> points) {
-    if (points.length <= 3) return points.toSet();
-    points.sort((a, b) => a.x == b.x ? a.y.compareTo(b.y) : a.x.compareTo(b.x));
+  static Set<SheetPoint> _outerPoints(List<SheetPoint> points) =>
+      _convexHull(points).toSet();
+
+  /// Hull vertices in boundary order (monotone chain).
+  static List<SheetPoint> _convexHull(List<SheetPoint> input) {
+    if (input.length <= 3) return List.of(input);
+    final points = List<SheetPoint>.of(input)
+      ..sort((a, b) => a.x == b.x ? a.y.compareTo(b.y) : a.x.compareTo(b.x));
     List<SheetPoint> chain(Iterable<SheetPoint> input) {
       final hull = <SheetPoint>[];
       for (final p in input) {
@@ -350,7 +367,12 @@ class FiducialGeometry {
       return hull;
     }
 
-    return {...chain(points), ...chain(points.reversed)};
+    final lower = chain(points);
+    final upper = chain(points.reversed);
+    return [
+      ...lower.sublist(0, lower.length - 1),
+      ...upper.sublist(0, upper.length - 1),
+    ];
   }
 }
 
