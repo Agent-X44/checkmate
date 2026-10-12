@@ -64,13 +64,17 @@ class QrDetectionService {
   }
 
   static QrDetectionResult? detectWithCorners(cv.Mat input,
-      {ui.Rect? region, bool fastMode = false}) {
+      {ui.Rect? region,
+      List<ui.Rect> priorityRegions = const [],
+      bool fastMode = false}) {
     if (input.isEmpty) return null;
 
     final List<ui.Rect> regionStack = [];
-    if (region != null &&
-        region != const ui.Rect.fromLTRB(0.0, 0.0, 1.0, 1.0)) {
-      regionStack.add(region);
+    for (final r in [...priorityRegions, if (region != null) region]) {
+      if (r != const ui.Rect.fromLTRB(0.0, 0.0, 1.0, 1.0) &&
+          !regionStack.contains(r)) {
+        regionStack.add(r);
+      }
     }
     regionStack.addAll([
       const ui.Rect.fromLTRB(0.0, 0.0, 1.0, 1.0),
@@ -145,8 +149,20 @@ class QrDetectionService {
     return null;
   }
 
+  static const _broadRegion = ui.Rect.fromLTRB(0.4, 0.0, 1.0, 0.4);
+
   static QrData? searchBroad(cv.Mat warped) {
-    return detectQr(warped, const ui.Rect.fromLTRB(0.4, 0.0, 1.0, 0.4));
+    return detectQr(warped, _broadRegion);
+  }
+
+  /// One sweep of an aligned sheet: the template's QR region, then the upper
+  /// right, then the default regions. Every search already tries each
+  /// rotation and strategy on the default regions, so separate whole-image,
+  /// regional and broad searches only repeated them when no code was readable.
+  static QrData? searchWarped(cv.Mat warped, ui.Rect? qrRegion) {
+    return detectWithCorners(warped,
+            priorityRegions: [if (qrRegion != null) qrRegion, _broadRegion])
+        ?.data;
   }
 
   static QrData? detectEntireImage(cv.Mat image) {

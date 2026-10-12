@@ -452,28 +452,13 @@ class ImageProcessor {
       QrData? qrData = rawImageQr;
 
       if (!sandbox) {
-        if (qrData == null || qrData.examCode == "UNKNOWN") {
-          final warpedQr = QrDetectionService.detectEntireImage(warped);
-          if (warpedQr != null && warpedQr.examCode != "UNKNOWN") {
-            qrData = warpedQr;
-          }
-        }
-
         final qrRegion = AppBuild.developerTools
             ? calibration?.qrRegion ?? activeTemplate.qrRegion
             : activeTemplate.qrRegion;
-        if ((qrData == null || qrData.examCode == "UNKNOWN") &&
-            qrRegion != null) {
-          final regionalQr = QrDetectionService.detectQr(warped, qrRegion);
-          if (regionalQr != null && regionalQr.examCode != "UNKNOWN") {
-            qrData = regionalQr;
-          }
-        }
-
         if (qrData == null || qrData.examCode == "UNKNOWN") {
-          final broadQr = QrDetectionService.searchBroad(warped);
-          if (broadQr != null && broadQr.examCode != "UNKNOWN") {
-            qrData = broadQr;
+          final warpedQr = QrDetectionService.searchWarped(warped, qrRegion);
+          if (warpedQr != null && warpedQr.examCode != "UNKNOWN") {
+            qrData = warpedQr;
           }
         }
 
