@@ -71,4 +71,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y clang cmake ninja-build pkg-config
       - run: flutter pub get
-      - run: flutter test
+      - run: flutter test --file-reporter json:${{ runner.temp }}/test-results.json
+      # Job logs need a signed-in viewer; annotations and the run summary
+      # show each failure's message on the run page.
+      - name: Report test failures
+        if: always()
+        run: dart tool/ci/report_test_failures.dart ${{ runner.temp }}/test-results.json

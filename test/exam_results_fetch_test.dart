@@ -7,6 +7,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  // The test binding replaces HttpClient with one that answers 400 without
+  // sending anything; these tests talk to the local server below instead.
+  HttpOverrides.global = null;
   late HttpServer server;
   late void Function(HttpRequest) respond;
 
