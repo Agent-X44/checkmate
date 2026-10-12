@@ -7,7 +7,12 @@ class FiducialCandidate {
   final List<SheetPoint> outline;
   final double area;
 
-  const FiducialCandidate(this.center, this.outline, this.area);
+  /// How much darker the blob is than a ring just outside it (grey levels),
+  /// or null when not measured. A printed marker on paper is about 100-150.
+  final double? contrast;
+
+  const FiducialCandidate(this.center, this.outline, this.area,
+      {this.contrast});
 }
 
 /// Geometry shared by camera detection and capture alignment. No native objects
@@ -230,8 +235,16 @@ class FiducialGeometry {
   /// clutter cannot consume the entire search budget before the sheet appears.
   /// Sampling each layer also bounds hypothesis work on cluttered captures.
   static List<FiducialCandidate> _shortlist(
-      List<FiducialCandidate> candidates) {
-    if (candidates.length <= 24) return List.of(candidates);
+      List<FiducialCandidate> all) {
+    if (all.length <= 24) return List.of(all);
+    // A patterned background can surround the sheet with round blobs that
+    // take every outer-layer and largest-area place. Registration circles
+    // are dark ink on paper; set aside blobs that barely stand out.
+    final distinct = all
+        .where((c) => c.contrast == null || c.contrast! >= _minimumContrast)
+        .toList();
+    final candidates = distinct.length >= 4 ? distinct : all;
+    if (candidates.length <= 24) return candidates;
     final selected = <FiducialCandidate>{};
     final remaining = List<FiducialCandidate>.of(candidates);
     for (var layer = 0; layer < 3 && remaining.isNotEmpty; layer++) {
@@ -280,6 +293,10 @@ class FiducialGeometry {
     }
     return true;
   }
+
+  /// Well below a printed marker's 100-150 on lit paper, but above dark
+  /// background shapes whose surroundings are equally dark (under 40).
+  static const _minimumContrast = 50.0;
 
   static double? _markerError(
     List<FiducialCandidate> markers,

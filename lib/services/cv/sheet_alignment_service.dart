@@ -86,10 +86,41 @@ class SheetAlignmentService {
         final center = candidate.center + offset;
         if (candidates.any((c) => c.center.distanceTo(center) < 4)) continue;
         candidates.add(FiducialCandidate(center,
-            candidate.outline.map((p) => p + offset).toList(), candidate.area));
+            candidate.outline.map((p) => p + offset).toList(), candidate.area,
+            contrast: candidate.contrast));
       }
     }
     return candidates;
+  }
+
+  /// Median grey of a ring at 1.5x the blob's fitted ellipse, minus the mean
+  /// grey of its center. The median tolerates a marker whose ring partly
+  /// leaves the paper or the frame.
+  static double? _surroundContrast(cv.Mat gray, cv.RotatedRect ellipse) {
+    final cx = ellipse.center.x, cy = ellipse.center.y;
+    final a = ellipse.size.width / 2 * 1.5, b = ellipse.size.height / 2 * 1.5;
+    final angle = ellipse.angle * math.pi / 180;
+    final cosA = math.cos(angle), sinA = math.sin(angle);
+    final ring = <int>[];
+    for (var i = 0; i < 24; i++) {
+      final t = i * math.pi / 12;
+      final x = (cx + a * math.cos(t) * cosA - b * math.sin(t) * sinA).round();
+      final y = (cy + a * math.cos(t) * sinA + b * math.sin(t) * cosA).round();
+      if (x < 0 || y < 0 || x >= gray.width || y >= gray.height) continue;
+      ring.add(gray.at<int>(y, x));
+    }
+    if (ring.length < 8) return null;
+    ring.sort();
+    var inside = 0, n = 0;
+    for (var dy = -1; dy <= 1; dy++) {
+      for (var dx = -1; dx <= 1; dx++) {
+        final x = cx.round() + dx, y = cy.round() + dy;
+        if (x < 0 || y < 0 || x >= gray.width || y >= gray.height) continue;
+        inside += gray.at<int>(y, x);
+        n++;
+      }
+    }
+    return n == 0 ? null : ring[ring.length ~/ 2] - inside / n;
   }
 
   static List<FiducialCandidate> findCandidates(cv.Mat source,
@@ -181,8 +212,9 @@ class SheetAlignmentService {
           final p = outlineSource[j * outlineSource.length ~/ sampleCount];
           return SheetPoint(p.x / scale, p.y / scale);
         });
-        candidates
-            .add(FiducialCandidate(point, outline, area / (scale * scale)));
+        candidates.add(FiducialCandidate(
+            point, outline, area / (scale * scale),
+            contrast: _surroundContrast(blurred, ellipse)));
       }
     }
     return candidates;
