@@ -753,8 +753,11 @@ class SupabaseService {
     final response = await _client
         .from('grades')
         .select('*, answer_sheets!inner(exam_id, student_id)')
+        .eq('answer_sheets.exam_id', examId)
+        .eq('answer_sheets.student_id', studentId)
         .eq('sheet_id', sheetId)
         .order('created_at', ascending: false)
+        .limit(1)
         .maybeSingle();
     if (response == null) return null;
 
