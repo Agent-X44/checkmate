@@ -403,6 +403,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
     // Every completed fresh frame updates only the overlay subtree. Never keep
     // an old polygon floating over a moving preview after a miss or timeout.
     final nowMicros = DateTime.now().microsecondsSinceEpoch;
+    if (AppBuild.developerTools) _logLiveResponse(message, nowMicros);
     if (!message.foundPaper ||
         message.corners?.length != 8 ||
         !LiveScanPolicy.isFresh(message.capturedAtMicros, nowMicros)) {
@@ -418,6 +419,31 @@ class _ScannerScreenState extends State<ScannerScreen> {
         (nowMicros - message.capturedAtMicros);
     _overlayExpiry =
         Timer(Duration(microseconds: remainingMicros), _clearLiveOverlay);
+  }
+
+  int _liveLogAt = 0, _liveResponses = 0, _liveFound = 0, _liveStale = 0;
+  int _liveLatencyMicros = 0;
+
+  /// Developer edition: once-a-second summary in the device log (adb
+  /// logcat), for checking why the corner overlay is or is not shown.
+  void _logLiveResponse(ScanResponse message, int nowMicros) {
+    final latency = nowMicros - message.capturedAtMicros;
+    _liveResponses++;
+    _liveLatencyMicros += latency;
+    if (message.foundPaper) {
+      _liveFound++;
+      if (!LiveScanPolicy.isFresh(message.capturedAtMicros, nowMicros)) {
+        _liveStale++;
+      }
+    }
+    if (nowMicros - _liveLogAt < 1000000) return;
+    final preview = _controller?.value.previewSize;
+    debugPrint('LIVE UI: last 1s: $_liveResponses responses, '
+        '$_liveFound found, $_liveStale too old to draw, avg latency '
+        '${_liveLatencyMicros ~/ _liveResponses ~/ 1000} ms; preview '
+        '${preview?.width.round()}x${preview?.height.round()}');
+    _liveLogAt = nowMicros;
+    _liveResponses = _liveFound = _liveStale = _liveLatencyMicros = 0;
   }
 
   void _clearLiveOverlay() {

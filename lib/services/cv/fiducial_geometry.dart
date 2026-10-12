@@ -110,6 +110,14 @@ class FiducialGeometry {
                   continue;
                 }
               }
+              // The frame predicts each marker's image area from its local
+              // perspective scale. This constant-time test rejects nearly
+              // every wrong hypothesis before any outline is projected,
+              // which kept the live search under a phone's frame budget.
+              if (!_plausibleAreas(
+                  group, transform, aspectRatio, diameterRatio)) {
+                continue;
+              }
               // Most hypotheses fail their physical marker dimensions. Check
               // that first, so the outside scan and refinement below run only
               // for plausible frames and the live search stays inexpensive.
@@ -249,6 +257,28 @@ class FiducialGeometry {
       selected.add(marker);
     }
     return selected.toList();
+  }
+
+  static bool _plausibleAreas(
+    List<FiducialCandidate> markers,
+    SheetHomography transform,
+    double aspectRatio,
+    double diameterRatio,
+  ) {
+    // A printed circle of diameterRatio (in marker-frame widths) covers this
+    // much of the unit marker frame.
+    final frameArea = math.pi / 4 * diameterRatio * diameterRatio * aspectRatio;
+    for (final marker in markers) {
+      final unit = transform.map(marker.center);
+      final scale = unit == null ? null : transform.areaScale(unit);
+      if (scale == null) return false;
+      final ratio = marker.area / (frameArea * scale);
+      // _markerError accepts sizes 0.70-1.30 and proportions 0.70-1.43,
+      // about 0.49-1.7 of the area; the margin covers linearizing a large,
+      // near marker around its center.
+      if (!ratio.isFinite || ratio < 0.3 || ratio > 2.5) return false;
+    }
+    return true;
   }
 
   static double? _markerError(
@@ -429,6 +459,19 @@ class SheetHomography {
   SheetPoint? map(SheetPoint p) => _map(matrix, p);
 
   SheetPoint? unmap(SheetPoint p) => _map(_forward, p);
+
+  /// Image area covered by a unit of marker-frame area at [unit]: the
+  /// Jacobian determinant of the frame-to-image projection, det(H) / w^3.
+  double? areaScale(SheetPoint unit) {
+    final m = _forward;
+    final w = m[6] * unit.x + m[7] * unit.y + m[8];
+    if (w.abs() < 1e-9) return null;
+    final det = m[0] * (m[4] * m[8] - m[5] * m[7]) -
+        m[1] * (m[3] * m[8] - m[5] * m[6]) +
+        m[2] * (m[3] * m[7] - m[4] * m[6]);
+    final scale = (det / (w * w * w)).abs();
+    return scale.isFinite ? scale : null;
+  }
 
   static SheetPoint? _map(List<double> m, SheetPoint p) {
     final w = m[6] * p.x + m[7] * p.y + m[8];

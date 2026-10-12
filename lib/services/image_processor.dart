@@ -139,6 +139,9 @@ class _LiveTrackingState {
   List<SheetPoint>? corners;
   (double, double)? layout;
   int lastQrAt = 0;
+  // Developer edition: once-a-second live diagnostics in the device log.
+  int lastLogAt = 0, frames = 0, found = 0, tracked = 0, workMicros = 0;
+  int convertMicros = 0, prepareMicros = 0;
 }
 
 /// [LABEL: Memory Management]
@@ -200,6 +203,7 @@ class ImageProcessor {
   static void _handleLiveScan(
       ScanRequest message, _LiveTrackingState tracking) {
     final pool = CvPool();
+    final started = DateTime.now().microsecondsSinceEpoch;
     try {
       // 1. [LABEL: Data Ingestion] Mat Creation & Row Stride Handling
       final luminance = CameraFrameService.luminance(
@@ -209,8 +213,12 @@ class ImageProcessor {
         bytesPerRow: message.bytesPerRow,
         bytesPerPixel: message.bytesPerPixel,
       );
-      final mat = pool.add(cv.Mat.fromList(
-          message.height, message.width, cv.MatType.CV_8UC1, luminance));
+      // Mat.fromList copies every pixel through a typed-list cast, which took
+      // most of each frame's time on a phone. Copy the plane in one block.
+      final mat = pool.add(cv.Mat.create(
+          rows: message.height, cols: message.width, type: cv.MatType.CV_8UC1));
+      mat.data.setRange(0, luminance.length, luminance);
+      final converted = DateTime.now().microsecondsSinceEpoch;
 
       // Bound preview work by the long edge and never upscale camera frames.
       // Capture still uses its original detail and independent alignment.
@@ -235,6 +243,7 @@ class ImageProcessor {
       }
       final finalW = processedMat.width;
       final finalH = processedMat.height;
+      final prepared = DateTime.now().microsecondsSinceEpoch;
       final shape = (message.width, message.height, message.rotationIndex);
       if (tracking.session != message.scanSession ||
           tracking.frameShape != shape) {
@@ -262,6 +271,7 @@ class ImageProcessor {
             aspectRatio: layout.$1,
             diameterRatio: layout.$2);
       }
+      final wasTracked = markerCorners != null;
       List<FiducialCandidate>? candidates;
       void acquire({SheetPoint? qrCenter}) {
         candidates ??= SheetAlignmentService.findCandidates(processedMat,
@@ -315,6 +325,32 @@ class ImageProcessor {
       tracking.corners = markerCorners;
       if (markerCorners == null) tracking.layout = null;
       final foundPaper = markerCorners != null;
+      tracking.frames++;
+      if (foundPaper) tracking.found++;
+      if (wasTracked) tracking.tracked++;
+      final finished = DateTime.now().microsecondsSinceEpoch;
+      tracking.workMicros += finished - started;
+      tracking.convertMicros += converted - started;
+      tracking.prepareMicros += prepared - converted;
+      if (AppBuild.developerTools &&
+          finished - tracking.lastLogAt >= 1000000) {
+        debugPrint('LIVE SCAN: ${message.width}x${message.height} '
+            'stride ${message.bytesPerRow} rot ${message.rotationIndex} -> '
+            '${finalW}x$finalH; last 1s: ${tracking.frames} frames, '
+            '${tracking.found} found (${tracking.tracked} tracked), '
+            'avg ${tracking.workMicros ~/ tracking.frames ~/ 1000} ms '
+            '(copy ${tracking.convertMicros ~/ tracking.frames ~/ 1000}, '
+            'resize ${tracking.prepareMicros ~/ tracking.frames ~/ 1000}); '
+            'candidates ${candidates?.length ?? '-'}');
+        tracking
+          ..lastLogAt = finished
+          ..frames = 0
+          ..found = 0
+          ..tracked = 0
+          ..workMicros = 0
+          ..convertMicros = 0
+          ..prepareMicros = 0;
+      }
       final paperCorners =
           markerCorners?.expand((p) => [p.x / finalW, p.y / finalH]).toList();
       Uint8List? debugBytes;
