@@ -296,7 +296,7 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
                                       .toList());
                               Navigator.pop(context);
                             },
-                            child: const Text("SAVE TEMPLATE")),
+                            child: const Text("Save template")),
                       ]))))),
     );
   }
@@ -368,7 +368,7 @@ class _TemplateDesignerScreenState extends State<TemplateDesignerScreen> {
                       });
                     },
                     icon: const Icon(Icons.add_box),
-                    label: const Text("ADD COLUMN"),
+                    label: const Text("Add column"),
                   ),
                 ],
               ),

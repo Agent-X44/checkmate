@@ -42,7 +42,7 @@ Future<void> openEvaluation(
 }
 
 Future<void> confirm(WidgetTester tester) async {
-  await tester.tap(find.text('CONFIRM & CONTINUE'));
+  await tester.tap(find.text('Confirm & continue'));
   await tester.pumpAndSettle();
 }
 
@@ -87,7 +87,7 @@ void main() {
     await openEvaluation(tester, save: (_) async {
       writes++;
     });
-    await tester.tap(find.text('RETAKE SHEET'));
+    await tester.tap(find.text('Retake sheet'));
     await tester.pumpAndSettle();
     expect(writes, 0);
     expect(find.text('Open evaluation'), findsOneWidget);
@@ -115,8 +115,8 @@ void main() {
     expect(writes, 0);
     expect(find.textContaining('does not match'), findsOneWidget);
     expect(find.textContaining('Score:'), findsNothing);
-    expect(find.text('CONFIRM & CONTINUE'), findsNothing);
-    expect(find.text('RETAKE SHEET'), findsOneWidget);
+    expect(find.text('Confirm & continue'), findsNothing);
+    expect(find.text('Retake sheet'), findsOneWidget);
   });
 
   testWidgets('failed save stays visible and confirm retries the same result',
@@ -177,7 +177,7 @@ void main() {
     });
     // Pending saving keeps a spinner active, so advance without
     // pumpAndSettle, which intentionally waits for all animations to stop.
-    await tester.tap(find.text('CONFIRM & CONTINUE'));
+    await tester.tap(find.text('Confirm & continue'));
     await tester.pump();
     expect(find.text('Saving evaluation...'), findsOneWidget);
     expect(tester.widget<PopScope>(find.byType(PopScope)).canPop, isFalse);

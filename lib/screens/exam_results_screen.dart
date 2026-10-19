@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../widgets/empty_state.dart';
+import '../theme/checkmate_theme.dart';
 import 'package:file_picker/file_picker.dart';
 import '../services/supabase_service.dart';
 import '../services/api_service.dart';
@@ -217,7 +219,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final accentColor = isDark ? Colors.yellowAccent : Colors.blueAccent;
+    final accentColor = CheckMateTheme.accentOf(context);
 
     final bool isReleased = _examData?['results_released'] == true;
 
@@ -227,7 +229,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
             maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(
-            icon: const Icon(Icons.psychology, color: Colors.purpleAccent),
+            icon: const Icon(Icons.psychology_outlined),
             tooltip: "AI Class Analysis",
             onPressed: () {
               Navigator.push(
@@ -295,7 +297,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
                                   });
                                 },
                                 icon: const Icon(Icons.auto_awesome),
-                                label: const Text("VIEW AI CLASS ANALYSIS",
+                                label: const Text("View AI class analysis",
                                     textAlign: TextAlign.center),
                                 style: OutlinedButton.styleFrom(
                                   foregroundColor: accentColor,
@@ -316,7 +318,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
                                         ? Icons.unpublished_outlined
                                         : Icons.publish),
                                 label:
-                                    Text(isReleased ? "UNRELEASE" : "RELEASE"),
+                                    Text(isReleased ? "Unrelease" : "Release"),
                                 style: ElevatedButton.styleFrom(
                                   backgroundColor: accentColor,
                                   foregroundColor:
@@ -336,7 +338,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
                                             strokeWidth: 2),
                                       )
                                     : const Icon(Icons.table_view_outlined),
-                                label: const Text('EXPORT SCORES (.XLSX)'),
+                                label: const Text('Export scores (.xlsx)'),
                               );
                               final showRelease = widget.isOwner &&
                                   (isReleased ||
@@ -387,12 +389,12 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
                         ? ListView(
                             physics: const AlwaysScrollableScrollPhysics(),
                             children: const [
-                              SizedBox(height: 100),
-                              Center(
-                                child: Text(
-                                    "No scanned results found for this assessment yet.\nSwipe down to refresh.",
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(color: Colors.grey)),
+                              SizedBox(height: 40),
+                              EmptyState(
+                                icon: Icons.document_scanner_outlined,
+                                title: 'No scanned results yet',
+                                message:
+                                    'Scan answer sheets for this assessment, then swipe down to refresh.',
                               ),
                             ],
                           )
@@ -417,16 +419,17 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
 
                                 return ListTile(
                                   leading: CircleAvatar(
-                                    backgroundColor: isPassed
-                                        ? Colors.green.withValues(alpha: 0.2)
-                                        : Colors.red.withValues(alpha: 0.2),
+                                    backgroundColor:
+                                        accentColor.withValues(alpha: 0.12),
                                     child: Text(
-                                      "${item['set_type']}",
+                                      "${item['student_name']}".trim().isEmpty
+                                          ? '?'
+                                          : "${item['student_name']}"
+                                              .trim()[0]
+                                              .toUpperCase(),
                                       style: TextStyle(
                                         fontWeight: FontWeight.bold,
-                                        color: isPassed
-                                            ? Colors.green
-                                            : Colors.red,
+                                        color: accentColor,
                                       ),
                                     ),
                                   ),
@@ -486,9 +489,7 @@ class _ExamResultsScreenState extends State<ExamResultsScreen> {
       width: 112,
       child: Column(
         children: [
-          Icon(icon,
-              size: 18,
-              color: isDark ? Colors.yellowAccent : Colors.blueAccent),
+          Icon(icon, size: 18, color: CheckMateTheme.accentOf(context)),
           const SizedBox(height: 4),
           Text(value,
               style:

@@ -161,11 +161,11 @@ class _CourseSettingsScreenState extends State<CourseSettingsScreen> {
                 isError: false,
               );
             },
-            child: Text('COPY LINK', style: TextStyle(color: accentColor)),
+            child: Text('Copy link', style: TextStyle(color: accentColor)),
           ),
           TextButton(
               onPressed: () => Navigator.pop(context),
-              child: Text('CLOSE',
+              child: Text('Close',
                   style: TextStyle(
                       color: accentColor, fontWeight: FontWeight.bold))),
         ],
@@ -201,7 +201,7 @@ class _CourseSettingsScreenState extends State<CourseSettingsScreen> {
           TextButton(
               onPressed: () => Navigator.pop(dialogContext),
               child:
-                  const Text('CANCEL', style: TextStyle(color: Colors.grey))),
+                  const Text('Cancel', style: TextStyle(color: Colors.grey))),
           ElevatedButton(
             onPressed: () async {
               Navigator.pop(dialogContext); // Close dialog
@@ -221,7 +221,7 @@ class _CourseSettingsScreenState extends State<CourseSettingsScreen> {
               }
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('DELETE', style: TextStyle(color: Colors.white)),
+            child: const Text('Delete', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),

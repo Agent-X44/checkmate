@@ -43,7 +43,7 @@ void main() {
       await Future<void>.delayed(const Duration(seconds: 1));
     });
     await tester.pumpAndSettle();
-    expect(find.text('USE THIS TEMPLATE'), findsOneWidget);
+    expect(find.text('Use this template'), findsOneWidget);
 
     expect(find.byKey(const ValueKey('anchor-0-3')), findsOneWidget);
     // Move like a finger: small steps with frames in between.
@@ -56,8 +56,8 @@ void main() {
     await finger.up();
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('USE THIS TEMPLATE'));
-    await tester.tap(find.text('USE THIS TEMPLATE'));
+    await tester.ensureVisible(find.text('Use this template'));
+    await tester.tap(find.text('Use this template'));
     await tester.pumpAndSettle();
     // The route was opened inside runAsync, so its result resumes there.
     await tester.runAsync(() => Future<void>.delayed(Duration.zero));

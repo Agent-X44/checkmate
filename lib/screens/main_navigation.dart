@@ -365,7 +365,7 @@ class _MainNavigationState extends State<MainNavigation>
               'assets/checkmate.png',
               width: 28,
               height: 28,
-              color: accentColor,
+              color: isDark ? accentColor : Colors.white,
               fit: BoxFit.contain,
             ),
             const SizedBox(width: 8),
@@ -422,8 +422,10 @@ class _MainNavigationState extends State<MainNavigation>
               onPressed: () => _onItemTapped(2),
               icon: CircleAvatar(
                 radius: 16,
-                backgroundColor: accentColor.withValues(alpha: 0.13),
-                child: Icon(Icons.person, color: accentColor, size: 20),
+                backgroundColor: (isDark ? accentColor : Colors.white)
+                    .withValues(alpha: 0.16),
+                child: Icon(Icons.person,
+                    color: isDark ? accentColor : Colors.white, size: 20),
               ),
             ),
           ),

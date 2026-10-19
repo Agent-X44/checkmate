@@ -23,6 +23,16 @@ abstract final class CheckMateTheme {
   static const slow = Duration(milliseconds: 420);
   static const emphasized = Curves.easeOutCubic;
 
+  /// Brand accent for the current mode: blue in light, yellow in dark.
+  static Color accentOf(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark ? yellow : blue;
+
+  /// Text/icon color that sits on top of [accentOf].
+  static Color onAccentOf(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+          ? Colors.black
+          : Colors.white;
+
   static ThemeData get light => _build(Brightness.light);
   static ThemeData get dark => _build(Brightness.dark);
 
@@ -226,9 +236,16 @@ abstract final class CheckMateTheme {
       ),
       chipTheme: ChipThemeData(
         shape: pill,
-        side: BorderSide(color: outline),
-        backgroundColor: surface,
-        selectedColor: accent.withValues(alpha: dark ? 0.2 : 0.12),
+        showCheckmark: false,
+        side: WidgetStateBorderSide.resolveWith((states) =>
+            states.contains(WidgetState.selected)
+                ? BorderSide(color: accent, width: 1.5)
+                : BorderSide(color: outline)),
+        color: WidgetStateProperty.resolveWith((states) =>
+            states.contains(WidgetState.selected)
+                ? accent.withValues(alpha: dark ? 0.16 : 0.1)
+                : surface),
+        iconTheme: IconThemeData(color: accent, size: 18),
         labelStyle: TextStyle(color: text, fontWeight: FontWeight.w600),
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       ),
@@ -248,12 +265,13 @@ abstract final class CheckMateTheme {
         borderRadius: BorderRadius.circular(3),
       ),
       switchTheme: SwitchThemeData(
+        // Explicit off-state colors: the defaults vanish on white cards.
         thumbColor: WidgetStateProperty.resolveWith((states) =>
-            states.contains(WidgetState.selected) ? onAccent : null),
+            states.contains(WidgetState.selected) ? onAccent : muted),
         trackColor: WidgetStateProperty.resolveWith(
-            (states) => states.contains(WidgetState.selected) ? accent : null),
+            (states) => states.contains(WidgetState.selected) ? accent : field),
         trackOutlineColor: WidgetStateProperty.resolveWith((states) =>
-            states.contains(WidgetState.selected) ? Colors.transparent : null),
+            states.contains(WidgetState.selected) ? Colors.transparent : muted),
       ),
       checkboxTheme: CheckboxThemeData(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),

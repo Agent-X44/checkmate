@@ -394,7 +394,7 @@ class _GradingTemplateBuilderScreenState
                     foregroundColor: scheme.onSecondary),
                 onPressed: _apply,
                 icon: const Icon(Icons.check),
-                label: const Text('USE THIS TEMPLATE')),
+                label: const Text('Use this template')),
           ),
         ]),
       ),

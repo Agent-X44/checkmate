@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import '../theme/checkmate_theme.dart';
 import 'package:flutter/services.dart';
 import 'package:camera/camera.dart';
 import 'package:dio/dio.dart' as dio;
@@ -565,7 +566,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
       context: context,
       isDismissible: false,
       enableDrag: false,
-      backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
@@ -648,7 +649,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
                         ),
                       ),
                       child: Text(
-                        'CANCEL',
+                        'Cancel',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: isDark ? Colors.white70 : Colors.black87,
@@ -1136,14 +1137,12 @@ class _ScannerScreenState extends State<ScannerScreen> {
       return const Scaffold(
           backgroundColor: Colors.black,
           body: Center(
-              child: CircularProgressIndicator(color: Colors.blueAccent)));
+              child: CircularProgressIndicator(color: CheckMateTheme.yellow)));
     }
     final size = MediaQuery.of(context).size;
     final safePadding = MediaQuery.paddingOf(context);
     final cameraValue = _controller!.value;
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final accentColor = isDark ? Colors.yellowAccent : Colors.blueAccent;
+    final accentColor = CheckMateTheme.accentOf(context);
 
     return Scaffold(
       backgroundColor: Colors.black,

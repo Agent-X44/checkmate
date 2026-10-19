@@ -804,7 +804,7 @@ class _DeveloperEvaluationToolsScreenState
                                       const EdgeInsets.symmetric(vertical: 16)),
                               onPressed: _busy ? null : _save,
                               icon: const Icon(Icons.check_circle),
-                              label: const Text('SAVE LOCAL TEMPLATE'))))),
+                              label: const Text('Save local template'))))),
             ])));
   }
 }

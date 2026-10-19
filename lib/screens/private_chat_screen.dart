@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../theme/checkmate_theme.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/course.dart';
 import '../services/messaging_service.dart';
@@ -114,7 +115,7 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -125,15 +126,6 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: textColor.withValues(alpha: 0.3),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(height: 12),
                 ListTile(
                   leading: Icon(Icons.info_outline, color: accentColor),
                   title: Text('Message Details',
@@ -194,7 +186,7 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
+          backgroundColor: Theme.of(context).colorScheme.surface,
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: Text('Edit Message',
@@ -213,7 +205,7 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: Text('CANCEL',
+              child: Text('Cancel',
                   style: TextStyle(color: textColor.withValues(alpha: 0.7))),
             ),
             ElevatedButton(
@@ -254,7 +246,7 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
       ChatMessage message, bool isDark, Color accentColor, Color textColor) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -307,7 +299,7 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
                         borderRadius: BorderRadius.circular(12)),
                   ),
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('CLOSE',
+                  child: const Text('Close',
                       style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ),
@@ -341,9 +333,9 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final accentColor = isDark ? Colors.yellow : Colors.blue;
+    final accentColor = CheckMateTheme.accentOf(context);
     final textColor = isDark ? Colors.white : Colors.black;
-    final bgColor = isDark ? const Color(0xFF121212) : Colors.grey.shade100;
+    final bgColor = Theme.of(context).scaffoldBackgroundColor;
     bool canSend = widget.course.isOwner || widget.course.globalCanStudentReply;
 
     return Scaffold(
@@ -437,9 +429,7 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
           margin: const EdgeInsets.only(bottom: 12),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
           decoration: BoxDecoration(
-            color: isMe
-                ? accentColor
-                : (isDark ? const Color(0xFF1E1E24) : Colors.white),
+            color: isMe ? accentColor : (Theme.of(context).colorScheme.surface),
             border: isMe
                 ? null
                 : Border.all(
@@ -516,7 +506,7 @@ class _PrivateChatScreenState extends State<PrivateChatScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: isDark ? const Color(0xFF1E1E24) : Colors.white,
+        color: Theme.of(context).colorScheme.surface,
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.1),

@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../widgets/empty_state.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
@@ -321,7 +322,7 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('CANCEL'),
+            child: const Text('Cancel'),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -343,7 +344,7 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
               }
             },
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('DELETE', style: TextStyle(color: Colors.white)),
+            child: const Text('Delete', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -561,33 +562,12 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
           materials.addAll(streamMaterials);
 
           if (materials.isEmpty) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.folder_open,
-                        size: 64, color: Colors.grey.shade400),
-                    const SizedBox(height: 16),
-                    Text(
-                      'No learning materials uploaded yet.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                          color: isDark ? Colors.white70 : Colors.black54,
-                          fontSize: 16),
-                    ),
-                    if (widget.isOwner) ...[
-                      const SizedBox(height: 12),
-                      const Text(
-                        'Tap + to upload PPTX, DOCX, or PDF files.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Colors.grey, fontSize: 13),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
+            return EmptyState(
+              icon: Icons.folder_open_outlined,
+              title: 'No learning materials yet',
+              message: widget.isOwner
+                  ? 'Upload PPTX, DOCX, or PDF files to share with your class.'
+                  : 'Your instructor hasn\'t shared any files yet.',
             );
           }
 
@@ -620,7 +600,7 @@ class _LearningMaterialsScreenState extends State<LearningMaterialsScreen> {
               foregroundColor: isDark ? Colors.black : Colors.white,
               icon: const Icon(Icons.upload_file),
               label: Text(
-                _isUploading ? 'UPLOADING...' : 'UPLOAD MATERIAL',
+                _isUploading ? 'Uploading...' : 'Upload material',
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
             )

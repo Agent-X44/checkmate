@@ -66,8 +66,8 @@ class SettingsScreen extends StatelessWidget {
     final sections = [
       Padding(
         padding: const EdgeInsets.fromLTRB(8, 12, 8, 0),
-        child: Text('Settings',
-            style: Theme.of(context).textTheme.headlineMedium),
+        child:
+            Text('Settings', style: Theme.of(context).textTheme.headlineMedium),
       ),
       _section(context, 'Appearance', [
         SwitchListTile(

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import '../theme/checkmate_theme.dart';
 import '../services/supabase_service.dart';
 import '../services/api_service.dart';
 
@@ -294,7 +295,8 @@ class _StudentInsightDetailScreenState
                           child: CircularProgressIndicator(
                             value: pct / 100,
                             strokeWidth: 8,
-                            backgroundColor: Colors.white,
+                            backgroundColor:
+                                Theme.of(context).colorScheme.outlineVariant,
                             color: pct >= 75 ? Colors.green : Colors.orange,
                           ),
                         ),
@@ -338,7 +340,7 @@ class _StudentInsightDetailScreenState
         _buildListSection("Learning Gaps", json['learningGaps'], Colors.orange,
             Icons.warning),
         _buildListSection("Actionable Steps", json['actionableSteps'],
-            Colors.blue, Icons.lightbulb),
+            CheckMateTheme.accentOf(context), Icons.lightbulb),
       ],
     );
   }

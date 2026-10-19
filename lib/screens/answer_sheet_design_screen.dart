@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../theme/checkmate_theme.dart';
 import '../config/app_build.dart';
 import '../models/omr/bubble_sheet_template.dart';
 import '../models/omr/template_registry.dart';
@@ -315,7 +316,7 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
           body: Center(child: Text('Developer edition required')));
     }
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final accentColor = isDark ? Colors.yellow : Colors.blue;
+    final accentColor = CheckMateTheme.accentOf(context);
     final textColor = isDark ? Colors.white : Colors.black;
     final bgColor = Theme.of(context).scaffoldBackgroundColor;
     final isWide = MediaQuery.sizeOf(context).width >= 900;
@@ -567,7 +568,7 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
                     color: isDark ? Colors.black : Colors.white),
                 label: Text(
                     widget.offlineSandbox
-                        ? 'PRINT LOCAL TEST SHEET'
+                        ? 'Print local test sheet'
                         : 'EXPORT ONE STUDENT',
                     style: TextStyle(
                         fontWeight: FontWeight.bold,
@@ -591,8 +592,8 @@ class _AnswerSheetDesignScreenState extends State<AnswerSheetDesignScreen> {
                     color: isDark ? Colors.black : Colors.white),
                 label: Text(
                     widget.offlineSandbox
-                        ? 'PRINT LOCAL TEST SHEET'
-                        : 'GENERATE FOR ALL STUDENTS',
+                        ? 'Print local test sheet'
+                        : 'Generate for all students',
                     style: TextStyle(
                         fontWeight: FontWeight.bold,
                         color: isDark ? Colors.black : Colors.white)),

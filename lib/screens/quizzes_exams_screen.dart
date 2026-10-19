@@ -419,7 +419,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(dialogContext),
-                  child: Text('CANCEL',
+                  child: Text('Cancel',
                       style: TextStyle(color: colors.onSurfaceVariant)),
                 ),
                 ElevatedButton(

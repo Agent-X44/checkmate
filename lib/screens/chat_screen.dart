@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../theme/checkmate_theme.dart';
 import '../models/course.dart';
 import '../services/messaging_service.dart';
 import '../utils/ui_utils.dart';
@@ -152,7 +153,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -163,15 +164,6 @@ class _ChatScreenState extends State<ChatScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: textColor.withValues(alpha: 0.3),
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-                const SizedBox(height: 12),
                 ListTile(
                   leading: Icon(Icons.info_outline, color: accentColor),
                   title: Text('View Post Info',
@@ -257,7 +249,7 @@ class _ChatScreenState extends State<ChatScreen> {
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
+          backgroundColor: Theme.of(context).colorScheme.surface,
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: Text('Edit Announcement',
@@ -284,7 +276,7 @@ class _ChatScreenState extends State<ChatScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: Text('CANCEL',
+              child: Text('Cancel',
                   style: TextStyle(color: textColor.withValues(alpha: 0.7))),
             ),
             ElevatedButton(
@@ -323,7 +315,7 @@ class _ChatScreenState extends State<ChatScreen> {
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
+          backgroundColor: Theme.of(context).colorScheme.surface,
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: Text('Delete Announcement?',
@@ -335,7 +327,7 @@ class _ChatScreenState extends State<ChatScreen> {
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: Text('CANCEL',
+              child: Text('Cancel',
                   style: TextStyle(color: textColor.withValues(alpha: 0.7))),
             ),
             ElevatedButton(
@@ -359,7 +351,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   }
                 }
               },
-              child: const Text('DELETE',
+              child: const Text('Delete',
                   style: TextStyle(fontWeight: FontWeight.bold)),
             ),
           ],
@@ -372,7 +364,7 @@ class _ChatScreenState extends State<ChatScreen> {
       StreamPost post, bool isDark, Color accentColor, Color textColor) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -433,7 +425,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         borderRadius: BorderRadius.circular(12)),
                   ),
                   onPressed: () => Navigator.pop(context),
-                  child: const Text('CLOSE',
+                  child: const Text('Close',
                       style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
               ),
@@ -469,7 +461,7 @@ class _ChatScreenState extends State<ChatScreen> {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      backgroundColor: isDark ? const Color(0xFF1E1E24) : Colors.white,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -599,10 +591,10 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final accentColor = isDark ? Colors.yellow : Colors.blue;
+    final accentColor = CheckMateTheme.accentOf(context);
     final textColor = isDark ? Colors.white : Colors.black;
-    final bgColor = isDark ? const Color(0xFF121212) : Colors.grey.shade100;
-    final cardBgColor = isDark ? const Color(0xFF1E1E24) : Colors.white;
+    final bgColor = Theme.of(context).scaffoldBackgroundColor;
+    final cardBgColor = Theme.of(context).colorScheme.surface;
     final cardBorderColor =
         isDark ? Colors.grey.shade800 : Colors.grey.shade300;
 

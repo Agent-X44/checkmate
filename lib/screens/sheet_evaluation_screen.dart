@@ -283,7 +283,7 @@ class _SheetEvaluationScreenState extends State<SheetEvaluationScreen> {
                             onPressed:
                                 _isSaving ? null : () => Navigator.pop(context),
                             icon: const Icon(Icons.camera_alt_outlined),
-                            label: const Text('RETAKE SHEET'),
+                            label: const Text('Retake sheet'),
                           ),
                         ),
                         if (evaluated) ...[
@@ -294,7 +294,7 @@ class _SheetEvaluationScreenState extends State<SheetEvaluationScreen> {
                               onPressed:
                                   _isSaving || _isLoading ? null : _confirm,
                               icon: const Icon(Icons.check_circle),
-                              label: const Text('CONFIRM & CONTINUE'),
+                              label: const Text('Confirm & continue'),
                             ),
                           ),
                         ],

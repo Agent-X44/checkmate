@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:uuid/uuid.dart';
 import 'package:flutter/material.dart';
+import '../theme/checkmate_theme.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import '../services/api_service.dart';
@@ -587,7 +588,7 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
                           ? Colors.black
                           : Colors.white,
                 ),
-                child: const Text('GENERATE QUESTIONNAIRE',
+                child: const Text('Generate questionnaire',
                     style: TextStyle(fontWeight: FontWeight.bold)),
               ),
             ],
@@ -871,7 +872,7 @@ class _AIQuestionnaireScreenState extends State<AIQuestionnaireScreen> {
             OutlinedButton.icon(
               onPressed: _exportDocx,
               icon: const Icon(Icons.description),
-              label: const Text('EXPORT TO DOCX'),
+              label: const Text('Export to DOCX'),
               style: OutlinedButton.styleFrom(
                   minimumSize: const Size(double.infinity, 50)),
             ),
@@ -915,9 +916,7 @@ class _PartHeader extends StatelessWidget {
           style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.bold,
-              color: Theme.of(context).brightness == Brightness.dark
-                  ? Colors.yellow
-                  : Colors.blueAccent,
+              color: CheckMateTheme.accentOf(context),
               letterSpacing: 1.2)),
     );
   }

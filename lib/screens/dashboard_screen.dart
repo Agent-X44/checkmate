@@ -111,11 +111,11 @@ class DashboardScreenState extends State<DashboardScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('CANCEL', style: TextStyle(color: Colors.grey)),
+            child: const Text('Cancel'),
           ),
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('DELETE', style: TextStyle(color: Colors.red)),
+            child: const Text('Delete', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
@@ -153,7 +153,7 @@ class DashboardScreenState extends State<DashboardScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('CANCEL', style: TextStyle(color: Colors.grey)),
+            child: const Text('Cancel'),
           ),
           ElevatedButton(
             onPressed: () async {
@@ -176,7 +176,7 @@ class DashboardScreenState extends State<DashboardScreen> {
                 }
               }
             },
-            child: const Text('SAVE'),
+            child: const Text('Save'),
           ),
         ],
       ),
@@ -207,12 +207,12 @@ class DashboardScreenState extends State<DashboardScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('CANCEL', style: TextStyle(color: Colors.grey)),
+            child: const Text('Cancel'),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(dialogContext, true),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('LEAVE', style: TextStyle(color: Colors.white)),
+            child: const Text('Leave', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
@@ -258,22 +258,25 @@ class DashboardScreenState extends State<DashboardScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
                 child: Row(
                   children: [
-                    Flexible(
-                      child: Text(title, style: theme.textTheme.titleLarge),
+                    Expanded(
+                      child: Row(children: [
+                        Flexible(
+                          child: Text(title, style: theme.textTheme.titleLarge),
+                        ),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 9, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: accent.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text('$count',
+                              style: theme.textTheme.labelMedium?.copyWith(
+                                  color: accent, fontWeight: FontWeight.w800)),
+                        ),
+                      ]),
                     ),
-                    const SizedBox(width: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 9, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: accent.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text('$count',
-                          style: theme.textTheme.labelMedium?.copyWith(
-                              color: accent, fontWeight: FontWeight.w800)),
-                    ),
-                    const Spacer(),
                     AnimatedRotation(
                       turns: isExpanded ? 0 : -0.25,
                       duration: CheckMateTheme.medium,
