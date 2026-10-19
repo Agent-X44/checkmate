@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../services/supabase_service.dart';
+import '../theme/checkmate_theme.dart';
 import '../utils/ui_utils.dart';
+import '../widgets/motion.dart';
 
 /// Entry screen for Authentication (Email/Password and Google Sign-In).
 /// Features: Adaptive theming, shake animations for validation, and Hero transitions.
@@ -302,52 +304,90 @@ class _LoginScreenState extends State<LoginScreen>
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Center(
-          child: Image.asset(
-            'assets/checkmate.png',
-            width: compact ? 76 : 96,
-            height: compact ? 76 : 96,
-            color: accentColor,
-            fit: BoxFit.contain,
+        Reveal(
+          child: Center(
+            child: Container(
+              width: compact ? 84 : 104,
+              height: compact ? 84 : 104,
+              padding: EdgeInsets.all(compact ? 16 : 20),
+              decoration: BoxDecoration(
+                gradient: isDark ? null : CheckMateTheme.brandGradient,
+                color: isDark ? theme.colorScheme.surfaceContainerHigh : null,
+                borderRadius: BorderRadius.circular(compact ? 26 : 32),
+                boxShadow: [
+                  BoxShadow(
+                    color: accentColor.withValues(alpha: isDark ? 0.15 : 0.3),
+                    blurRadius: 28,
+                    offset: const Offset(0, 12),
+                  ),
+                ],
+              ),
+              child: Image.asset(
+                'assets/checkmate.png',
+                color: isDark ? accentColor : Colors.white,
+                fit: BoxFit.contain,
+              ),
+            ),
           ),
         ),
-        SizedBox(height: compact ? 8 : 12),
+        SizedBox(height: compact ? 14 : 20),
         Text(
           'CheckMate LMS',
           textAlign: TextAlign.center,
           style: theme.textTheme.headlineMedium?.copyWith(color: accentColor),
         ),
         SizedBox(height: compact ? 16 : 24),
-        Text(
-          _isLoginMode ? 'Welcome back' : 'Create your account',
-          textAlign: TextAlign.center,
-          style: theme.textTheme.headlineSmall?.copyWith(
-            color: theme.colorScheme.onSurface,
-            fontWeight: FontWeight.w800,
-            letterSpacing: -0.5,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Text(
-          _isLoginMode
-              ? 'Sign in to continue to your classes.'
-              : 'Get started with your classes and assessments.',
-          textAlign: TextAlign.center,
-          style: theme.textTheme.bodyMedium?.copyWith(
-            color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+        Reveal(
+          index: 1,
+          child: AnimatedSwitcher(
+            duration: CheckMateTheme.medium,
+            transitionBuilder: (child, animation) => FadeTransition(
+              opacity: animation,
+              child: SlideTransition(
+                position: Tween(begin: const Offset(0, 0.15), end: Offset.zero)
+                    .animate(animation),
+                child: child,
+              ),
+            ),
+            child: Column(
+              key: ValueKey(_isLoginMode),
+              children: [
+                Text(
+                  _isLoginMode ? 'Welcome back' : 'Create your account',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  _isLoginMode
+                      ? 'Sign in to continue to your classes.'
+                      : 'Get started with your classes and assessments.',
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
         SizedBox(height: compact ? 20 : 28),
-        if (!_isLoginMode) ...[
-          _buildField(
-            controller: _nameController,
-            label: 'Full name',
-            icon: Icons.person_outline,
-            hasError: _nameError,
-            accentColor: accentColor,
-          ),
-          SizedBox(height: compact ? 12 : 16),
-        ],
+        AnimatedSize(
+          duration: CheckMateTheme.medium,
+          curve: CheckMateTheme.emphasized,
+          child: _isLoginMode
+              ? const SizedBox(width: double.infinity)
+              : Padding(
+                  padding: EdgeInsets.only(bottom: compact ? 12 : 16),
+                  child: _buildField(
+                    controller: _nameController,
+                    label: 'Full name',
+                    icon: Icons.person_outline,
+                    hasError: _nameError,
+                    accentColor: accentColor,
+                  ),
+                ),
+        ),
         _buildField(
           controller: _emailController,
           label: 'Email',
@@ -411,27 +451,34 @@ class _LoginScreenState extends State<LoginScreen>
           ),
         ],
         SizedBox(height: compact ? 18 : 24),
-        ElevatedButton(
-          onPressed: _isLoading ? null : _handleAuth,
-          style: ElevatedButton.styleFrom(
-            minimumSize: const Size.fromHeight(50),
-            backgroundColor: accentColor,
-            foregroundColor: buttonTextColor,
+        Pressable(
+          child: ElevatedButton(
+            onPressed: _isLoading ? null : _handleAuth,
+            style: ElevatedButton.styleFrom(
+              minimumSize: const Size.fromHeight(50),
+              backgroundColor: accentColor,
+              foregroundColor: buttonTextColor,
+            ),
+            child: AnimatedSwitcher(
+              duration: CheckMateTheme.fast,
+              child: _isLoading
+                  ? SizedBox(
+                      key: const ValueKey('loading'),
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(
+                        color: buttonTextColor,
+                        strokeWidth: 2,
+                      ),
+                    )
+                  : Text(
+                      _isLoginMode ? 'Log in' : 'Sign up',
+                      key: ValueKey(_isLoginMode),
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w700, fontSize: 16),
+                    ),
+            ),
           ),
-          child: _isLoading
-              ? SizedBox(
-                  height: 20,
-                  width: 20,
-                  child: CircularProgressIndicator(
-                    color: buttonTextColor,
-                    strokeWidth: 2,
-                  ),
-                )
-              : Text(
-                  _isLoginMode ? 'Log in' : 'Sign up',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w700, fontSize: 16),
-                ),
         ),
         SizedBox(height: compact ? 18 : 24),
         Row(
@@ -445,14 +492,16 @@ class _LoginScreenState extends State<LoginScreen>
           ],
         ),
         SizedBox(height: compact ? 18 : 24),
-        OutlinedButton.icon(
-          onPressed: _isLoading ? null : _handleGoogleSignIn,
-          style: OutlinedButton.styleFrom(
-            minimumSize: const Size.fromHeight(50),
-            foregroundColor: theme.colorScheme.onSurface,
+        Pressable(
+          child: OutlinedButton.icon(
+            onPressed: _isLoading ? null : _handleGoogleSignIn,
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(50),
+              foregroundColor: theme.colorScheme.onSurface,
+            ),
+            icon: Icon(Icons.login, size: 20, color: accentColor),
+            label: const Text('Continue with Google'),
           ),
-          icon: Icon(Icons.login, size: 20, color: accentColor),
-          label: const Text('Continue with Google'),
         ),
         SizedBox(height: compact ? 14 : 20),
         TextButton(

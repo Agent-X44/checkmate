@@ -22,6 +22,7 @@ class CheckMateUi {
     overlayEntry = OverlayEntry(
       builder: (context) => _TopPromptWidget(
         message: friendlyMessage,
+        isError: isError,
         backgroundColor: backgroundColor,
         textColor: textColor,
         onDismiss: () {
@@ -136,12 +137,14 @@ class CheckMateUi {
 
 class _TopPromptWidget extends StatefulWidget {
   final String message;
+  final bool isError;
   final Color backgroundColor;
   final Color textColor;
   final VoidCallback onDismiss;
 
   const _TopPromptWidget({
     required this.message,
+    required this.isError,
     required this.backgroundColor,
     required this.textColor,
     required this.onDismiss,
@@ -205,26 +208,39 @@ class _TopPromptWidgetState extends State<_TopPromptWidget> with SingleTickerPro
               child: Material(
                 color: Colors.transparent,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
                   decoration: BoxDecoration(
-                    color: widget.backgroundColor.withValues(alpha: 0.7), // Increased transparency for subtlety
-                    borderRadius: BorderRadius.circular(16),
+                    color: widget.backgroundColor.withValues(alpha: 0.96),
+                    borderRadius: BorderRadius.circular(20),
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.08),
-                        blurRadius: 12,
-                        offset: const Offset(0, 6),
+                        color: Colors.black.withValues(alpha: 0.18),
+                        blurRadius: 24,
+                        offset: const Offset(0, 10),
                       ),
                     ],
                   ),
-                  child: Text(
-                    widget.message,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: widget.textColor,
-                      fontWeight: FontWeight.w600,
-                      fontSize: 14,
-                    ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        widget.isError
+                            ? Icons.error_outline_rounded
+                            : Icons.check_circle_rounded,
+                        color: widget.textColor,
+                        size: 22,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          widget.message,
+                          style: TextStyle(
+                            color: widget.textColor,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),

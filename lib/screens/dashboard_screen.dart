@@ -4,7 +4,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/course.dart';
 import '../services/supabase_service.dart';
 import '../services/data_cache_service.dart';
+import '../theme/checkmate_theme.dart';
 import '../utils/ui_utils.dart';
+import '../widgets/motion.dart';
 import 'course_dashboard_screen.dart';
 import 'quizzes_exams_screen.dart';
 
@@ -237,34 +239,47 @@ class DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  Widget _buildCollapsibleHeader(
-      BuildContext context, String title, bool isExpanded, VoidCallback onTap) {
+  Widget _buildCollapsibleHeader(BuildContext context, String title, int count,
+      bool isExpanded, VoidCallback onTap) {
     final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final accent =
+        theme.brightness == Brightness.dark ? colors.secondary : colors.primary;
     return SliverToBoxAdapter(
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 860),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 22, 20, 8),
+            padding: const EdgeInsets.fromLTRB(16, 22, 16, 8),
             child: InkWell(
               onTap: onTap,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(14),
               child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
                 child: Row(
                   children: [
-                    Expanded(
-                      child: Text(
-                        title,
-                        style: theme.textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.w700),
-                      ),
+                    Flexible(
+                      child: Text(title, style: theme.textTheme.titleLarge),
                     ),
-                    Icon(
-                      isExpanded
-                          ? Icons.keyboard_arrow_up
-                          : Icons.keyboard_arrow_down,
-                      color: theme.colorScheme.onSurfaceVariant,
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 9, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: accent.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text('$count',
+                          style: theme.textTheme.labelMedium?.copyWith(
+                              color: accent, fontWeight: FontWeight.w800)),
+                    ),
+                    const Spacer(),
+                    AnimatedRotation(
+                      turns: isExpanded ? 0 : -0.25,
+                      duration: CheckMateTheme.medium,
+                      curve: CheckMateTheme.emphasized,
+                      child: Icon(Icons.keyboard_arrow_down,
+                          color: colors.onSurfaceVariant),
                     ),
                   ],
                 ),
@@ -279,142 +294,190 @@ class DashboardScreenState extends State<DashboardScreen> {
   Widget _buildCombinedSummary(BuildContext context, int totalCourses) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final dark = theme.brightness == Brightness.dark;
+    final onHero = dark ? colors.secondary : Colors.white;
     final user = Supabase.instance.client.auth.currentUser;
     final rawName = user?.userMetadata?['name']?.toString().trim();
     final firstName =
         rawName == null || rawName.isEmpty ? 'there' : rawName.split(' ').first;
+    final hour = DateTime.now().hour;
+    final greeting = hour < 12
+        ? 'Good morning'
+        : hour < 18
+            ? 'Good afternoon'
+            : 'Good evening';
     final compact = MediaQuery.textScalerOf(context).scale(1) > 1.3;
 
     return Center(
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 860),
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 24, 20, 4),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Hi, $firstName',
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -0.5,
-                  )),
-              const SizedBox(height: 3),
-              Text(
-                totalCourses == 0
-                    ? 'Your learning space is ready.'
-                    : '$totalCourses ${totalCourses == 1 ? 'course' : 'courses'} in your space',
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  color: colors.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 18),
-              Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                decoration: BoxDecoration(
-                  color: colors.surfaceContainerLow,
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final stacked = constraints.maxWidth < 320 || compact;
-                    final created = _buildSummaryStat(
-                        context,
-                        Icons.edit_note_outlined,
-                        'Created',
-                        '${_myCourses.length}');
-                    final enrolled = _buildSummaryStat(
-                        context,
-                        Icons.school_outlined,
-                        'Enrolled',
-                        '${_enrolledCourses.length}');
-                    if (stacked) {
-                      return Column(
-                        children: [
-                          created,
-                          const Divider(height: 24),
-                          enrolled,
-                        ],
-                      );
-                    }
-                    return Row(
-                      children: [
-                        Expanded(child: created),
-                        SizedBox(
-                          height: 34,
-                          child: VerticalDivider(
-                            color: colors.outlineVariant,
-                            width: 24,
-                          ),
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+          child: Reveal(
+            child: Container(
+              clipBehavior: Clip.antiAlias,
+              decoration: BoxDecoration(
+                gradient: dark ? null : CheckMateTheme.brandGradient,
+                color: dark ? colors.surfaceContainerHigh : null,
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: dark
+                    ? null
+                    : [
+                        BoxShadow(
+                          color: CheckMateTheme.blue.withValues(alpha: 0.25),
+                          blurRadius: 24,
+                          offset: const Offset(0, 10),
                         ),
-                        Expanded(child: enrolled),
                       ],
-                    );
-                  },
-                ),
               ),
-            ],
+              child: Stack(
+                children: [
+                  Positioned(
+                    right: -28,
+                    top: -18,
+                    child: ExcludeSemantics(
+                      child: Image.asset(
+                        'assets/checkmate.png',
+                        width: 150,
+                        height: 150,
+                        color: onHero.withValues(alpha: 0.08),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(22, 22, 22, 18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(greeting.toUpperCase(),
+                            style: theme.textTheme.labelSmall?.copyWith(
+                                color: onHero.withValues(alpha: 0.75),
+                                letterSpacing: 1.2)),
+                        const SizedBox(height: 4),
+                        Text('Hi, $firstName',
+                            style: theme.textTheme.headlineMedium
+                                ?.copyWith(color: onHero)),
+                        const SizedBox(height: 4),
+                        Text(
+                          totalCourses == 0
+                              ? 'Your learning space is ready.'
+                              : '$totalCourses ${totalCourses == 1 ? 'course' : 'courses'} in your space',
+                          style: theme.textTheme.bodyMedium
+                              ?.copyWith(color: onHero.withValues(alpha: 0.8)),
+                        ),
+                        const SizedBox(height: 18),
+                        Flex(
+                          direction: compact ? Axis.vertical : Axis.horizontal,
+                          children: [
+                            _wrapStat(
+                                compact,
+                                _buildSummaryStat(context, Icons.edit_note,
+                                    'Teaching', _myCourses.length, onHero)),
+                            SizedBox(width: 10, height: compact ? 10 : 0),
+                            _wrapStat(
+                                compact,
+                                _buildSummaryStat(
+                                    context,
+                                    Icons.school,
+                                    'Enrolled',
+                                    _enrolledCourses.length,
+                                    onHero)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildSummaryStat(
-      BuildContext context, IconData icon, String label, String value) {
+  Widget _wrapStat(bool compact, Widget child) =>
+      compact ? child : Expanded(child: child);
+
+  Widget _buildSummaryStat(BuildContext context, IconData icon, String label,
+      int value, Color onHero) {
     final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final accent =
-        theme.brightness == Brightness.dark ? colors.secondary : colors.primary;
-    return Row(
-      children: [
-        Icon(icon, size: 23, color: accent),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(value,
-                  style: theme.textTheme.titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w800)),
-              Text(label,
-                  style: theme.textTheme.bodySmall
-                      ?.copyWith(color: colors.onSurfaceVariant)),
-            ],
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: onHero.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 22, color: onHero),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TweenAnimationBuilder<double>(
+                  tween: Tween(begin: 0, end: value.toDouble()),
+                  duration: CheckMateTheme.slow * 2,
+                  curve: CheckMateTheme.emphasized,
+                  builder: (context, v, _) => Text('${v.round()}',
+                      style: theme.textTheme.titleLarge?.copyWith(
+                          color: onHero, fontWeight: FontWeight.w800)),
+                ),
+                Text(label,
+                    style: theme.textTheme.bodySmall
+                        ?.copyWith(color: onHero.withValues(alpha: 0.8))),
+              ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSection(
+      BuildContext context, List<Course> courses, bool expanded) {
+    return SliverToBoxAdapter(
+      child: AnimatedSize(
+        duration: CheckMateTheme.medium,
+        curve: CheckMateTheme.emphasized,
+        alignment: Alignment.topCenter,
+        child: expanded
+            ? _buildCourseGrid(context, courses)
+            : const SizedBox(width: double.infinity),
+      ),
     );
   }
 
   Widget _buildCourseGrid(BuildContext context, List<Course> courses) {
-    return SliverToBoxAdapter(
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 860),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 20),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final largeText =
-                    MediaQuery.textScalerOf(context).scale(1) > 1.3;
-                final columns =
-                    !largeText && constraints.maxWidth >= 680 ? 2 : 1;
-                final cardWidth =
-                    (constraints.maxWidth - 12 * (columns - 1)) / columns;
-                return Wrap(
-                  spacing: 12,
-                  runSpacing: 12,
-                  children: [
-                    for (final course in courses)
-                      SizedBox(
-                        width: cardWidth,
-                        child: _buildCourseCard(context, course),
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 860),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final largeText = MediaQuery.textScalerOf(context).scale(1) > 1.3;
+              final columns = !largeText && constraints.maxWidth >= 680 ? 2 : 1;
+              final cardWidth =
+                  (constraints.maxWidth - 12 * (columns - 1)) / columns;
+              return Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  for (final (i, course) in courses.indexed)
+                    SizedBox(
+                      width: cardWidth,
+                      child: Reveal(
+                        key: ValueKey(course.id),
+                        index: i + 1,
+                        child:
+                            Pressable(child: _buildCourseCard(context, course)),
                       ),
-                  ],
-                );
-              },
-            ),
+                    ),
+                ],
+              );
+            },
           ),
         ),
       ),
@@ -442,13 +505,16 @@ class DashboardScreenState extends State<DashboardScreen> {
 
     return Material(
       color: colors.surfaceContainerLow,
-      borderRadius: BorderRadius.circular(18),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(22),
+        side: BorderSide(color: colors.outlineVariant),
+      ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: openCourse,
         onLongPress: course.isOwner ? () => _deleteCourse(course) : null,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 13, 8, 13),
+          padding: const EdgeInsets.fromLTRB(14, 14, 6, 14),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -461,7 +527,14 @@ class DashboardScreenState extends State<DashboardScreen> {
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
-                  borderRadius: BorderRadius.circular(15),
+                  borderRadius: BorderRadius.circular(18),
+                  boxShadow: [
+                    BoxShadow(
+                      color: gradient.first.withValues(alpha: 0.3),
+                      blurRadius: 12,
+                      offset: const Offset(0, 5),
+                    ),
+                  ],
                 ),
                 child: Icon(
                   course.isOwner
@@ -487,11 +560,19 @@ class DashboardScreenState extends State<DashboardScreen> {
                         ),
                       ),
                       const SizedBox(height: 5),
-                      Text(
-                        course.isOwner ? 'Teaching' : 'Enrolled',
-                        style: theme.textTheme.labelMedium?.copyWith(
-                          color: accent,
-                          fontWeight: FontWeight.w700,
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: accent.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Text(
+                          course.isOwner ? 'Teaching' : 'Enrolled',
+                          style: theme.textTheme.labelMedium?.copyWith(
+                            color: accent,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 4),
@@ -589,6 +670,13 @@ class DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Color _accent(BuildContext context) {
+    final theme = Theme.of(context);
+    return theme.brightness == Brightness.dark
+        ? theme.colorScheme.secondary
+        : theme.colorScheme.primary;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isInitialLoading && _myCourses.isEmpty && _enrolledCourses.isEmpty) {
@@ -610,22 +698,23 @@ class DashboardScreenState extends State<DashboardScreen> {
             if (_myCourses.isNotEmpty) ...[
               _buildCollapsibleHeader(
                 context,
-                'Created Courses',
+                'Teaching',
+                _myCourses.length,
                 _createdExpanded,
                 () => setState(() => _createdExpanded = !_createdExpanded),
               ),
-              if (_createdExpanded) _buildCourseGrid(context, _myCourses),
+              _buildSection(context, _myCourses, _createdExpanded),
             ],
             if (_enrolledCourses.isNotEmpty) ...[
               const SliverToBoxAdapter(child: SizedBox(height: 8)),
               _buildCollapsibleHeader(
                 context,
-                'Enrolled Courses',
+                'Enrolled',
+                _enrolledCourses.length,
                 _enrolledExpanded,
                 () => setState(() => _enrolledExpanded = !_enrolledExpanded),
               ),
-              if (_enrolledExpanded)
-                _buildCourseGrid(context, _enrolledCourses),
+              _buildSection(context, _enrolledCourses, _enrolledExpanded),
             ],
             if (_myCourses.isEmpty && _enrolledCourses.isEmpty)
               SliverFillRemaining(
@@ -633,36 +722,47 @@ class DashboardScreenState extends State<DashboardScreen> {
                 child: Center(
                   child: Padding(
                     padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(
-                            _loadFailed
-                                ? Icons.wifi_off_outlined
-                                : Icons.school_outlined,
-                            size: 48,
-                            color: Theme.of(context).colorScheme.primary),
-                        const SizedBox(height: 12),
-                        Text(
-                            _loadFailed
-                                ? 'Could not load courses'
-                                : 'No courses yet',
-                            style: Theme.of(context).textTheme.titleLarge),
-                        const SizedBox(height: 6),
-                        Text(
-                            _loadFailed
-                                ? 'Check your connection and try again.'
-                                : 'Create a course or join one to get started.',
-                            textAlign: TextAlign.center),
-                        if (_loadFailed) ...[
-                          const SizedBox(height: 16),
-                          OutlinedButton.icon(
-                            onPressed: _refreshAll,
-                            icon: const Icon(Icons.refresh),
-                            label: const Text('Retry'),
+                    child: Reveal(
+                      index: 2,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 88,
+                            height: 88,
+                            decoration: BoxDecoration(
+                              color: _accent(context).withValues(alpha: 0.12),
+                              shape: BoxShape.circle,
+                            ),
+                            child: Icon(
+                                _loadFailed
+                                    ? Icons.wifi_off_outlined
+                                    : Icons.school_outlined,
+                                size: 40,
+                                color: _accent(context)),
                           ),
+                          const SizedBox(height: 16),
+                          Text(
+                              _loadFailed
+                                  ? 'Could not load courses'
+                                  : 'No courses yet',
+                              style: Theme.of(context).textTheme.titleLarge),
+                          const SizedBox(height: 6),
+                          Text(
+                              _loadFailed
+                                  ? 'Check your connection and try again.'
+                                  : 'Create a course or join one to get started.',
+                              textAlign: TextAlign.center),
+                          if (_loadFailed) ...[
+                            const SizedBox(height: 16),
+                            OutlinedButton.icon(
+                              onPressed: _refreshAll,
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('Retry'),
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ),
                 ),

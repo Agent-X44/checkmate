@@ -6,7 +6,9 @@ import '../services/deep_link_service.dart';
 import '../services/notification_service.dart';
 import '../services/supabase_service.dart';
 import '../services/data_cache_service.dart';
+import '../theme/checkmate_theme.dart';
 import '../utils/ui_utils.dart';
+import '../widgets/motion.dart';
 import 'dashboard_screen.dart';
 import 'scanner_screen.dart';
 import 'settings_screen.dart';
@@ -141,24 +143,44 @@ class _MainNavigationState extends State<MainNavigation>
                 padding: const EdgeInsets.fromLTRB(8, 4, 8, 12),
                 child: Text('Add a course', style: theme.textTheme.titleLarge),
               ),
-              ListTile(
-                leading: Icon(Icons.add_circle_outline, color: accentColor),
-                title: const Text('Create a course'),
-                subtitle: const Text('Set up a class for your students'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  _showCreateDialog();
-                },
-              ),
-              ListTile(
-                leading: Icon(Icons.group_add_outlined, color: accentColor),
-                title: const Text('Join a course'),
-                subtitle: const Text('Enter course code or invitation link'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  _showJoinDialog();
-                },
-              ),
+              for (final (i, (icon, title, subtitle, action)) in [
+                (
+                  Icons.add_circle_outline,
+                  'Create a course',
+                  'Set up a class for your students',
+                  _showCreateDialog
+                ),
+                (
+                  Icons.group_add_outlined,
+                  'Join a course',
+                  'Enter course code or invitation link',
+                  _showJoinDialog
+                ),
+              ].indexed)
+                Reveal(
+                  index: i,
+                  offset: 12,
+                  child: Pressable(
+                    child: ListTile(
+                      leading: Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          color: accentColor.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Icon(icon, color: accentColor),
+                      ),
+                      title: Text(title),
+                      subtitle: Text(subtitle),
+                      trailing: const Icon(Icons.chevron_right),
+                      onTap: () {
+                        Navigator.pop(sheetContext);
+                        action();
+                      },
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -184,23 +206,19 @@ class _MainNavigationState extends State<MainNavigation>
           children: [
             TextField(
                 controller: nameCtrl,
-                style: TextStyle(color: isDark ? Colors.white : Colors.black),
-                cursorColor: accentColor,
-                decoration: InputDecoration(
-                  labelText: 'Course Name',
-                  labelStyle:
-                      TextStyle(color: isDark ? Colors.white70 : Colors.grey),
-                  focusedBorder: UnderlineInputBorder(
-                      borderSide: BorderSide(color: accentColor)),
+                autofocus: true,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(
+                  labelText: 'Course name',
+                  prefixIcon: Icon(Icons.menu_book_outlined),
                 )),
           ],
         ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: Text('CANCEL',
-                  style:
-                      TextStyle(color: isDark ? Colors.white70 : Colors.grey))),
+              child: Text('Cancel',
+                  style: TextStyle(color: theme.colorScheme.onSurfaceVariant))),
           ElevatedButton(
             onPressed: () async {
               if (nameCtrl.text.isEmpty) {
@@ -236,7 +254,7 @@ class _MainNavigationState extends State<MainNavigation>
               backgroundColor: accentColor,
               foregroundColor: buttonTextColor,
             ),
-            child: const Text('CREATE'),
+            child: const Text('Create'),
           ),
         ],
       ),
@@ -260,22 +278,18 @@ class _MainNavigationState extends State<MainNavigation>
           maxLength: 512,
           textCapitalization: TextCapitalization.none,
           keyboardType: TextInputType.url,
-          style: TextStyle(color: isDark ? Colors.white : Colors.black),
-          cursorColor: accentColor,
-          decoration: InputDecoration(
+          autofocus: true,
+          decoration: const InputDecoration(
             labelText: 'Course code or invite link',
-            labelStyle: TextStyle(color: isDark ? Colors.white70 : Colors.grey),
+            prefixIcon: Icon(Icons.link),
             counterText: '',
-            focusedBorder: UnderlineInputBorder(
-                borderSide: BorderSide(color: accentColor)),
           ),
         ),
         actions: [
           TextButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: Text('CANCEL',
-                  style:
-                      TextStyle(color: isDark ? Colors.white70 : Colors.grey))),
+              child: Text('Cancel',
+                  style: TextStyle(color: theme.colorScheme.onSurfaceVariant))),
           ElevatedButton(
             onPressed: () async {
               var input = joinCtrl.text.trim();
@@ -326,7 +340,7 @@ class _MainNavigationState extends State<MainNavigation>
               backgroundColor: accentColor,
               foregroundColor: buttonTextColor,
             ),
-            child: const Text('JOIN'),
+            child: const Text('Join'),
           ),
         ],
       ),
@@ -381,29 +395,19 @@ class _MainNavigationState extends State<MainNavigation>
                 tooltip: unread == 0
                     ? 'Notifications'
                     : '$unread unread notifications',
-                icon: Stack(clipBehavior: Clip.none, children: [
-                  const Icon(Icons.notifications_outlined),
-                  if (unread > 0)
-                    Positioned(
-                      top: -5,
-                      right: -8,
-                      child: Container(
-                        constraints:
-                            const BoxConstraints(minWidth: 17, minHeight: 17),
-                        padding: const EdgeInsets.symmetric(horizontal: 3),
-                        decoration: BoxDecoration(
-                          color: theme.colorScheme.error,
-                          borderRadius: BorderRadius.circular(9),
-                        ),
-                        child: Text(unread > 99 ? '99+' : '$unread',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                fontSize: 10,
-                                color: theme.colorScheme.onError,
-                                fontWeight: FontWeight.bold)),
-                      ),
-                    ),
-                ]),
+                icon: Badge(
+                  isLabelVisible: unread > 0,
+                  label: AnimatedSwitcher(
+                    duration: CheckMateTheme.fast,
+                    transitionBuilder: (child, animation) =>
+                        ScaleTransition(scale: animation, child: child),
+                    child: Text(unread > 99 ? '99+' : '$unread',
+                        key: ValueKey(unread)),
+                  ),
+                  child: Icon(unread > 0
+                      ? Icons.notifications_active_outlined
+                      : Icons.notifications_outlined),
+                ),
                 onPressed: () => Navigator.push(
                     context,
                     MaterialPageRoute<void>(
@@ -439,30 +443,57 @@ class _MainNavigationState extends State<MainNavigation>
                     isDark ? colorScheme.secondary : Colors.white;
                 final avatarBg = contentColor.withValues(alpha: 0.14);
 
-                return UserAccountsDrawerHeader(
+                final initial = name.toString().trim();
+                return Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.fromLTRB(
+                      20, MediaQuery.paddingOf(context).top + 24, 20, 22),
                   decoration: BoxDecoration(
-                    color:
-                        isDark ? const Color(0xFF1E1E24) : colorScheme.primary,
+                    gradient: isDark ? null : CheckMateTheme.brandGradient,
+                    color: isDark ? colorScheme.surfaceContainerHigh : null,
+                    borderRadius: const BorderRadius.only(
+                        bottomRight: Radius.circular(28)),
                   ),
-                  currentAccountPicture: CircleAvatar(
-                    backgroundColor: avatarBg,
-                    child: Icon(Icons.person, color: contentColor, size: 40),
-                  ),
-                  accountName: Text(
-                    name,
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: contentColor,
-                    ),
-                  ),
-                  accountEmail: Text(
-                    email,
-                    style: TextStyle(
-                      color: contentColor.withValues(alpha: 0.85),
-                    ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      CircleAvatar(
+                        radius: 30,
+                        backgroundColor: avatarBg,
+                        child: Text(
+                          initial.isEmpty ? '?' : initial[0].toUpperCase(),
+                          style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.w800,
+                              color: contentColor),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Text(name.toString(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: contentColor)),
+                      const SizedBox(height: 2),
+                      Text(email,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: contentColor.withValues(alpha: 0.8))),
+                    ],
                   ),
                 );
               },
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 20, 24, 6),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('YOUR COURSES',
+                    style: Theme.of(context).textTheme.labelSmall),
+              ),
             ),
             Expanded(
               child: Builder(
@@ -479,29 +510,38 @@ class _MainNavigationState extends State<MainNavigation>
                   }
 
                   return ListView.builder(
-                    padding: EdgeInsets.zero,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
                     itemCount: _drawerCachedCourses.length,
                     itemBuilder: (context, index) {
                       final course = _drawerCachedCourses[index];
-                      return ListTile(
-                        leading: CircleAvatar(
-                            backgroundColor:
-                                course.adaptiveGradient(context)[0],
-                            radius: 12),
-                        title: Text(course.name,
-                            maxLines: 1, overflow: TextOverflow.ellipsis),
-                        onTap: () {
-                          Navigator.pop(context);
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => CourseDashboardScreen(
-                                course: course,
-                                onCourseDeleted: _refreshDrawerCourses,
-                              ),
+                      return Reveal(
+                        index: index,
+                        offset: 10,
+                        child: ListTile(
+                          leading: Container(
+                            width: 34,
+                            height: 34,
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                  colors: course.adaptiveGradient(context)),
+                              borderRadius: BorderRadius.circular(11),
                             ),
-                          );
-                        },
+                          ),
+                          title: Text(course.name,
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
+                          onTap: () {
+                            Navigator.pop(context);
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => CourseDashboardScreen(
+                                  course: course,
+                                  onCourseDeleted: _refreshDrawerCourses,
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                       );
                     },
                   );
@@ -509,37 +549,57 @@ class _MainNavigationState extends State<MainNavigation>
               ),
             ),
             const Divider(),
-            ListTile(
-              leading: const Icon(Icons.logout, color: Colors.red),
-              title: const Text('Logout', style: TextStyle(color: Colors.red)),
-              onTap: widget.onLogout,
+            SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: ListTile(
+                  leading: Icon(Icons.logout, color: theme.colorScheme.error),
+                  title: Text('Log out',
+                      style: TextStyle(color: theme.colorScheme.error)),
+                  onTap: widget.onLogout,
+                ),
+              ),
             ),
           ],
         ),
       ),
-      body: Builder(
-        builder: (context) {
-          switch (_selectedIndex) {
-            case 0:
-              return DashboardScreen(key: _dashboardKey);
-            case 1:
-              return ScannerScreen(
-                key: const ValueKey('scanner-tab'),
-                cameras: globalCameras,
-                isActive: true,
-                onClose: () => _onItemTapped(0),
-              );
-            case 2:
-              return SettingsScreen(
-                themeMode: widget.themeMode,
-                onThemeChanged: widget.onThemeChanged,
-                onLogout: widget.onLogout,
-                onProfileUpdated: () => setState(() {}),
-              );
-            default:
-              return DashboardScreen(key: _dashboardKey);
-          }
-        },
+      body: TweenAnimationBuilder<double>(
+        key: ValueKey(_selectedIndex),
+        tween: Tween(begin: 0, end: 1),
+        duration: (MediaQuery.maybeDisableAnimationsOf(context) ?? false)
+            ? Duration.zero
+            : CheckMateTheme.medium,
+        curve: CheckMateTheme.emphasized,
+        builder: (context, t, child) => Opacity(
+          opacity: t,
+          child: Transform.translate(
+              offset: Offset(0, 16 * (1 - t)), child: child),
+        ),
+        child: Builder(
+          builder: (context) {
+            switch (_selectedIndex) {
+              case 0:
+                return DashboardScreen(key: _dashboardKey);
+              case 1:
+                return ScannerScreen(
+                  key: const ValueKey('scanner-tab'),
+                  cameras: globalCameras,
+                  isActive: true,
+                  onClose: () => _onItemTapped(0),
+                );
+              case 2:
+                return SettingsScreen(
+                  themeMode: widget.themeMode,
+                  onThemeChanged: widget.onThemeChanged,
+                  onLogout: widget.onLogout,
+                  onProfileUpdated: () => setState(() {}),
+                );
+              default:
+                return DashboardScreen(key: _dashboardKey);
+            }
+          },
+        ),
       ),
       bottomNavigationBar: DecoratedBox(
         decoration: BoxDecoration(
@@ -577,12 +637,13 @@ class _MainNavigationState extends State<MainNavigation>
         ),
       ),
       floatingActionButton: _selectedIndex == 0
-          ? FloatingActionButton(
+          ? FloatingActionButton.extended(
               onPressed: _showCourseActions,
               tooltip: 'Create or join a course',
               backgroundColor: accentColor,
               foregroundColor: isDark ? Colors.black : Colors.white,
-              child: const Icon(Icons.add),
+              icon: const Icon(Icons.add),
+              label: const Text('Course'),
             )
           : null,
     );
