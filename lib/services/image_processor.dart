@@ -332,8 +332,7 @@ class ImageProcessor {
       tracking.workMicros += finished - started;
       tracking.convertMicros += converted - started;
       tracking.prepareMicros += prepared - converted;
-      if (AppBuild.developerTools &&
-          finished - tracking.lastLogAt >= 1000000) {
+      if (AppBuild.developerTools && finished - tracking.lastLogAt >= 1000000) {
         debugPrint('LIVE SCAN: ${message.width}x${message.height} '
             'stride ${message.bytesPerRow} rot ${message.rotationIndex} -> '
             '${finalW}x$finalH; last 1s: ${tracking.frames} frames, '
@@ -585,6 +584,13 @@ class ImageProcessor {
     double gridWidth = calibration?.gridWidth ?? activeTemplate.gridWidth;
     int calibratedY = calibration?.yOffset ?? activeTemplate.calibratedYOffset;
 
+    // A developer preset decides for itself (an empty list means "use the
+    // grid"); otherwise the built-in template's exact bubbles apply.
+    final bubbles = calibration != null
+        ? calibration.answerBubbles
+        : activeTemplate.answerBubbles;
+    final useBubbles = bubbles != null && bubbles.isNotEmpty;
+
     final List<Rect> activeRegions =
         calibration?.answerRegions ?? activeTemplate.answerRegions;
     final int questionsPerRegion =
@@ -598,6 +604,8 @@ class ImageProcessor {
           xOffset: xOffset);
       sampledRegions.add(
           Rect.fromLTWH(rx / sheetW, ry / sheetH, rw / sheetW, rh / sheetH));
+      // Exact bubbles grade the whole sheet below; the grid is not needed.
+      if (useBubbles) continue;
       final regionMat = pool.add(
           TemplateService.extractRegion(thresholded, region, xOffset: xOffset));
       final questionsInThisRegion = (i == activeRegions.length - 1)
@@ -641,16 +649,8 @@ class ImageProcessor {
       }
     }
 
-    // A developer preset decides for itself (an empty list means "use the
-    // grid"); otherwise the built-in template's exact bubbles apply.
-    final bubbles = calibration != null
-        ? calibration.answerBubbles
-        : activeTemplate.answerBubbles;
     if (bubbles != null && bubbles.isNotEmpty) {
       var offset = 0;
-      results.clear();
-      questionImages.clear();
-      bubbleZones.clear();
       final radius = calibration?.bubbleRadius ?? activeTemplate.bubbleRadius;
       final fillThreshold =
           calibration?.fillThreshold ?? activeTemplate.fillThreshold;

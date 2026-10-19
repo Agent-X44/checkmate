@@ -213,56 +213,9 @@ class SupabaseService {
   static Future<void> deleteClass(String classId) async {
     final user = currentUser;
     if (user == null) throw Exception("Not authenticated");
-
-    try {
-      // 1. Try direct cascade delete via Supabase client
-      // First, get all exams for this class
-      final examRes =
-          await _client.from('exams').select('id').eq('class_id', classId);
-      final examIds = (examRes as List).map((e) => e['id'].toString()).toList();
-
-      for (final examId in examIds) {
-        try {
-          final sheetRes = await _client
-              .from('answer_sheets')
-              .select('id')
-              .eq('exam_id', examId);
-          final sheetIds =
-              (sheetRes as List).map((s) => s['id'].toString()).toList();
-          for (final sheetId in sheetIds) {
-            try {
-              await _client.from('grades').delete().eq('sheet_id', sheetId);
-            } catch (_) {}
-          }
-          await _client.from('answer_sheets').delete().eq('exam_id', examId);
-        } catch (_) {}
-
-        try {
-          await _client.from('questions').delete().eq('exam_id', examId);
-        } catch (_) {}
-      }
-
-      try {
-        await _client.from('exams').delete().eq('class_id', classId);
-      } catch (_) {}
-      try {
-        await _client.from('enrollments').delete().eq('class_id', classId);
-      } catch (_) {}
-      try {
-        await _client
-            .from('learning_materials')
-            .delete()
-            .eq('class_id', classId);
-      } catch (_) {}
-
-      // Finally delete class
-      await _client.from('classes').delete().eq('id', classId);
-    } catch (e) {
-      debugPrint(
-          "Direct Supabase course deletion notice ($e) - falling back to Backend API...");
-      // Fallback to FastAPI backend endpoint which bypasses RLS and foreign keys
-      await ApiService.deleteCourse(classId);
-    }
+    // Only the backend can delete exams (no client RLS policy), so a direct
+    // attempt removed grades and enrollments, then failed on the class.
+    await ApiService.deleteCourse(classId);
   }
 
   static Future<void> unenrollClass(String classId) async {
@@ -656,7 +609,7 @@ class SupabaseService {
 
       final studentId = profile['id'];
       final studentName = profile['name']?.toString() ?? 'Student';
-      final studentSet = alternateSets ? (index.isEven ? 'A' : 'B') : setType;
+      var studentSet = alternateSets ? (index.isEven ? 'A' : 'B') : setType;
 
       try {
         // Check if an answer sheet already exists for this student and exam
@@ -668,7 +621,13 @@ class SupabaseService {
               .eq('exam_id', examId)
               .eq('student_id', studentId);
           if (schemaSupportsSets) {
-            existing = await query.eq('set_type', studentSet).maybeSingle();
+            // Alternating sets follow list order, which shifts when a student
+            // joins; reuse the set already printed instead of a second sheet.
+            existing =
+                await (alternateSets ? query : query.eq('set_type', studentSet))
+                    .limit(1)
+                    .maybeSingle();
+            studentSet = existing?['set_type']?.toString() ?? studentSet;
           } else {
             existing = await query.maybeSingle();
           }

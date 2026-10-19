@@ -162,6 +162,60 @@ async def test_instructor_updates_a_question_in_their_own_exam(monkeypatch, db):
 
 
 @pytest.mark.asyncio
+async def test_approved_assessment_answer_key_cannot_change(monkeypatch, db):
+    sign_in(monkeypatch, "teacher")
+    db.rows["exams"][0]["is_approved"] = True
+    before = copy.deepcopy(db.rows)
+
+    response = await send("put", "/update-question/question-1", json=QUESTION_UPDATE)
+
+    assert response.status_code == 409
+    assert db.rows == before
+
+
+@pytest.mark.asyncio
+async def test_graded_assessment_answer_key_cannot_change_after_unapproval(monkeypatch, db):
+    sign_in(monkeypatch, "teacher")
+    db.rows["answer_sheets"] = [{"id": "sheet-1", "exam_id": "exam-1",
+                                 "grades": [{"id": "grade-1"}]}]
+    before = copy.deepcopy(db.rows)
+
+    response = await send("put", "/update-question/question-1", json=QUESTION_UPDATE)
+
+    assert response.status_code == 409
+    assert db.rows == before
+    # Fixing a typo with the same key stays allowed.
+    response = await send("put", "/update-question/question-1",
+                          json={**QUESTION_UPDATE, "correct_answer": "A"})
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_edited_mcq_options_are_kept_in_the_question_text(monkeypatch, db):
+    sign_in(monkeypatch, "teacher")
+    db.rows["questions"][0]["question_type"] = "MCQ"
+    db.rows["questions"][0].pop("options")  # the real table has no options column
+
+    response = await send("put", "/update-question/question-1", json={
+        "question_text": "Pick one", "options": ["w", "x", "y", "z"],
+        "correct_answer": "C"})
+
+    assert response.status_code == 200
+    assert "options" not in db.rows["questions"][0]
+    restored = main._restored_question(db.rows["questions"][0])
+    assert restored["question_text"] == "Pick one"
+    assert restored["options"] == ["w", "x", "y", "z"]
+
+
+@pytest.mark.asyncio
+async def test_docx_export_accepts_non_latin_titles(db):
+    response = await send("post", "/export-docx", json={
+        "title": "Quiz – Ñ ✓", "questions": []})
+
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_updating_an_unknown_question_is_not_found(monkeypatch, db):
     sign_in(monkeypatch, "teacher")
 

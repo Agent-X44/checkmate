@@ -476,7 +476,8 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
         });
   }
 
-  Future<void> _reviewExam(String examId, String title) async {
+  Future<void> _reviewExam(String examId, String title,
+      {bool editable = false}) async {
     final theme = Theme.of(context);
     final reviewAccent = theme.brightness == Brightness.dark
         ? theme.colorScheme.secondary
@@ -703,7 +704,7 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                                                     fontSize: 15),
                                               ),
                                             ),
-                                            if (widget.isOwner)
+                                            if (widget.isOwner && editable)
                                               IconButton(
                                                 icon: Icon(Icons.edit_note,
                                                     color: reviewAccent),
@@ -1622,8 +1623,9 @@ class _QuizzesExamsScreenState extends State<QuizzesExamsScreen> {
                           crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
                             TextButton.icon(
-                              onPressed: () =>
-                                  _reviewExam(exam['id'], displayTitle),
+                              onPressed: () => _reviewExam(
+                                  exam['id'], displayTitle,
+                                  editable: _isDraft(exam)),
                               icon: const Icon(Icons.visibility_outlined,
                                   size: 18),
                               label: const Text('Review'),

@@ -148,17 +148,11 @@ class BubbleDetectionService {
       }
     }
 
-    // 3. IDENTIFY ALL FILLED BUBBLES
-    final List<int> filledIndices = [];
-    for (int i = 0; i < fillRatios.length; i++) {
-      if (fillRatios[i] > threshold) {
-        filledIndices.add(i);
-      }
-    }
-
-    // 4. MAP TO LETTERS
-    final List<String> answers =
-        filledIndices.map((i) => String.fromCharCode(65 + i)).toList();
+    // 3. Same marking rule as detectAtPoints, so mixed sheets read dots alike.
+    final List<String> answers = [
+      for (final i in markedChoices(fillRatios, threshold))
+        String.fromCharCode(65 + i)
+    ];
 
     final sortedRatios = List<double>.from(fillRatios)
       ..sort((a, b) => b.compareTo(a));

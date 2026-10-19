@@ -22,6 +22,7 @@ import time
 import re
 import tempfile
 from pathlib import Path
+from urllib.parse import quote
 from analysis_cache import AnalysisCache, PreparationQueue, fingerprint
 from io import BytesIO
 from fastapi import FastAPI, HTTPException, Body, Depends, Header, UploadFile, File, Form
@@ -65,25 +66,6 @@ from ai_instructions import (
     get_class_analysis_prompt,
     get_student_insight_prompt
 )
-
-def select_template(mcq_count: int, tf_count: int) -> str:
-    total = mcq_count + tf_count
-    if total <= 30:
-        if tf_count == 0:
-            return "standard_30_questions"
-        else:
-            return "mixed_15mcq_15tf"
-    else:
-        if tf_count == 0:
-            return "standard_50_questions"
-        elif mcq_count == 25 and tf_count == 25:
-            return "mixed_25mcq_25tf"
-        elif mcq_count == 20 and tf_count == 30:
-            return "mixed_20mcq_30tf"
-        elif mcq_count == 30 and tf_count == 20:
-            return "mixed_30mcq_20tf"
-        else:
-            return "standard_50_questions"
 
 # Standard logging configuration for visibility
 logging.basicConfig(
@@ -809,8 +791,8 @@ async def generate_exam_stream(
                     break
                 yield item
         finally:
-            if not task.done():
-                pass # Do not cancel task on disconnect so it continues background generation
+            # Nobody can collect the result after a disconnect; stop spending AI quota.
+            task.cancel()
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
@@ -922,14 +904,25 @@ async def update_question(question_id: str, payload: QuestionUpdatePayload,
     if not supabase:
         raise HTTPException(status_code=500, detail="Database unconfigured")
     _require_user(user)
-    question = _one("questions", "id", question_id, "id, exam_id")
+    question = _one("questions", "id", question_id, "id, exam_id, question_type, correct_answer")
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
-    _instructor_exam(question.get("exam_id"), user)
+    exam = _instructor_exam(question.get("exam_id"), user)
+    # Saved grades keep the correctness computed with the old key.
+    if exam.get("is_approved") or exam.get("results_released"):
+        raise HTTPException(status_code=409, detail="Unapprove the assessment before editing its questions")
+    if payload.correct_answer not in (("A", "B") if question.get("question_type") == "TF" else ("A", "B", "C", "D")):
+        raise HTTPException(status_code=422, detail="A valid answer key is required")
+    if payload.correct_answer != question.get("correct_answer") and any(
+            sheet.get("grades") for sheet in supabase.table("answer_sheets").select(
+                "id, grades(id)").eq("exam_id", exam["id"]).execute().data or []):
+        raise HTTPException(status_code=409, detail="Saved grades use this answer key; it can no longer change")
     try:
-        res = supabase.table("questions").update({
-            "question_text": payload.question_text,
-            "options": payload.options,
+        # questions has no options column; options live in question_text like save-draft.
+        supabase.table("questions").update({
+            "question_text": _stored_question_text({
+                "questionText": payload.question_text, "options": payload.options,
+                "questionType": question.get("question_type")}),
             "correct_answer": payload.correct_answer
         }).eq("id", question_id).execute()
         return {"status": "success"}
@@ -1133,20 +1126,6 @@ async def check_sheet_scanned(sheet_id: str, user=Depends(get_current_user)):
     res = supabase.table("grades").select("id").eq("sheet_id", sheet['id']).execute()
     return {"scanned": bool(res.data)}
 
-@app.get("/get-exam-results/{exam_id}")
-async def get_exam_results(exam_id: str, user=Depends(get_current_user)):
-    """Fetch all answer sheets with grades and student profiles for an exam bypassing RLS."""
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database unconfigured")
-    _instructor_exam(exam_id, user)
-    try:
-        uuid.UUID(str(exam_id))
-        res = supabase.table("answer_sheets").select("id, set_type, student_id, profiles(id, name, email), grades(*)").eq("exam_id", exam_id).execute()
-        return res.data or []
-    except Exception as e:
-        logger.error(f"Get exam results error: {e}")
-        return []
-
 @app.post("/batch-save-grades")
 async def batch_sync(sync_data: BatchSyncRequest, user=Depends(get_current_user)):
     """Persist reviewed local grades; one sheet per request supports any scan order."""
@@ -1169,7 +1148,7 @@ async def batch_sync(sync_data: BatchSyncRequest, user=Depends(get_current_user)
                 raise HTTPException(
                     status_code=422,
                     detail="Ambiguous or multiple marked answers must be incorrect")
-            if len(r.answers) == r.total and (
+            if r.answers and (len(r.answers) != r.total or
                     sum(answer.get("isCorrect") is True for answer in r.answers) != r.score):
                 raise HTTPException(status_code=422, detail="Local item results do not match the score")
             saved_results.append({
@@ -1462,8 +1441,10 @@ async def _personal_analysis(exam, sheet_id, regenerate=False):
 @app.post("/student-insight")
 async def student_insight(request: StudentInsightRequest, user=Depends(get_current_user)):
     exam = _personal_access(request, user)
+    # Regeneration is a paid AI call; students get the cached feedback.
+    regenerate = request.regenerate and (exam.get("classes") or {}).get("instructor_id") == user.user.id
     try:
-        result = await _personal_analysis(exam, request.sheet_id, request.regenerate)
+        result = await _personal_analysis(exam, request.sheet_id, regenerate)
         _personal_access(request, user)
         return result
     except HTTPException:
@@ -1608,7 +1589,8 @@ async def export(data: dict = Body(...)):
         return StreamingResponse(
             buffer,
             media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            headers={"Content-Disposition": f"attachment; filename={title}.docx"}
+            # Headers are Latin-1: a title with an em dash or emoji would crash here.
+            headers={"Content-Disposition": f"attachment; filename=\"assessment.docx\"; filename*=UTF-8''{quote(title)}.docx"}
         )
     except Exception as e:
         logger.error(f"DOCX Export failed: {e}")

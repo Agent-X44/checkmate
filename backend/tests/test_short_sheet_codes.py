@@ -41,12 +41,14 @@ async def test_batch_maps_short_code_without_changing_sheet_identity(short_sheet
     response = await request('POST', '/batch-save-grades', {
         'exam_id': 'exam-1', 'results': [
             {'sheet_id': 'CM-8K9P2X8Q', 'score': 1, 'total': 2,
-             'answers': [{'answer': 'B', 'isCorrect': False, 'warpedImage': 'private'}]},
+             'answers': [{'answer': 'B', 'isCorrect': False, 'warpedImage': 'private'},
+                         {'answer': 'A', 'isCorrect': True}]},
         ],
     })
     assert response.json() == {'status': 'success', 'saved_count': 1}
     assert db.rows['grades'][0]['sheet_id'] == 'sheet-1'
-    assert db.rows['grades'][0]['answers'] == [{'answer': 'B', 'isCorrect': False}]
+    assert db.rows['grades'][0]['answers'] == [{'answer': 'B', 'isCorrect': False},
+                                               {'answer': 'A', 'isCorrect': True}]
     assert db.rows['answer_sheets'][0]['student_id'] == 'student-1'
 
 

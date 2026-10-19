@@ -375,7 +375,7 @@ class ApiService {
       final response = await _dio.post(
         '/export-docx',
         data: {'title': title, 'questions': questions},
-        options: dio.Options(responseType: dio.ResponseType.bytes),
+        options: _authenticatedOptions()..responseType = dio.ResponseType.bytes,
       );
       return Uint8List.fromList(response.data);
     } catch (e) {
